@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * M2 importa @papopro/ui/styles/tokens.css aqui para mover o controle de cores
+ * (light/dark) pro design system. Por ora o preset do tailwind cobre as cores
+ * estáticas que precisamos no placeholder.
+ */

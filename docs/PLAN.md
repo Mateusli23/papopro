@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint | Dias | Marcos cobertos |
-|---|---|---|
-| Sprint 1 | 1–15 | M1, M2 |
-| Sprint 2 | 16–30 | M3 |
-| Sprint 3 | 31–45 | M4 |
-| Sprint 4 | 46–60 | M5 |
-| Sprint 5 | 61–75 | M6, M7 |
-| Sprint 6 | 76–90 | M8 |
-| Sprint 7 | 91–105 | M9, M10 |
-| Sprint 8 | 106–120 | M11, M12, M13 |
+| Sprint   | Dias    | Marcos cobertos |
+| -------- | ------- | --------------- |
+| Sprint 1 | 1–15    | M1, M2          |
+| Sprint 2 | 16–30   | M3              |
+| Sprint 3 | 31–45   | M4              |
+| Sprint 4 | 46–60   | M5              |
+| Sprint 5 | 61–75   | M6, M7          |
+| Sprint 6 | 76–90   | M8              |
+| Sprint 7 | 91–105  | M9, M10         |
+| Sprint 8 | 106–120 | M11, M12, M13   |
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 

@@ -28,7 +28,7 @@ Hoje a operação é fragmentada entre três frentes que não se conversam:
 - **WhatsApp:** é onde o lead realmente conversa, mas o histórico fica disperso entre celulares pessoais, sem rastreabilidade, sem padronização e sem registro vinculado ao cliente no sistema.
 - **CRMs genéricos (Pipedrive, HubSpot, RD Station):** caros para o porte SMB, exigem implantação demorada, e foram desenhados para vendas inbound digitais — não para vendas consultivas com forte componente de relacionamento via WhatsApp.
 
-Quando a equipe cresce, gestores não conseguem responder perguntas básicas: *quais leads esfriaram? quem está com qual cliente? em qual etapa cada negócio travou? qual vendedor está abaixo da meta de atividade?* O custo prático desse gap é direto — receita perdida por leads não retomados, propostas que não voltam, e decisões de gestão tomadas sem visibilidade real do pipeline.
+Quando a equipe cresce, gestores não conseguem responder perguntas básicas: _quais leads esfriaram? quem está com qual cliente? em qual etapa cada negócio travou? qual vendedor está abaixo da meta de atividade?_ O custo prático desse gap é direto — receita perdida por leads não retomados, propostas que não voltam, e decisões de gestão tomadas sem visibilidade real do pipeline.
 
 **Público-alvo prioritário (beachhead):** times comerciais de 2 a 10 vendedores em vendas consultivas de ciclo médio/longo, com WhatsApp como canal principal de relacionamento.
 
@@ -76,13 +76,13 @@ A combinação dessas três frentes transforma um pipeline reativo (vendedor lem
 - Conexão por workspace via QR Code: cada cliente conecta seu próprio número, com tela dedicada de "Conexões" exibindo status em tempo real, health score, histórico de desconexões e botão de reconexão self-service.
 - Heartbeat e reconexão automática: sistema monitora a conexão a cada 60 segundos, notifica imediatamente o admin via push e email em caso de queda, pausa cadências em fila e processa a fila acumulada quando a conexão é restabelecida.
 - Camada anti-bloqueio (anti-ban):
-    - Limites diários de envio configuráveis com defaults seguros (20-50 msgs/dia para chip novo, escalonamento gradual de até 20%/dia)
-    - Intervalo aleatório entre disparos (30 a 90 segundos por padrão)
-    - Janela horária respeitosa configurável por workspace (default 9h-21h)
-    - Pausa automática a cada 50 envios consecutivos
-    - Health Score visível do número (verde/amarelo/vermelho) com pausa automática se cair para vermelho
-    - Opt-out automático via palavras-chave ("PARE", "SAIR", "CANCELAR") com adição à blacklist do workspace
-    - Variação automática de templates para evitar repetição de strings idênticas em massa
+  - Limites diários de envio configuráveis com defaults seguros (20-50 msgs/dia para chip novo, escalonamento gradual de até 20%/dia)
+  - Intervalo aleatório entre disparos (30 a 90 segundos por padrão)
+  - Janela horária respeitosa configurável por workspace (default 9h-21h)
+  - Pausa automática a cada 50 envios consecutivos
+  - Health Score visível do número (verde/amarelo/vermelho) com pausa automática se cair para vermelho
+  - Opt-out automático via palavras-chave ("PARE", "SAIR", "CANCELAR") com adição à blacklist do workspace
+  - Variação automática de templates para evitar repetição de strings idênticas em massa
 - Caixa de entrada unificada: todas as conversas WhatsApp do time em uma única tela, vinculadas aos cards do CRM, com filtros por vendedor, status, etapa do funil e leads sem resposta.
 - Disparador de mensagens em massa: envio de campanhas para listas segmentadas (por tag, etapa do funil, origem, período de cadastro) com agendamento, respeitando os limites anti-ban.
 
@@ -103,11 +103,11 @@ A combinação dessas três frentes transforma um pipeline reativo (vendedor lem
 - Workspaces isolados: cada empresa opera em um ambiente totalmente separado, com dados, leads, configurações e integrações independentes. Um mesmo usuário pode pertencer a múltiplos workspaces com papéis distintos.
 - Convite de colaboradores por email com aceite via magic link.
 - **RBAC com cinco papéis pré-definidos:**
-    - **Owner:** acesso total, gestão de billing, transferência de propriedade
-    - **Admin:** acesso total exceto billing
-    - **Manager:** acesso a todos os leads do time, edição de pipeline e cadências, sem convidar usuários
-    - **Vendedor:** acesso apenas aos próprios leads (com flag opcional de transparência total ativada pelo Admin)
-    - **Viewer:** somente leitura
+  - **Owner:** acesso total, gestão de billing, transferência de propriedade
+  - **Admin:** acesso total exceto billing
+  - **Manager:** acesso a todos os leads do time, edição de pipeline e cadências, sem convidar usuários
+  - **Vendedor:** acesso apenas aos próprios leads (com flag opcional de transparência total ativada pelo Admin)
+  - **Viewer:** somente leitura
 - Log de auditoria: registro de eventos críticos com filtro por usuário e período. Retenção de 12 meses no padrão e 24 meses no Enterprise.
 - Conformidade LGPD: consentimento explícito no cadastro de leads, opt-out automático, exportação de dados sob demanda e exclusão por solicitação.
 
@@ -173,24 +173,25 @@ O cliente pode iniciar no modo Standard e migrar para Enterprise sem perda de da
 
 **Matriz de notificação por evento e canal:**
 
-| Evento | In-app | Push | Email |
-|---|:---:|:---:|:---:|
-| Novo lead atribuído ao vendedor | ✅ | ✅ | — |
-| Cliente respondeu mensagem WhatsApp | ✅ | ✅ | — |
-| Lead esfriando (atingiu prazo da etapa) | ✅ | ✅ | — |
-| Tarefa programada chegou na hora | ✅ | ✅ | — |
-| Conexão WhatsApp caiu | ✅ | ✅ | ✅ |
-| Convite para workspace recebido | — | — | ✅ |
-| Trial expirando em 2 dias | ✅ | ✅ | ✅ |
-| Pagamento falhou ou próximo do vencimento | ✅ | — | ✅ |
-| Agente IA fez handoff para humano | ✅ | ✅ | — |
-| Disparo em massa terminou | ✅ | — | — |
+| Evento                                    | In-app | Push | Email |
+| ----------------------------------------- | :----: | :--: | :---: |
+| Novo lead atribuído ao vendedor           |   ✅   |  ✅  |   —   |
+| Cliente respondeu mensagem WhatsApp       |   ✅   |  ✅  |   —   |
+| Lead esfriando (atingiu prazo da etapa)   |   ✅   |  ✅  |   —   |
+| Tarefa programada chegou na hora          |   ✅   |  ✅  |   —   |
+| Conexão WhatsApp caiu                     |   ✅   |  ✅  |  ✅   |
+| Convite para workspace recebido           |   —    |  —   |  ✅   |
+| Trial expirando em 2 dias                 |   ✅   |  ✅  |  ✅   |
+| Pagamento falhou ou próximo do vencimento |   ✅   |  —   |  ✅   |
+| Agente IA fez handoff para humano         |   ✅   |  ✅  |   —   |
+| Disparo em massa terminou                 |   ✅   |  —   |   —   |
 
 **Configuração de preferências:** o usuário pode ajustar canal por evento na tela de "Configurações > Notificações". Eventos administrativos (convite, pagamento) não podem ser desligados — são obrigatórios.
 
 ### 3.3. Onboarding do Usuário
 
 **Welcome modal** ao primeiro login após cadastro:
+
 - Mensagem de boas-vindas personalizada com nome do usuário.
 - Resumo de 3 benefícios principais do produto.
 - Botão "Começar agora" (inicia wizard) e botão "Pular por enquanto".
@@ -219,6 +220,7 @@ Cada passo "pulado" fica marcado como pendente e aparece em destaque no dashboar
 - Dados completos do lead (LGPD - exportação sob demanda do titular)
 
 **Regras gerais:**
+
 - Exportações pesadas (>1.000 linhas) são processadas em background via Supabase Edge Function e enviadas por email com link de download (válido por 7 dias).
 - Limite de 5 exportações simultâneas por workspace para evitar abuso.
 - Toda exportação registrada no log de auditoria com usuário, timestamp e tipo.
@@ -238,6 +240,7 @@ Cada passo "pulado" fica marcado como pendente e aparece em destaque no dashboar
 **Storage:** Supabase Storage com cleanup automático de mídias órfãs após 30 dias (lead deletado, conversa arquivada permanentemente).
 
 **Limites totais por plano:**
+
 - Plano Pro: 5 GB de storage por workspace.
 - Plano Pro IA: 20 GB de storage por workspace.
 - Plano Enterprise: limites elevados (sob consulta).
@@ -311,6 +314,7 @@ Filtros combináveis exibidos como **chips** acima da listagem (inspiração Hub
 - Painel direito: ficha do lead vinculado (etapa do funil, valor, dados de contato, timeline resumida, próxima tarefa).
 
 **Atalhos de teclado:**
+
 - Enter envia mensagem
 - Shift+Enter quebra linha
 - Setas ↑↓ navegam entre conversas
@@ -328,12 +332,14 @@ Filtros combináveis exibidos como **chips** acima da listagem (inspiração Hub
 - Configuração de cada agente por prompt em linguagem natural: nome, persona, tom de voz, regras de negócio, gatilhos de handoff.
 
 **Roteamento entre agentes** (qual agente atende qual lead/conversa):
+
 - Por **etapa do funil**: cada etapa pode ter um agente designado.
 - Por **tag do lead**: admin define regras manuais.
 - Por **número WhatsApp conectado**: cada número pode ter um agente padrão.
 - Por **palavra-chave configurável**.
 
 **Base de conhecimento compartilhada por workspace ("Cérebro da Empresa"):**
+
 - Campos estruturados: sobre a empresa, produtos com preços, FAQ, scripts de objeção, política.
 - Upload de arquivos (PDF, DOC, TXT) processados em embeddings via pgvector para busca semântica.
 - Versionamento e rollback de mudanças.
@@ -342,16 +348,19 @@ Filtros combináveis exibidos como **chips** acima da listagem (inspiração Hub
 **Identidade e prompt isolados por agente** (cada agente tem sua persona).
 
 **Memória em três camadas:**
+
 - **Sessão:** últimas mensagens da conversa atual no contexto direto, isolada por agente.
 - **Lead:** ficha consolidada do lead atualizada via resumo automático após cada interação, compartilhada entre todos os agentes do workspace.
 - **Empresa:** base de conhecimento permanente recuperada por relevância semântica, compartilhada.
 
 **Handoff entre agentes IA** (não apenas IA → humano):
+
 - Agente A pode passar conversa para agente B mediante gatilho de palavra-chave, mudança de etapa do funil ou comando explícito no prompt.
 - Resumo automático do contexto entregue ao agente seguinte (perfil, demandas, etapa).
 - Pausa do agente anterior para evitar duplicidade de resposta.
 
 **Handoff humano com múltiplos gatilhos** (mantém-se em todos os agentes):
+
 - Manual via botão "Assumir conversa" no painel do vendedor.
 - Por palavra-chave configurável (atendente, humano, vendedor).
 - Por intenção comercial detectada (quero contratar, quanto fica, como pago).
@@ -363,6 +372,7 @@ Filtros combináveis exibidos como **chips** acima da listagem (inspiração Hub
 **Resumo automático entregue ao vendedor:** perfil do lead, demandas, etapa do funil, próxima ação sugerida, qual agente vinha atendendo.
 
 **Interface de gestão de agentes:**
+
 - Aba dedicada "Agentes IA" no painel do workspace.
 - Lista de agentes com status (ativo / inativo / em teste), número de conversas atendidas, taxa de handoff.
 - Botão "Criar novo agente" com templates pré-configurados (qualificação, atendimento, recuperação).
@@ -386,6 +396,7 @@ Filtros combináveis exibidos como **chips** acima da listagem (inspiração Hub
 **Botão WhatsApp flutuante** para falar com vendas (coerência: vendemos CRM com WhatsApp, atendemos pelo WhatsApp).
 
 **Especificações técnicas:**
+
 - Performance: Lighthouse 90+ (Vercel entrega).
 - SEO: meta tags por seção, schema.org, sitemap.xml automático (Next.js).
 - Pixel de tracking: Meta Pixel + Google Analytics 4.
@@ -425,16 +436,16 @@ O produto atende quatro personas principais. É importante distinguir **persona*
 - **Contexto típico:** dono de imobiliária pequena, dono de consultoria B2B, dono de loja de produtos de alto ticket, corretor que abriu seu próprio negócio. Equipe de 1 a 10 pessoas. Faturamento entre R$ 50 mil e R$ 1 milhão/mês. Geralmente opera vendendo também (player-coach), e não tem tempo nem dinheiro para implantar HubSpot ou Salesforce.
 - **Papel no sistema:** Owner.
 - **Principais dores:**
-    - Vê negócios sumindo no pipeline sem entender por quê
-    - Não sabe em qual etapa do funil os leads estão travando
-    - Time desorganizado, cada vendedor com seu próprio "sistema" (planilha, caderno, WhatsApp pessoal)
-    - Quando vendedor sai da empresa, leva os leads no celular pessoal
-    - Tentou Pipedrive ou HubSpot e desistiu por complexidade ou preço
+  - Vê negócios sumindo no pipeline sem entender por quê
+  - Não sabe em qual etapa do funil os leads estão travando
+  - Time desorganizado, cada vendedor com seu próprio "sistema" (planilha, caderno, WhatsApp pessoal)
+  - Quando vendedor sai da empresa, leva os leads no celular pessoal
+  - Tentou Pipedrive ou HubSpot e desistiu por complexidade ou preço
 - **Motivações:**
-    - Aumentar a taxa de conversão sem aumentar o volume de leads
-    - Profissionalizar a operação para parecer maior do que é
-    - Ganhar visibilidade total do funil sem precisar perguntar para cada vendedor
-    - Escalar a operação sem precisar contratar mais gente imediatamente
+  - Aumentar a taxa de conversão sem aumentar o volume de leads
+  - Profissionalizar a operação para parecer maior do que é
+  - Ganhar visibilidade total do funil sem precisar perguntar para cada vendedor
+  - Escalar a operação sem precisar contratar mais gente imediatamente
 - **Como usa o produto:** cria o workspace, convida o time, configura cadências e agentes IA, acompanha o dashboard semanalmente, atende como vendedor quando necessário, gerencia o plano e a assinatura.
 - **Frequência e dispositivo:** uso diário, alterna entre desktop (configuração e análise) e celular via PWA (operação no campo).
 
@@ -444,16 +455,16 @@ O produto atende quatro personas principais. É importante distinguir **persona*
 - **Contexto típico:** gerente comercial em imobiliária média, head de vendas em SaaS de pequeno porte, coordenador de SDRs. Reporta para o dono ou para a diretoria. Tem experiência em vendas e sabe ler dashboards.
 - **Papel no sistema:** Admin (ou Manager se quiser ver todos os leads do time mas sem mexer em configurações sensíveis).
 - **Principais dores:**
-    - Não consegue ver quem está fazendo o quê em tempo real
-    - Vendedores reclamam que processo manual atrapalha as vendas
-    - Bate meta às custas de pressão, não de processo
-    - Identifica gargalos do funil tarde demais (depois do mês fechado)
-    - Não tem como treinar vendedor com base em dados reais de conversa
+  - Não consegue ver quem está fazendo o quê em tempo real
+  - Vendedores reclamam que processo manual atrapalha as vendas
+  - Bate meta às custas de pressão, não de processo
+  - Identifica gargalos do funil tarde demais (depois do mês fechado)
+  - Não tem como treinar vendedor com base em dados reais de conversa
 - **Motivações:**
-    - Bater a meta do time e individual de cada vendedor
-    - Identificar gargalos do funil em tempo de corrigir
-    - Padronizar o processo e o discurso da equipe
-    - Mostrar resultado e visibilidade para a diretoria
+  - Bater a meta do time e individual de cada vendedor
+  - Identificar gargalos do funil em tempo de corrigir
+  - Padronizar o processo e o discurso da equipe
+  - Mostrar resultado e visibilidade para a diretoria
 - **Como usa o produto:** acompanha pipeline e dashboard diariamente, configura cadências e templates de mensagem, monitora atividade individual de cada vendedor, ajusta o agente IA com base no que vê na caixa de entrada unificada, reatribui leads, faz coaching baseado no histórico de conversas.
 - **Frequência e dispositivo:** uso intenso e diário, principalmente desktop (visão analítica), com PWA para alertas e respostas pontuais.
 
@@ -463,16 +474,16 @@ O produto atende quatro personas principais. É importante distinguir **persona*
 - **Contexto típico:** corretor de imóveis em incorporadora ou imobiliária, consultor B2B, vendedor de alto ticket. Trabalha com 30 a 100 leads ativos simultaneamente. Está em obra, em apartamento, em reunião externa, em trânsito. Celular é o principal dispositivo de trabalho.
 - **Papel no sistema:** Vendedor.
 - **Principais dores:**
-    - Tem dezenas de conversas no WhatsApp e perde follow-up
-    - Esquece de retornar no momento certo e perde o negócio
-    - Sente que ferramentas de CRM "engessam" e atrapalham a venda
-    - Odeia digitar relatório no fim do dia
-    - Tem medo de "perder" o lead se ele entrar em sistema que outro vendedor pode acessar
+  - Tem dezenas de conversas no WhatsApp e perde follow-up
+  - Esquece de retornar no momento certo e perde o negócio
+  - Sente que ferramentas de CRM "engessam" e atrapalham a venda
+  - Odeia digitar relatório no fim do dia
+  - Tem medo de "perder" o lead se ele entrar em sistema que outro vendedor pode acessar
 - **Motivações:**
-    - Bater a meta pessoal e ganhar comissão
-    - Fechar mais negócios com o mesmo volume de leads
-    - Liberar tempo para vender (e menos para administrar)
-    - Ter alertas que evitam esquecimento sem virar vigilância
+  - Bater a meta pessoal e ganhar comissão
+  - Fechar mais negócios com o mesmo volume de leads
+  - Liberar tempo para vender (e menos para administrar)
+  - Ter alertas que evitam esquecimento sem virar vigilância
 - **Como usa o produto:** recebe leads atribuídos automaticamente, movimenta cards no Kanban durante o dia, responde WhatsApp pela caixa de entrada do CRM, recebe lembretes de tarefa no celular, vê quais dos seus leads estão esfriando e precisa retomar.
 - **Frequência e dispositivo:** uso intenso e diário, predominantemente celular via PWA, com push notifications ativas.
 
@@ -482,28 +493,28 @@ O produto atende quatro personas principais. É importante distinguir **persona*
 - **Contexto típico:** consultor de vendas, consultor de marketing, agência boutique de 1 a 3 pessoas, social media manager que gerencia leads de clientes, especialista que opera vendas para terceiros como serviço.
 - **Papel no sistema:** Owner em múltiplos workspaces.
 - **Principais dores:**
-    - Precisa separar dados de cada cliente sem misturar
-    - Cada cliente quer ver o próprio pipeline sem ver o dos outros
-    - Compliance LGPD é responsabilidade dele, mesmo operando dados do cliente
-    - Ferramentas atuais cobram por workspace e ficam caras
+  - Precisa separar dados de cada cliente sem misturar
+  - Cada cliente quer ver o próprio pipeline sem ver o dos outros
+  - Compliance LGPD é responsabilidade dele, mesmo operando dados do cliente
+  - Ferramentas atuais cobram por workspace e ficam caras
 - **Motivações:**
-    - Profissionalizar a entrega para clientes
-    - Escalar atendimento sem contratar
-    - Demonstrar valor com dashboards próprios para cada cliente
-    - Manter conformidade legal e contratual
+  - Profissionalizar a entrega para clientes
+  - Escalar atendimento sem contratar
+  - Demonstrar valor com dashboards próprios para cada cliente
+  - Manter conformidade legal e contratual
 - **Como usa o produto:** cria um workspace por cliente, opera todos os workspaces sozinho ou convida o cliente como Admin do próprio workspace, alterna rapidamente entre workspaces via dropdown na sidebar, usa o mesmo login para acessar todos.
 - **Frequência e dispositivo:** uso diário, predominantemente desktop, com PWA para mobilidade.
 
 ### Resumo dos Papéis no Sistema (RBAC)
 
-| Persona | Papel RBAC | Pode ver |
-|---|---|---|
-| Dono de SMB | Owner | Tudo + billing + transferência de propriedade |
-| Gestor de Vendas (com billing) | Admin | Tudo, exceto billing |
-| Gestor de Vendas (sem mexer em config) | Manager | Todos os leads do time, edita pipeline e cadências, não convida usuários |
-| Vendedor / Corretor | Vendedor | Apenas seus próprios leads (com flag opcional de transparência total ativada pelo Admin) |
-| Stakeholder passivo (sócio, mentor, contador) | Viewer | Somente leitura |
-| Freelancer / Consultor Solo | Owner em múltiplos workspaces | Tudo do workspace, dados isolados entre workspaces via RLS |
+| Persona                                       | Papel RBAC                    | Pode ver                                                                                 |
+| --------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Dono de SMB                                   | Owner                         | Tudo + billing + transferência de propriedade                                            |
+| Gestor de Vendas (com billing)                | Admin                         | Tudo, exceto billing                                                                     |
+| Gestor de Vendas (sem mexer em config)        | Manager                       | Todos os leads do time, edita pipeline e cadências, não convida usuários                 |
+| Vendedor / Corretor                           | Vendedor                      | Apenas seus próprios leads (com flag opcional de transparência total ativada pelo Admin) |
+| Stakeholder passivo (sócio, mentor, contador) | Viewer                        | Somente leitura                                                                          |
+| Freelancer / Consultor Solo                   | Owner em múltiplos workspaces | Tudo do workspace, dados isolados entre workspaces via RLS                               |
 
 ### Anti-personas (quem o produto NÃO atende no MVP)
 
@@ -555,25 +566,25 @@ Definir quem o produto não atende é tão importante quanto definir quem atende
 
 **Custos fixos mensais (independente do número de clientes):**
 
-| Item | Custo mensal |
-|---|---|
-| Supabase Pro | US$ 25 (~R$ 137) |
-| Vercel Pro | US$ 20 (~R$ 110) |
-| Anthropic Pro (Cursor + Claude Code) | US$ 20 (~R$ 110) |
-| Sentry Team | US$ 26 (~R$ 143) |
-| Resend Pro | US$ 20 (~R$ 110) |
-| Domínio .com.br | ~R$ 5 (R$ 50/ano) |
-| **Total fixo** | **~R$ 615/mês** |
+| Item                                 | Custo mensal      |
+| ------------------------------------ | ----------------- |
+| Supabase Pro                         | US$ 25 (~R$ 137)  |
+| Vercel Pro                           | US$ 20 (~R$ 110)  |
+| Anthropic Pro (Cursor + Claude Code) | US$ 20 (~R$ 110)  |
+| Sentry Team                          | US$ 26 (~R$ 143)  |
+| Resend Pro                           | US$ 20 (~R$ 110)  |
+| Domínio .com.br                      | ~R$ 5 (R$ 50/ano) |
+| **Total fixo**                       | **~R$ 615/mês**   |
 
 **Custos variáveis por workspace ativo:**
 
-| Item | Custo unitário |
-|---|---|
-| uazapi (1 número WhatsApp) | ~R$ 30/mês |
-| Anthropic Claude API | US$ 5 a US$ 30/mês conforme volume de conversas |
-| OpenAI Embeddings | <US$ 1/mês (uso típico) |
-| Supabase compute extra (após ~50 workspaces) | US$ 10 a US$ 50/mês |
-| Stripe (taxa por transação) | 3,99% + R$ 0,39 sobre faturamento |
+| Item                                         | Custo unitário                                  |
+| -------------------------------------------- | ----------------------------------------------- |
+| uazapi (1 número WhatsApp)                   | ~R$ 30/mês                                      |
+| Anthropic Claude API                         | US$ 5 a US$ 30/mês conforme volume de conversas |
+| OpenAI Embeddings                            | <US$ 1/mês (uso típico)                         |
+| Supabase compute extra (após ~50 workspaces) | US$ 10 a US$ 50/mês                             |
+| Stripe (taxa por transação)                  | 3,99% + R$ 0,39 sobre faturamento               |
 
 **Cenário de breakeven estimado:**
 
@@ -592,11 +603,13 @@ A identidade visual do produto se inspira em três referências principais e tr�
 ### Referências Principais
 
 #### HubSpot CRM
+
 **Referência de:** sistema de design e arquitetura de informação.
 
 HubSpot é o benchmark global em consistência de UI para CRM. Tem mais de 189 componentes em seu UI Kit, com tokens de tipografia, cores e layout que escalam bem entre web e mobile.
 
 **O que pegar:**
+
 - Layout de página de detalhe do lead com timeline cronológica unificada e cards laterais para metadados
 - Densidade de informação equilibrada (mostra muito sem parecer poluído)
 - Padrão de navegação por sidebar fixa com ícones e labels claros
@@ -604,16 +617,19 @@ HubSpot é o benchmark global em consistência de UI para CRM. Tem mais de 189 c
 - Filtros combináveis com chips visíveis acima das listagens
 
 **O que NÃO pegar:**
+
 - Excesso de configurações expostas para o usuário final (overwhelm)
 - Curva de aprendizado longa por excesso de funcionalidades visíveis simultaneamente
 - Visual corporativo "americano" com muito espaço vazio que reduz densidade útil
 
 #### Pipedrive
+
 **Referência de:** Kanban visual e fluxo de ação.
 
 Pipedrive é referência mundial em pipeline visual drag-and-drop e em "activity-based selling" — o produto inteiro gira em torno do board Kanban e de atividades vinculadas a cada deal.
 
 **O que pegar:**
+
 - Visual do Kanban com colunas claras, cards densos e drag-and-drop fluido
 - Indicadores de "deal rotting" (negócio esfriando) com cores e ícones diretos no card
 - Top bar com múltiplas visualizações alternáveis (Kanban, lista, forecast, timeline)
@@ -621,16 +637,19 @@ Pipedrive é referência mundial em pipeline visual drag-and-drop e em "activity
 - Ação rápida nos cards sem precisar abrir página de detalhe
 
 **O que NÃO pegar:**
+
 - Navegação com múltiplos tabs e subtabs que confunde usuários novos
 - Algumas telas com excesso de modais sobrepostos
 - Tema padrão claro sem alternativa real de dark mode robusto
 
 #### DataCrazy
+
 **Referência de:** linguagem, tom de voz e posicionamento brasileiro.
 
 DataCrazy é um CRM brasileiro de Balneário Camboriú que se posiciona como "máquina de vendas com IA". É a referência mais próxima do nosso mercado-alvo, com excelente tradução cultural para o vendedor brasileiro.
 
 **O que pegar:**
+
 - Comunicação descontraída e próxima do dia a dia do vendedor brasileiro
 - Posicionamento claro como ferramenta de performance comercial, não apenas registro de dados
 - Foco no WhatsApp como canal central, não como integração secundária
@@ -638,6 +657,7 @@ DataCrazy é um CRM brasileiro de Balneário Camboriú que se posiciona como "m�
 - Linguagem de venda focada em resultado mensurável (LTV, CAC, taxa de conversão por origem, vendedor e produto)
 
 **O que NÃO pegar:**
+
 - Excesso de recursos prometidos ao mesmo tempo (BI + automação + chatbot + multiatendimento + tarefas) que confunde proposta de valor
 - Site ainda em construção em várias seções, comunicando imaturidade do produto
 - Visual de marketing exagerado em algumas telas que pode parecer agressivo demais para perfis mais formais
@@ -645,11 +665,13 @@ DataCrazy é um CRM brasileiro de Balneário Camboriú que se posiciona como "m�
 ### Referências Complementares (Modernidade Visual)
 
 #### Attio
+
 **Referência de:** estética 2026 e densidade elegante.
 
 Attio é o CRM mais bonito do mercado atual, com visual minimalista, tipografia moderna e tabelas inspiradas em planilhas modernas tipo Notion. É a referência principal para o design visual do nosso produto sair do padrão "CRM corporativo americano" e adotar uma linguagem mais 2026.
 
 **O que pegar:**
+
 - Paleta neutra e sofisticada com acentos de cor controlados
 - Tipografia Inter ou similar, com hierarquia clara e espaçamento generoso
 - Cards e tabelas com bordas suaves e sombras sutis (não brutalistas)
@@ -657,11 +679,13 @@ Attio é o CRM mais bonito do mercado atual, com visual minimalista, tipografia 
 - Uso inteligente de espaço vazio para reduzir cansaço visual
 
 #### Linear
+
 **Referência de:** velocidade percebida e atalhos de teclado.
 
 Linear redefiniu o padrão de SaaS B2B em velocidade de interação. É a referência para como nossos vendedores devem se sentir usando o produto: rápido, fluido, com atalhos.
 
 **O que pegar:**
+
 - Comando rápido (Cmd+K) para abrir lead, criar tarefa, mudar etapa do funil sem usar o mouse
 - Animações sutis que comunicam progresso sem distrair
 - Estados de loading otimistas (interface responde antes do servidor confirmar)
@@ -669,11 +693,13 @@ Linear redefiniu o padrão de SaaS B2B em velocidade de interação. É a refer�
 - Densidade de informação alta sem visual sobrecarregado
 
 #### Notion
+
 **Referência de:** flexibilidade e simplicidade na configuração.
 
 Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "configuração de servidor". Para a tela de configuração do agente IA e da base de conhecimento ("Cérebro do Agente"), Notion é a referência direta.
 
 **O que pegar:**
+
 - Editor inline para campos de texto longo (descrição da empresa, scripts, FAQ)
 - Blocos arrastáveis para organização do conhecimento
 - Slash commands para ações rápidas dentro de campos de texto
@@ -683,22 +709,25 @@ Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "config
 ### Diretrizes Visuais Consolidadas
 
 **Paleta de cores principal:**
+
 - Cor primária (CTAs, navegação ativa, links): azul indigo profundo (#4F46E5 ou similar)
 - Cor de apoio (destaque secundário): roxo/índigo (#6C5CE7)
 - Neutros: cinza escuro (#0F172A), cinza médio (#475569), cinza claro (#F1F5F9), branco
 - Estados:
-    - Verde (#10B981) para sucesso, lead quente, conexão ativa
-    - Amarelo (#F59E0B) para atenção, lead morno, conexão instável
-    - Vermelho (#EF4444) para alerta, lead frio, desconectado
-    - Azul (#3B82F6) para informação neutra
+  - Verde (#10B981) para sucesso, lead quente, conexão ativa
+  - Amarelo (#F59E0B) para atenção, lead morno, conexão instável
+  - Vermelho (#EF4444) para alerta, lead frio, desconectado
+  - Azul (#3B82F6) para informação neutra
 - Dark mode tratado como tema de primeira classe, não opção secundária
 
 **Tipografia:**
+
 - Inter ou Geist Sans para interface (open source, gratuita, alta legibilidade em telas)
 - Hierarquia clara: títulos em 18-24px, body em 14-16px, captions em 12px
 - Peso 600 para títulos, 500 para destaques, 400 para body
 
 **Espaçamento e layout:**
+
 - Sistema de spacing baseado em múltiplos de 4px (4, 8, 12, 16, 24, 32, 48, 64)
 - Cards com border-radius de 8 a 12px
 - Sombras sutis (elevation discreta, sem efeito brutalista)
@@ -706,6 +735,7 @@ Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "config
 - Breakpoints: mobile 320-768, tablet 768-1024, desktop 1024+
 
 **Componentes-chave:**
+
 - shadcn/ui como base do design system, customizado com tokens próprios
 - Lucide Icons para iconografia consistente
 - Recharts para gráficos do dashboard
@@ -713,6 +743,7 @@ Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "config
 - Cards de Kanban com indicador visual de temperatura no canto superior
 
 **Tom de voz e microcopy:**
+
 - Linguagem direta e brasileira, sem traduções literais de inglês
 - Microcopy próxima ao vendedor (inspiração DataCrazy), sem ser informal demais
 - Mensagens de erro úteis e propositivas, não genéricas
@@ -720,6 +751,7 @@ Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "config
 - Confirmações curtas e claras ("Lead criado", "Cadência ativada", "Agente em teste")
 
 **Princípios de UX:**
+
 - Mostrar status visualmente sempre que possível (cores e ícones, não só texto)
 - Reduzir cliques para ações frequentes (drag-and-drop, atalhos de teclado, ações rápidas no card)
 - Estado vazio (empty state) tratado com carinho — sempre orientar o próximo passo
@@ -728,6 +760,7 @@ Notion ensinou o mercado SaaS como criar interfaces flexíveis sem virar "config
 - Performance percebida acima da performance real — interface responde antes do servidor
 
 **Inspiração de comunicação visual:**
+
 - Densidade alta (HubSpot) com elegância visual (Attio)
 - Velocidade fluida (Linear) com flexibilidade de configuração (Notion)
 - Tom brasileiro e direto (DataCrazy) com Kanban best-in-class (Pipedrive)

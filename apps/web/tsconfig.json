@@ -1,0 +1,17 @@
+{
+  "extends": "@papopro/config/tsconfig.next.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@papopro/ui": ["../../packages/ui/src/index.ts"],
+      "@papopro/ui/*": ["../../packages/ui/src/*"],
+      "@papopro/db": ["../../packages/db/src/index.ts"],
+      "@papopro/db/*": ["../../packages/db/src/*"]
+    },
+    "incremental": true,
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next", ".turbo"]
+}
