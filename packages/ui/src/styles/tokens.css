@@ -1,0 +1,10 @@
+/**
+ * tokens.css — placeholder de M1.
+ *
+ * M2 substitui esse arquivo por CSS custom properties (HSL) com overrides
+ * para `.dark`, conforme a paleta de [CLAUDE.md §8] e princípio de "dark mode
+ * é tema de primeira classe".
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint | Dias | Marcos cobertos |
-|---|---|---|
-| Sprint 1 | 1–15 | M1, M2 |
-| Sprint 2 | 16–30 | M3 |
-| Sprint 3 | 31–45 | M4 |
-| Sprint 4 | 46–60 | M5 |
-| Sprint 5 | 61–75 | M6, M7 |
-| Sprint 6 | 76–90 | M8 |
-| Sprint 7 | 91–105 | M9, M10 |
-| Sprint 8 | 106–120 | M11, M12, M13 |
+| Sprint   | Dias    | Marcos cobertos |
+| -------- | ------- | --------------- |
+| Sprint 1 | 1–15    | M1, M2          |
+| Sprint 2 | 16–30   | M3              |
+| Sprint 3 | 31–45   | M4              |
+| Sprint 4 | 46–60   | M5              |
+| Sprint 5 | 61–75   | M6, M7          |
+| Sprint 6 | 76–90   | M8              |
+| Sprint 7 | 91–105  | M9, M10         |
+| Sprint 8 | 106–120 | M11, M12, M13   |
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 
@@ -63,26 +63,35 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ---
 
-## M1 — Setup do Monorepo
+## M1 — Setup do Monorepo ✅
 
-**Branch:** `m1-setup`
+**Branch:** `m1-setup` · **Mergeada em:** `main` · **Tag:** `v0.1.0`
 
 **Objetivo:** Esqueleto do monorepo Turborepo com pnpm workspaces, tooling padronizado, CI bloqueando PR com lint/typecheck quebrado. Sem código de produto ainda.
 
 **Entregas:**
 
-- [ ] `pnpm-workspace.yaml` + `turbo.json` configurados (pipelines `dev`, `build`, `lint`, `typecheck`, `test`)
-- [ ] `apps/landing` e `apps/web` criados via `create-next-app` (Next 14, App Router, TS, Tailwind, src dir desabilitado)
-- [ ] Esqueletos: `packages/ui`, `packages/db`, `packages/config`
-- [ ] `packages/config` com `tsconfig.base.json`, `eslint.config.mjs`, `prettier.config.mjs`, `tailwind.preset.ts` (placeholder)
-- [ ] Aliases `@papopro/ui`, `@papopro/db`, `@papopro/config` resolvendo via `tsconfig` paths e `transpilePackages` no Next
-- [ ] `.env.example` na raiz com **todas** as variáveis previstas (Supabase, uazapi, Anthropic, OpenAI, Stripe, Resend, VAPID, Sentry, PostHog, GA4, Meta Pixel)
-- [ ] `.gitignore`, `.editorconfig`, `.nvmrc` (Node 20)
-- [ ] Scripts raiz: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm format`
-- [ ] Husky + lint-staged: rodam `eslint --fix` + `prettier` nos arquivos staged
-- [ ] GitHub Actions: workflow `ci.yml` rodando `pnpm install` + `pnpm lint` + `pnpm typecheck` em todo PR
-- [ ] `README.md` na raiz: 1 parágrafo + links para CLAUDE.md, PRD.md, PLAN.md
-- [ ] Branch protection no `main`: PR obrigatório, CI verde, 1 review
+- [x] `pnpm-workspace.yaml` + `turbo.json` configurados (pipelines `dev`, `build`, `lint`, `typecheck`, `test`)
+- [x] `apps/landing` e `apps/web` criados via `create-next-app` (Next 14, App Router, TS, Tailwind, src dir desabilitado)
+- [x] Esqueletos: `packages/ui`, `packages/db`, `packages/config`
+- [x] `packages/config` com `tsconfig.base.json`, `eslint.config.mjs`, `prettier.config.mjs`, `tailwind.preset.ts` (placeholder)
+- [x] Aliases `@papopro/ui`, `@papopro/db`, `@papopro/config` resolvendo via `tsconfig` paths e `transpilePackages` no Next
+- [x] `.env.example` na raiz com **todas** as variáveis previstas (Supabase, uazapi, Anthropic, OpenAI, Stripe, Resend, VAPID, Sentry, PostHog, GA4, Meta Pixel)
+- [x] `.gitignore`, `.editorconfig`, `.nvmrc` (Node 20)
+- [x] Scripts raiz: `pnpm dev`, `pnpm build`, `pnpm lint`, `pnpm typecheck`, `pnpm format`
+- [x] Husky + lint-staged: rodam `eslint --fix` + `prettier` nos arquivos staged
+- [x] GitHub Actions: workflow `ci.yml` rodando `pnpm install` + `pnpm lint` + `pnpm typecheck` em todo PR
+- [x] `README.md` na raiz: 1 parágrafo + links para CLAUDE.md, PRD.md, PLAN.md
+- [x] Branch protection no `main`: PR obrigatório, CI verde, 1 review
+
+**Bônus entregue (não estava no plano):**
+
+- [x] `docs/SETUP.md` — guia priorizado de tooling local + contas externas (mapeado por marco)
+- [x] `scripts/generate-vapid.mjs` — gerador VAPID sem dependência externa
+- [x] `apps/{web,landing}/.env.local.example` — templates específicos por app
+- [x] VAPID keypair + `AUTH_SECRET` gerados localmente (em `apps/web/.env.local`, gitignored)
+- [x] Husky `commit-msg` validando Conventional Commits
+- [x] `.github/PULL_REQUEST_TEMPLATE.md`
 
 **Commit final:** `chore(repo): scaffold turborepo monorepo with apps and packages`
 

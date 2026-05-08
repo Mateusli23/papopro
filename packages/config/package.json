@@ -1,0 +1,54 @@
+{
+  "name": "@papopro/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Configurações compartilhadas: tsconfig base, eslint, prettier, tailwind preset.",
+  "type": "module",
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./tsconfig.next.json": "./tsconfig.next.json",
+    "./tsconfig.lib.json": "./tsconfig.lib.json",
+    "./eslint": "./eslint.config.mjs",
+    "./eslint-next": "./eslint.next.mjs",
+    "./prettier": "./prettier.config.mjs",
+    "./tailwind-preset": "./tailwind.preset.ts"
+  },
+  "files": [
+    "tsconfig.base.json",
+    "tsconfig.next.json",
+    "tsconfig.lib.json",
+    "eslint.config.mjs",
+    "eslint.next.mjs",
+    "prettier.config.mjs",
+    "tailwind.preset.ts"
+  ],
+  "scripts": {
+    "lint": "eslint --max-warnings=0 \"*.{mjs,ts}\"",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf .turbo node_modules"
+  },
+  "dependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@eslint/js": "^9.17.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.2",
+    "@typescript-eslint/parser": "^8.18.2",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "14.2.20",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "prettier-plugin-tailwindcss": "^0.6.9",
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript-eslint": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,18 @@
+// PapoPro — schema Prisma (placeholder de M1).
+//
+// M7 introduz: users, workspaces, workspace_members, invitations, audit_logs,
+// notification_preferences, webhook_events. M8 acrescenta o domínio de leads,
+// deals, pipelines e tarefas. RLS aplicada no Postgres antes de cada migration.
+// Ver [docs/PLAN.md] §M7 e §M8.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pgcrypto, pg_trgm, vector]
+}

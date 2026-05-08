@@ -26,52 +26,57 @@ A combinação transforma pipeline reativo (vendedor lembra → vendedor age) em
 ## 2. Stack Técnica
 
 ### Frontend
-| Item | Versão / Plano |
-|---|---|
-| TypeScript | 5 (strict) |
-| Next.js (App Router) | 14 |
-| React | 18 |
-| Tailwind CSS + shadcn/ui | latest |
-| @dnd-kit (drag-and-drop Kanban) | latest |
-| Recharts (gráficos) | latest |
-| React Hook Form + Zod | latest |
-| TanStack Query | v5 |
-| date-fns | latest |
-| react-hot-toast | latest |
-| Lucide React | latest |
+
+| Item                            | Versão / Plano |
+| ------------------------------- | -------------- |
+| TypeScript                      | 5 (strict)     |
+| Next.js (App Router)            | 14             |
+| React                           | 18             |
+| Tailwind CSS + shadcn/ui        | latest         |
+| @dnd-kit (drag-and-drop Kanban) | latest         |
+| Recharts (gráficos)             | latest         |
+| React Hook Form + Zod           | latest         |
+| TanStack Query                  | v5             |
+| date-fns                        | latest         |
+| react-hot-toast                 | latest         |
+| Lucide React                    | latest         |
 
 ### Backend / Data
-| Item | Versão / Plano |
-|---|---|
-| Next.js API Routes + Server Actions | 14 |
-| Supabase Edge Functions | Deno |
+
+| Item                                                                 | Versão / Plano |
+| -------------------------------------------------------------------- | -------------- |
+| Next.js API Routes + Server Actions                                  | 14             |
+| Supabase Edge Functions                                              | Deno           |
 | Supabase (Postgres + Auth + Storage + Realtime + pgvector + pg_cron) | Pro US$ 25/mês |
-| Prisma ORM | latest |
-| Web Push API + VAPID + Service Worker | nativo |
+| Prisma ORM                                                           | latest         |
+| Web Push API + VAPID + Service Worker                                | nativo         |
 
 ### IA
-| Item | Plano |
-|---|---|
-| Anthropic Claude API (Sonnet) | pay-per-use |
+
+| Item                            | Plano       |
+| ------------------------------- | ----------- |
+| Anthropic Claude API (Sonnet)   | pay-per-use |
 | OpenAI `text-embedding-3-small` | pay-per-use |
 
 ### Integrações
-| Item | Plano |
-|---|---|
-| WhatsApp Standard — uazapi (Whatsmeow) | ~R$ 30/número/mês |
-| WhatsApp Enterprise — Cloud API Meta | pay-per-conversation (V2) |
+
+| Item                                           | Plano                     |
+| ---------------------------------------------- | ------------------------- |
+| WhatsApp Standard — uazapi (Whatsmeow)         | ~R$ 30/número/mês         |
+| WhatsApp Enterprise — Cloud API Meta           | pay-per-conversation (V2) |
 | Stripe (Checkout + Customer Portal + Webhooks) | 3,99% + R$ 0,39/transação |
-| Resend (email transacional) | Pro US$ 20/mês |
-| Google Calendar OAuth | nativo |
+| Resend (email transacional)                    | Pro US$ 20/mês            |
+| Google Calendar OAuth                          | nativo                    |
 
 ### Tooling / Observabilidade
-| Item | Plano |
-|---|---|
-| Vercel (deploy) | Pro US$ 20/mês |
-| Sentry (error tracking) | Team US$ 26/mês |
-| PostHog (product analytics) | Free 1M eventos |
-| GitHub Actions (CI/CD) | gratuito |
-| Cursor + Claude Code | Anthropic Pro US$ 20/mês |
+
+| Item                        | Plano                    |
+| --------------------------- | ------------------------ |
+| Vercel (deploy)             | Pro US$ 20/mês           |
+| Sentry (error tracking)     | Team US$ 26/mês          |
+| PostHog (product analytics) | Free 1M eventos          |
+| GitHub Actions (CI/CD)      | gratuito                 |
+| Cursor + Claude Code        | Anthropic Pro US$ 20/mês |
 
 **Custo fixo operacional ~R$ 615/mês** + variável por workspace (uazapi, Claude tokens, Stripe).
 
@@ -100,6 +105,7 @@ app_crm/
 
 **Gerenciador:** pnpm + Turborepo.
 **Comandos típicos:**
+
 - `pnpm dev` — sobe `landing` e `web` em paralelo
 - `pnpm build` — build de todos os apps
 - `pnpm lint` / `pnpm typecheck` — checks transversais
@@ -205,7 +211,7 @@ apps/web/
 ### Multi-tenant via Supabase RLS
 
 - Toda tabela de domínio tem `workspace_id NOT NULL` e **políticas RLS obrigatórias** antes de migrar.
-- Prisma + RLS exige `prisma.$executeRaw\`SET LOCAL app.workspace_id = ${ctx.workspaceId}\`` no início de **cada request server-side** (transação ou conexão dedicada). Helper centralizado em `lib/supabase/with-workspace.ts`.
+- Prisma + RLS exige `prisma.$executeRaw\`SET LOCAL app.workspace_id = ${ctx.workspaceId}\``no início de **cada request server-side** (transação ou conexão dedicada). Helper centralizado em`lib/supabase/with-workspace.ts`.
 - Cliente browser usa **anon key** + sessão Supabase Auth — RLS protege automaticamente.
 - Nunca prossiga com migração nova sem revisar a policy correspondente.
 
@@ -269,17 +275,17 @@ apps/web/
 
 ### Paleta (tokens em `packages/config/tailwind.preset.ts`)
 
-| Token | Hex | Uso |
-|---|---|---|
-| `primary` | `#4F46E5` | CTAs, navegação ativa, links |
-| `accent` | `#6C5CE7` | destaque secundário |
-| `foreground` | `#0F172A` | texto principal |
-| `muted-foreground` | `#475569` | texto secundário |
-| `muted` | `#F1F5F9` | fundos sutis |
-| `success` | `#10B981` | lead quente, conexão ativa |
-| `warning` | `#F59E0B` | lead morno, instável |
-| `destructive` | `#EF4444` | lead frio, desconectado |
-| `info` | `#3B82F6` | informação neutra |
+| Token              | Hex       | Uso                          |
+| ------------------ | --------- | ---------------------------- |
+| `primary`          | `#4F46E5` | CTAs, navegação ativa, links |
+| `accent`           | `#6C5CE7` | destaque secundário          |
+| `foreground`       | `#0F172A` | texto principal              |
+| `muted-foreground` | `#475569` | texto secundário             |
+| `muted`            | `#F1F5F9` | fundos sutis                 |
+| `success`          | `#10B981` | lead quente, conexão ativa   |
+| `warning`          | `#F59E0B` | lead morno, instável         |
+| `destructive`      | `#EF4444` | lead frio, desconectado      |
+| `info`             | `#3B82F6` | informação neutra            |
 
 **Dark mode é tema de primeira classe**, não opção secundária. Todo componente deve ser testado nos dois temas.
 
@@ -312,19 +318,19 @@ apps/web/
 
 ## 9. Glossário de Domínio
 
-| Termo | Definição |
-|---|---|
-| **Workspace** | Tenant isolado (uma empresa cliente). Um usuário pode pertencer a vários. Isolamento via RLS. |
-| **Lead** | Contato cru, ainda não qualificado como oportunidade. |
-| **Deal / Negócio** | Oportunidade comercial ligada a um lead, com valor e etapa de pipeline. |
-| **Pipeline / Funil** | Sequência de etapas customizáveis por workspace (default: Novo → Contato → Proposta → Negociação → Ganho/Perdido). |
-| **Cadência** | Sequência configurável de mensagens automáticas por etapa, com gatilhos D+0/D+1/D+3/D+7/D+14/D+30. |
-| **Agente IA** | Persona configurável (prompt + roteamento + base de conhecimento). Até 3 ativos por workspace no Pro IA. |
-| **Handoff** | Transferência de conversa: agente→agente ou agente→humano, com resumo automático do contexto. |
-| **Health Score** | Saúde da conexão WhatsApp do workspace: verde / amarelo / vermelho. Vermelho pausa envios automaticamente. |
-| **Cérebro da Empresa** | Base de conhecimento compartilhada do workspace (campos estruturados + arquivos em pgvector). |
-| **Anti-ban** | Camada de proteção contra bloqueio de número (rate-limit, jitter, janela horária, blacklist, opt-out, variação de templates). |
-| **RBAC** | Owner / Admin / Manager / Vendedor / Viewer — ver [PRD §2.6](docs/PRD.md). |
+| Termo                  | Definição                                                                                                                     |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Workspace**          | Tenant isolado (uma empresa cliente). Um usuário pode pertencer a vários. Isolamento via RLS.                                 |
+| **Lead**               | Contato cru, ainda não qualificado como oportunidade.                                                                         |
+| **Deal / Negócio**     | Oportunidade comercial ligada a um lead, com valor e etapa de pipeline.                                                       |
+| **Pipeline / Funil**   | Sequência de etapas customizáveis por workspace (default: Novo → Contato → Proposta → Negociação → Ganho/Perdido).            |
+| **Cadência**           | Sequência configurável de mensagens automáticas por etapa, com gatilhos D+0/D+1/D+3/D+7/D+14/D+30.                            |
+| **Agente IA**          | Persona configurável (prompt + roteamento + base de conhecimento). Até 3 ativos por workspace no Pro IA.                      |
+| **Handoff**            | Transferência de conversa: agente→agente ou agente→humano, com resumo automático do contexto.                                 |
+| **Health Score**       | Saúde da conexão WhatsApp do workspace: verde / amarelo / vermelho. Vermelho pausa envios automaticamente.                    |
+| **Cérebro da Empresa** | Base de conhecimento compartilhada do workspace (campos estruturados + arquivos em pgvector).                                 |
+| **Anti-ban**           | Camada de proteção contra bloqueio de número (rate-limit, jitter, janela horária, blacklist, opt-out, variação de templates). |
+| **RBAC**               | Owner / Admin / Manager / Vendedor / Viewer — ver [PRD §2.6](docs/PRD.md).                                                    |
 
 ---
 

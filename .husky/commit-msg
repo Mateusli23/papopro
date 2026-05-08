@@ -1,0 +1,14 @@
+# Conventional Commits — checagem leve, sem dependência externa.
+# Aceita: feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert(scope?): mensagem
+msg=$(head -n1 "$1")
+pattern='^(feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(\([a-z0-9-]+\))?: .{1,}'
+if ! echo "$msg" | grep -Eq "$pattern"; then
+  echo ""
+  echo "✗ Commit message não segue Conventional Commits."
+  echo "  Esperado: <tipo>(<scope>): <descrição>"
+  echo "  Tipos:    feat, fix, chore, docs, refactor, test, build, ci, perf, style, revert"
+  echo "  Exemplo:  feat(leads): adicionar filtro por temperatura"
+  echo ""
+  echo "  Recebido: $msg"
+  exit 1
+fi

@@ -1,0 +1,7 @@
+# Next.js / Turborepo (override do .gitignore raiz não é necessário,
+# mantemos esse arquivo para o caso de o app rodar fora do monorepo)
+.next/
+.turbo/
+out/
+next-env.d.ts.bak
+.env*.local

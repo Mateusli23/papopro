@@ -1,0 +1,14 @@
+node_modules
+.next
+.turbo
+dist
+build
+out
+coverage
+.pnpm-store
+pnpm-lock.yaml
+**/.next/**
+**/dist/**
+**/build/**
+**/.turbo/**
+*.log
