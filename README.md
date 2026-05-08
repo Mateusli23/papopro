@@ -7,6 +7,7 @@ CRM SaaS multi-empresa para times de vendas consultivas (1–15 vendedores) que 
 - **Briefing de engenharia:** [CLAUDE.md](CLAUDE.md) — stack, convenções, decisões arquiteturais críticas, regras a nunca violar.
 - **Spec de produto:** [docs/PRD.md](docs/PRD.md) — requisitos completos.
 - **Plano de execução:** [docs/PLAN.md](docs/PLAN.md) — 13 marcos em 120 dias.
+- **Setup de ambiente:** [docs/SETUP.md](docs/SETUP.md) — guia de tooling local + contas externas, ordenado pelo marco que primeiro depende de cada item.
 
 ## Quick start
 
@@ -18,7 +19,7 @@ pnpm typecheck    # tsc --noEmit em todos os pacotes
 pnpm build        # build de produção
 ```
 
-Variáveis de ambiente: copie [.env.example](.env.example) para `.env.local` em cada app que precisar.
+Variáveis de ambiente: cada app tem seu próprio template — copie [apps/web/.env.local.example](apps/web/.env.local.example) e [apps/landing/.env.local.example](apps/landing/.env.local.example) pra `.env.local` no respectivo app. Pra ver onde gerar cada chave, ler [docs/SETUP.md](docs/SETUP.md).
 
 ## Estrutura
 

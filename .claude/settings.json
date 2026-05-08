@@ -6,7 +6,11 @@
       "PowerShell(git add .gitignore .gitattributes CLAUDE.md docs/ .mcp.json)",
       "PowerShell(git checkout -b m1-setup)",
       "PowerShell($env:NODE_OPTIONS = \"--use-system-ca\"; $env:NEXT_TELEMETRY_DISABLED = \"1\"; $env:TURBO_TELEMETRY_DISABLED = \"1\"; pnpm install 2>&1 | Select-Object -Last 60)",
-      "PowerShell(Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; $env:NEXT_TELEMETRY_DISABLED = \"1\"; $env:TURBO_TELEMETRY_DISABLED = \"1\"; pnpm install 2>&1 | Select-Object -Last 40)"
+      "PowerShell(Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue; $env:NEXT_TELEMETRY_DISABLED = \"1\"; $env:TURBO_TELEMETRY_DISABLED = \"1\"; pnpm install 2>&1 | Select-Object -Last 40)",
+      "PowerShell(gh --version 2>&1)",
+      "PowerShell(gh auth status 2>&1)",
+      "PowerShell(node --version)",
+      "PowerShell(node -e \"process.stdout.write\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('base64'\\)\\)\")"
     ]
   },
   "enabledPlugins": {
