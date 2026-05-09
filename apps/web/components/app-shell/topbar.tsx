@@ -1,0 +1,43 @@
+import { Input, KbdShortcut, ThemeToggle } from '@papopro/ui';
+import { Search } from '@papopro/ui/icons';
+
+import { MobileNav } from './mobile-nav';
+import { NotificationsButton } from './notifications-button';
+import { UserMenu } from './user-menu';
+
+/**
+ * Topbar fixa de 56px no topo do conteúdo:
+ *  - mobile (<lg): hamburger à esquerda + ações à direita;
+ *  - desktop (≥lg): busca expandida + ações.
+ *
+ * Busca é placeholder visual até M3+ (CommandMenu/Cmd+K vem depois).
+ */
+export function Topbar() {
+  return (
+    <header
+      className="bg-background/80 supports-[backdrop-filter]:bg-background/60 border-border sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-4 backdrop-blur-md sm:px-6"
+      role="banner"
+    >
+      <MobileNav />
+
+      <div className="relative hidden flex-1 max-w-md md:flex">
+        <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+        <Input
+          type="search"
+          placeholder="Buscar leads, conversas, tarefas…"
+          className="pl-9 pr-16"
+          aria-label="Busca global"
+        />
+        <span className="text-muted-foreground absolute right-3 top-1/2 -translate-y-1/2">
+          <KbdShortcut keys={['Ctrl', 'K']} />
+        </span>
+      </div>
+
+      <div className="ml-auto flex items-center gap-1">
+        <ThemeToggle />
+        <NotificationsButton />
+        <UserMenu />
+      </div>
+    </header>
+  );
+}

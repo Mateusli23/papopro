@@ -12,6 +12,7 @@
     "clean": "rimraf .next .turbo node_modules"
   },
   "dependencies": {
+    "@fontsource/poppins": "5.2.7",
     "@papopro/db": "workspace:*",
     "@papopro/ui": "workspace:*",
     "next": "14.2.20",

@@ -1,10 +1,120 @@
-/**
- * tokens.css — placeholder de M1.
+/*
+ * tokens.css — fonte de verdade das cores do PapoPro.
  *
- * M2 substitui esse arquivo por CSS custom properties (HSL) com overrides
- * para `.dark`, conforme a paleta de [CLAUDE.md §8] e princípio de "dark mode
- * é tema de primeira classe".
+ * Apenas CSS custom properties — sem `@apply` nem `@layer` — pra que esse
+ * arquivo possa ser importado de qualquer pipeline (Next, Vite, Storybook)
+ * sem depender do plugin Tailwind estar carregado naquele contexto.
+ *
+ * O `globals.css` de cada app importa esse arquivo ANTES das diretivas
+ * `@tailwind` e adiciona os estilos base com `@apply`.
+ *
+ * Paleta canônica em [CLAUDE.md §8]:
+ *   primary #367BEC (217 82% 57%)   accent #FFB715 (41 100% 54%)
+ *   foreground #0F1C3E (223 61% 15%)
+ *   success #10B981 (160 84% 39%)   warning #F59E0B (38 92% 50%)
+ *   destructive #EF4444 (0 84% 60%) info #3B82F6 (217 91% 60%)
+ *
+ * Nota sobre warning vs. accent: o amarelo `accent` (#FFB715) é decorativo
+ * (CTAs amarelos, BrandArcs, microcaixas em mídias). O amarelo `warning`
+ * (#F59E0B) é estado semântico (lead morno, conexão instável). Não usar
+ * `warning` para destaque visual nem `accent` para alerta — eles têm
+ * funções distintas no produto.
+ *
+ * Dark mode é "tema de primeira classe" — paleta recalibrada para contraste
+ * AA em fundos escuros, não é só inversão de luminância.
  */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+
+:root {
+  /* Superfícies (light) */
+  --background: 0 0% 100%; /* #FFFFFF */
+  --foreground: 223 61% 15%; /* #0F1C3E (navy) */
+
+  --card: 0 0% 100%;
+  --card-foreground: 223 61% 15%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 223 61% 15%;
+
+  --muted: 210 40% 96%; /* #F1F5F9 */
+  --muted-foreground: 215 19% 35%; /* #475569 */
+
+  --border: 214 32% 91%; /* #E2E8F0 */
+  --input: 214 32% 91%;
+  --ring: 217 82% 57%;
+
+  /* Marca */
+  --primary: 217 82% 57%; /* #367BEC */
+  --primary-foreground: 0 0% 100%;
+
+  --accent: 41 100% 54%; /* #FFB715 */
+  --accent-foreground: 223 61% 15%; /* texto navy sobre amarelo (contraste AAA) */
+
+  /* Status */
+  --success: 160 84% 39%; /* #10B981 */
+  --success-foreground: 0 0% 100%;
+
+  --warning: 38 92% 50%; /* #F59E0B */
+  --warning-foreground: 223 61% 15%;
+
+  --destructive: 0 84% 60%; /* #EF4444 */
+  --destructive-foreground: 0 0% 100%;
+
+  --info: 217 91% 60%; /* #3B82F6 */
+  --info-foreground: 0 0% 100%;
+
+  /* Sidebar — superfície dedicada com contraste levemente maior que o body. */
+  --sidebar: 210 40% 98%;
+  --sidebar-foreground: 223 61% 15%;
+  --sidebar-accent: 210 40% 94%;
+  --sidebar-accent-foreground: 217 82% 57%;
+  --sidebar-border: 214 32% 91%;
+
+  /* Forma */
+  --radius: 12px;
+}
+
+.dark {
+  /* Superfícies (dark) — fundo "slate 950 / 900", não preto puro. */
+  --background: 222 47% 6%; /* ~#0A0F1C */
+  --foreground: 210 40% 96%; /* ~#F1F5F9 */
+
+  --card: 222 47% 9%; /* ~#101727 */
+  --card-foreground: 210 40% 96%;
+
+  --popover: 222 47% 9%;
+  --popover-foreground: 210 40% 96%;
+
+  --muted: 222 32% 15%;
+  --muted-foreground: 215 20% 65%;
+
+  --border: 222 32% 18%;
+  --input: 222 32% 18%;
+  --ring: 217 90% 68%;
+
+  /* Marca recalibrada — clareia primary/accent pra manter contraste no dark. */
+  --primary: 217 90% 68%;
+  --primary-foreground: 222 47% 6%;
+
+  --accent: 41 95% 60%;
+  --accent-foreground: 223 61% 12%; /* navy levemente mais escuro pra anti-aliasing */
+
+  /* Status — leve clareada no dark, mantém familiaridade. */
+  --success: 160 70% 45%;
+  --success-foreground: 222 47% 6%;
+
+  --warning: 38 95% 58%;
+  --warning-foreground: 222 47% 6%;
+
+  --destructive: 0 84% 65%;
+  --destructive-foreground: 0 0% 100%;
+
+  --info: 217 91% 65%;
+  --info-foreground: 222 47% 6%;
+
+  /* Sidebar — leve diferenciação do body, sem virar preto. */
+  --sidebar: 222 47% 8%;
+  --sidebar-foreground: 210 40% 96%;
+  --sidebar-accent: 222 32% 14%;
+  --sidebar-accent-foreground: 217 90% 73%;
+  --sidebar-border: 222 32% 16%;
+}

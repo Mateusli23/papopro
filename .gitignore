@@ -41,6 +41,7 @@ Thumbs.db
 # Claude Code local settings
 .claude/settings.local.json
 .claude/projects/
+.claude/scheduled_tasks.lock
 
 # Vercel
 .vercel/
