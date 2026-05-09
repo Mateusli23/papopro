@@ -275,17 +275,17 @@ apps/web/
 
 ### Paleta (tokens em `packages/config/tailwind.preset.ts`)
 
-| Token              | Hex       | Uso                                                        |
-| ------------------ | --------- | ---------------------------------------------------------- |
-| `primary`          | `#367BEC` | CTAs, navegação ativa, links                               |
+| Token              | Hex       | Uso                                                         |
+| ------------------ | --------- | ----------------------------------------------------------- |
+| `primary`          | `#367BEC` | CTAs, navegação ativa, links                                |
 | `accent`           | `#FFB715` | amarelo decorativo — microcaixas, BrandArcs, CTAs especiais |
-| `foreground`       | `#0F1C3E` | texto principal (navy)                                     |
-| `muted-foreground` | `#475569` | texto secundário                                           |
-| `muted`            | `#F1F5F9` | fundos sutis                                               |
-| `success`          | `#10B981` | lead quente, conexão ativa                                 |
-| `warning`          | `#F59E0B` | lead morno, instável (estado semântico — ≠ `accent`)       |
-| `destructive`      | `#EF4444` | lead frio, desconectado                                    |
-| `info`             | `#3B82F6` | informação neutra                                          |
+| `foreground`       | `#0F1C3E` | texto principal (navy)                                      |
+| `muted-foreground` | `#475569` | texto secundário                                            |
+| `muted`            | `#F1F5F9` | fundos sutis                                                |
+| `success`          | `#10B981` | lead quente, conexão ativa                                  |
+| `warning`          | `#F59E0B` | lead morno, instável (estado semântico — ≠ `accent`)        |
+| `destructive`      | `#EF4444` | lead frio, desconectado                                     |
+| `info`             | `#3B82F6` | informação neutra                                           |
 
 **Importante:** `accent` (amarelo) é decorativo; `warning` (amarelo mostarda) é estado semântico. Eles existem em paralelo justamente porque o produto precisa marcar "lead morno" sem que isso colida com a identidade da marca.
 

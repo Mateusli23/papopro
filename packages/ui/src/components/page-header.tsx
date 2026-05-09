@@ -13,16 +13,13 @@ interface PageHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
  * Cabeçalho padrão de página: título grande + descrição opcional + slot de ações.
  * Usado em todas as rotas de produto (Leads, Kanban, Inbox, etc).
  */
-export function PageHeader({
-  title,
-  description,
-  actions,
-  className,
-  ...props
-}: PageHeaderProps) {
+export function PageHeader({ title, description, actions, className, ...props }: PageHeaderProps) {
   return (
     <div
-      className={cn('flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between', className)}
+      className={cn(
+        'flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between',
+        className,
+      )}
       {...props}
     >
       <div className="flex flex-col gap-1">

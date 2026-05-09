@@ -58,7 +58,9 @@ function NotificationRow({ n }: { n: FakeNotification }) {
         !n.read && 'bg-primary/[0.04]',
       )}
     >
-      <span className={cn('mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full', tone)}>
+      <span
+        className={cn('mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full', tone)}
+      >
         <Icon className="size-4" aria-hidden />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -70,7 +72,9 @@ function NotificationRow({ n }: { n: FakeNotification }) {
         </div>
         <p className="text-caption text-muted-foreground line-clamp-2">{n.description}</p>
       </div>
-      {!n.read && <span className="bg-primary mt-1 size-1.5 shrink-0 rounded-full" aria-label="Não lida" />}
+      {!n.read && (
+        <span className="bg-primary mt-1 size-1.5 shrink-0 rounded-full" aria-label="Não lida" />
+      )}
     </div>
   );
 }
@@ -86,7 +90,12 @@ export function NotificationsButton() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" aria-label={`Notificações (${unread} não lidas)`}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={`Notificações (${unread} não lidas)`}
+        >
           <Bell className="size-4" />
           {unread > 0 && (
             <span

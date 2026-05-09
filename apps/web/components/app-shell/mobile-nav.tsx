@@ -50,7 +50,7 @@ export function MobileNav() {
           Acesso rápido a leads, kanban, inbox, agentes e configurações.
         </SheetDescription>
 
-        <div className="border-sidebar-border flex h-14 items-center px-4 border-b">
+        <div className="border-sidebar-border flex h-14 items-center border-b px-4">
           <LogoFull />
         </div>
         <div className="border-sidebar-border border-b p-2">

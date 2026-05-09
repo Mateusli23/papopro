@@ -7,7 +7,6 @@ import { usePathname } from 'next/navigation';
 
 import { Badge, cn, ScrollArea } from '@papopro/ui';
 
-
 import { NAV_GROUPS } from './nav-config';
 
 interface SidebarNavProps {
@@ -49,7 +48,7 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
                   onClick={onNavigate}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'group relative flex items-center gap-3 rounded-md px-3 py-2 text-body transition-colors',
+                    'text-body group relative flex items-center gap-3 rounded-md px-3 py-2 transition-colors',
                     isActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',

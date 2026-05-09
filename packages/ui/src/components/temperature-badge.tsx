@@ -30,7 +30,7 @@ export function TemperatureBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-caption font-medium',
+        'text-caption inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
         tone,
         iconOnly && 'p-1',
         className,

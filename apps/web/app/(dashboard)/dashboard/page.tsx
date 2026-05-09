@@ -21,7 +21,12 @@ import { ArrowRight, Inbox, PlusCircle, Sparkles, Zap } from '@papopro/ui/icons'
 const KPIS = [
   { label: 'Leads ativos', value: '128', delta: '+12 esta semana', tone: 'default' as const },
   { label: 'Em negociação', value: 'R$ 84.300', delta: '+8 oportunidades', tone: 'info' as const },
-  { label: 'Conversões (30d)', value: '14', delta: '+3 vs. período anterior', tone: 'success' as const },
+  {
+    label: 'Conversões (30d)',
+    value: '14',
+    delta: '+3 vs. período anterior',
+    tone: 'success' as const,
+  },
   { label: 'Esfriando', value: '6', delta: 'requer atenção', tone: 'warning' as const },
 ];
 
@@ -94,7 +99,7 @@ export default function DashboardPage() {
                 key={l.name}
                 className="hover:bg-muted/40 -mx-2 flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors"
               >
-                <span className="bg-muted text-muted-foreground flex size-9 items-center justify-center rounded-full text-caption font-semibold">
+                <span className="bg-muted text-muted-foreground text-caption flex size-9 items-center justify-center rounded-full font-semibold">
                   {l.name
                     .split(' ')
                     .map((p) => p[0])

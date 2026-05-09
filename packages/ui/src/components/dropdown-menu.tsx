@@ -170,7 +170,10 @@ export const DropdownMenuSeparator = React.forwardRef<
   );
 });
 
-export function DropdownMenuShortcut({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+export function DropdownMenuShortcut({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement>) {
   return (
     <span
       className={cn('text-muted-foreground text-caption ml-auto tracking-widest', className)}

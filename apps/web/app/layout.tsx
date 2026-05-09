@@ -20,8 +20,7 @@ export const metadata: Metadata = {
     default: 'PapoPro',
     template: '%s · PapoPro',
   },
-  description:
-    'CRM com WhatsApp, motor de cadência e agentes IA para times de vendas consultivas.',
+  description: 'CRM com WhatsApp, motor de cadência e agentes IA para times de vendas consultivas.',
   applicationName: 'PapoPro',
 };
 

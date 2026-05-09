@@ -28,8 +28,8 @@
    */
   :root {
     --font-sans:
-      'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-      'Segoe UI', Roboto, sans-serif;
+      'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+      sans-serif;
   }
 
   * {
