@@ -77,6 +77,10 @@ export function DealCard({ deal, isOverlay = false }: DealCardProps) {
         'border-border transition-all duration-150 will-change-transform',
         'hover:border-primary/40 hover:-translate-y-0.5 hover:shadow-md',
         'active:cursor-grabbing',
+        // Touch UX (mobile): `touch-pan-x` deixa o browser cuidar de swipes
+        // horizontais antes do TouchSensor ativar (250ms hold). `select-none`
+        // evita o callout de seleção do iOS Safari durante o long-press.
+        'touch-pan-x select-none',
         isDragging && 'opacity-30',
         isOverlay && 'ring-primary/30 rotate-[1deg] scale-[1.02] shadow-2xl ring-2',
         isWon && 'bg-success/[0.04]',
@@ -101,7 +105,11 @@ export function DealCard({ deal, isOverlay = false }: DealCardProps) {
           <Link
             href={`/leads/${lead.id}`}
             className="text-caption text-muted-foreground hover:text-foreground mt-0.5 inline-flex items-center gap-1 truncate"
+            // Mouse/pen via PointerSensor + touch via TouchSensor: ambos
+            // precisam de stopPropagation pra que long-press direto no nome
+            // do lead navegue (não ative drag do card pai).
             onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
           >
             <User className="size-3 shrink-0" aria-hidden />
             <span className="truncate">{lead.name}</span>

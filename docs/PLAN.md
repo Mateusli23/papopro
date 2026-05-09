@@ -221,7 +221,7 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [x] Top bar com switch de visualização (Kanban / Lista) — botão "Ver no Kanban"/"Ver em lista" no header de cada rota
 - [x] Atalhos: `n` adiciona lead, `/` foca busca + `g+l` (Leads), `g+k` (Kanban). `Esc` fecha modal/detalhe é nativo do Radix Dialog/Sheet.
 - [x] Empty states tratados (sem leads, sem resultados de filtro, sem etapas)
-- [x] Mobile: Kanban vira lista colapsável por etapa; detalhe vira tabs
+- [x] Mobile: Kanban com **6 colunas horizontais lado a lado** (mesmo layout do desktop), swipe nativo pra navegar entre etapas e **long-press de 250ms** ativa drag — `TouchSensor` + `touch-action` por camada. Detalhe vira tabs.
 
 **Bônus entregue (não estava no plano):**
 

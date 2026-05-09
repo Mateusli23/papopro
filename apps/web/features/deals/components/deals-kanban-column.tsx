@@ -81,11 +81,14 @@ export function DealsKanbanColumn({ stage, deals, onAddDeal }: DealsKanbanColumn
         </div>
       </header>
 
-      {/* Drop area */}
+      {/* Drop area — `touch-pan-y` permite scroll vertical natural por
+          dentro da coluna (cards lotados) sem que o gesto seja interpretado
+          como início de drag pelo TouchSensor. Drag continua via long-press
+          de 250ms+. */}
       <div
         ref={setNodeRef}
         className={cn(
-          'flex flex-1 flex-col gap-2 overflow-y-auto p-2 transition-colors',
+          'flex flex-1 touch-pan-y flex-col gap-2 overflow-y-auto p-2 transition-colors',
           isOver && 'bg-primary/[0.06] ring-primary/30 ring-2 ring-inset',
         )}
       >

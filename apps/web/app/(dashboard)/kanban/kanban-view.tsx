@@ -9,17 +9,22 @@ import { List, PlusCircle } from '@papopro/ui/icons';
 
 import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
 import { DealsKanbanBoard } from '@/features/deals/components/deals-kanban-board';
-import { DealsKanbanMobile } from '@/features/deals/components/deals-kanban-mobile';
 import { PipelineStats } from '@/features/deals/components/pipeline-stats';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 
 /**
- * `/kanban` — Pipeline de Negócios. Layout responsivo:
- *  - ≥md: board de 6 colunas com drag-and-drop entre todas
- *  - <md: lista colapsável por etapa (drag em mobile compete com scroll)
+ * `/kanban` — Pipeline de Negócios. Layout único responsivo (M4 trazia
+ * dois layouts; foram unificados ao adicionar TouchSensor no board com
+ * `delay: 250`):
  *
- * Atalho `n` (em /kanban) abre o modal "Adicionar negócio". O botão
- * "+ Adicionar negócio" dentro de cada coluna pré-seleciona a etapa.
+ *  - Em qualquer largura: 6 colunas lado a lado com scroll horizontal
+ *    snap-x (swipe nativo no celular).
+ *  - Mouse/pen: drag a partir de 6px de movimento.
+ *  - Touch: long-press de 250ms ativa drag (não interfere com swipe rápido).
+ *  - Teclado: Tab → Space → Arrows → Space.
+ *
+ * Atalho `n` abre o modal "Adicionar negócio". O botão "+ Adicionar
+ * negócio" dentro de cada coluna pré-seleciona a etapa.
  *
  * Em M8 essa view passa a hidratar com dados reais (Server Component que
  * lê `deals` via Prisma + RLS, passa snapshot inicial pro client).
@@ -56,12 +61,7 @@ export function KanbanView() {
 
       <PipelineStats />
 
-      <div className="hidden md:block">
-        <DealsKanbanBoard onAddDeal={openCreate} />
-      </div>
-      <div className="md:hidden">
-        <DealsKanbanMobile />
-      </div>
+      <DealsKanbanBoard onAddDeal={openCreate} />
 
       <DealCreateDialog
         open={createOpen}
