@@ -24,6 +24,19 @@ export {
   CardHeader,
   CardTitle,
 } from './components/card';
+export { Checkbox } from './components/checkbox';
+export {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+} from './components/dialog';
 export {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -43,6 +56,7 @@ export {
 } from './components/dropdown-menu';
 export { Input, type InputProps } from './components/input';
 export { Label } from './components/label';
+export { RadioGroup, RadioGroupItem } from './components/radio-group';
 export { ScrollArea, ScrollBar } from './components/scroll-area';
 export { Separator } from './components/separator';
 export {
@@ -56,12 +70,17 @@ export {
   SheetTitle,
   SheetTrigger,
 } from './components/sheet';
+export { Skeleton } from './components/skeleton';
+export { Switch } from './components/switch';
+export { Textarea, type TextareaProps } from './components/textarea';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/tooltip';
 
 // Domínio
 export { BrandArcs, type BrandArcsProps, type BrandArcsVariant } from './components/brand-arcs';
 export { EmptyState } from './components/empty-state';
+export { ErrorState } from './components/error-state';
 export { KbdShortcut } from './components/kbd-shortcut';
+export { LoadingState } from './components/loading-state';
 export { LogoFull, LogoMark } from './components/logo';
 export { PageHeader } from './components/page-header';
 export { StatusDot, type StatusTone } from './components/status-dot';
