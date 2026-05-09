@@ -144,9 +144,9 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ---
 
-## M3 — App Shell + Auth UI + Onboarding (mockado)
+## M3 — App Shell + Auth UI + Onboarding (mockado) ✅
 
-**Branch:** `m3-app-shell` · **Status:** parcial — 2 sub-PRs mergeados em `main` (auth + onboarding mínimo; forgot/verify-email + stubs legais). Marco fecha quando os itens pendentes abaixo entrarem em PRs subsequentes.
+**Branches:** `m3-app-shell` (PRs #3 e #4 — auth + onboarding mínimo + forgot/verify-email + stubs legais) + `m3-wizard` (PR pendente — wizard, middleware, AuthMockProvider, Cmd+K).
 
 **Objetivo:** Telas de autenticação, layout do produto (sidebar + topbar + workspace switcher) e wizard de onboarding navegáveis com mocks. Produto "parece" funcionar sem backend.
 
@@ -157,16 +157,16 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [x] `(auth)/verify-email/page.tsx` — espera confirmação com botão "Reenviar" + countdown de 60s, aceita `?email=` opcional
 - [x] `(dashboard)/layout.tsx` — sidebar fixa 240px + topbar _(coberto pelo M2)_
 - [x] Sidebar com itens: Dashboard, Leads, Kanban, Inbox, Agentes, Cadências, Tarefas, Relatórios, Configurações _(coberto pelo M2)_
-- [x] Workspace switcher no topo da sidebar (mock de 3 workspaces) _(coberto pelo M2)_
-- [x] Topbar: busca placeholder, sino com badge, avatar com menu (perfil, alternar tema, sair) _(coberto pelo M2)_
+- [x] Workspace switcher no topo da sidebar — agora ligado ao `AuthMockProvider` (cookie compartilhado com middleware)
+- [x] Topbar: busca placeholder, sino com badge, avatar com menu (perfil, alternar tema, sair) — "Sair" chama `signOut` real do AuthMock
 - [x] Drawer de notificações com 30 dias de mocks _(coberto pelo M2)_
-- [ ] `(dashboard)/page.tsx` — variante pré-onboarding com cards orientando próximo passo _(M2 entregou só o estado pós-onboarding com KPIs)_
-- [ ] Tela "Criar workspace" (primeiro acesso, 0 workspaces) — substituída temporariamente por `/onboarding` mínimo neste PR
-- [ ] Welcome modal + Wizard de 4 passos (workspace, conectar WhatsApp com QR mock, criar agente IA, importar CSV) com botão "Pular este passo"
-- [ ] `middleware.ts` placeholder: redireciona `/` para `/dashboard` se "logado" (cookie mock), senão `/login`
-- [ ] Provider `AuthMockProvider` com toggle de usuário/workspace para acelerar dev — embrulhado no layout
-- [ ] Atalho `g + n` para abrir Cmd+K placeholder
-- [x] Responsividade: shell colapsa pra menu drawer em <1024px _(M2)_ + auth screens responsivas em ≤md _(este PR)_
+- [x] `(dashboard)/page.tsx` — variante pré-onboarding com cards orientando próximo passo (4 cards: WhatsApp, Agente IA, Importar CSV, Adicionar lead) + variante pós-onboarding com KPIs (a do M2)
+- [x] Tela "Criar workspace" — destravada via `/onboarding` mínimo + step 1 do wizard (workspace name) que confirma/edita
+- [x] Welcome modal + Wizard de 4 passos (workspace, conectar WhatsApp com QR mock, criar agente IA, importar CSV) com botão "Pular este passo" — auto-abre na primeira visita ao dashboard, fecha por X/Esc/Concluir, marca `papopro_auth_mock_wizard_completed=1` no cookie pra não reabrir
+- [x] `middleware.ts` — gate de auth que lê o cookie `papopro_auth_mock_user`. Regras: `/` → /dashboard ou /login; rotas (auth) redirecionam pro dashboard se já logado; rotas (dashboard)/onboarding redirecionam pra /login com `?next=`; /legal, /dev, /api, /\_next bypass.
+- [x] Provider `AuthMockProvider` com `signIn`, `signOut`, `setActiveWorkspace`, `markWizardCompleted`. Persiste tudo via cookies (compartilhado com middleware). Em M7 substituído por sessão Supabase real — API do hook foi desenhada pra casar.
+- [x] Atalho `g + n` para abrir Cmd+K placeholder + `Ctrl/⌘ + K` — `useGlobalShortcuts` ignora foco em `<input>`/`<textarea>`/`[contenteditable]` ou containers com `data-shortcut-ignore`. Palette mostra navegação atual (todos itens hoje vão pra /dashboard) com nota "Versão completa em M5".
+- [x] Responsividade: shell colapsa pra menu drawer em <1024px _(M2)_ + auth screens responsivas em ≤md + wizard 2 colunas em md+, 1 coluna em mobile
 
 **Adicional entregue (não estava no plano original do M3):**
 
@@ -174,11 +174,26 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [x] `/onboarding` minimalista de 1 passo (nome do workspace) — destrava o fluxo fim-a-fim antes do wizard de 4 passos chegar
 - [x] `FormField` composto (Label + Input + erro/hint acessível) em `features/auth/components/`
 - [x] Schemas Zod compartilhados de login/signup/onboarding/forgot em `features/auth/schemas.ts`
+- [x] Schemas Zod do wizard em `features/onboarding/schemas.ts` (`wizardWorkspaceSchema`, `wizardWhatsappSchema`, `wizardAgentSchema` + `AGENT_TEMPLATES` fixture) — preparados para virar input de Server Actions em M7+
 - [x] `react-hook-form ^7.75`, `zod ^4.4` e `@hookform/resolvers ^5.2` adicionados em `apps/web`
 - [x] Stubs `/legal/terms` e `/legal/privacy` com layout próprio + EmptyState (texto definitivo entra no M13 com revisão jurídica)
-- [x] Ícones `ShieldCheck` e `FileText` adicionados ao re-export central em `@papopro/ui/icons`
+- [x] Ícones `ShieldCheck`, `FileText` e `Smartphone` adicionados ao re-export central em `@papopro/ui/icons`
+- [x] Helpers `lib/auth/cookies.ts` (read/write cookie no client + nomes centralizados em `AUTH_MOCK_COOKIES`)
 
-**Commit final:** `feat(web): app shell with auth screens, onboarding wizard and mocked auth`
+**Sub-PRs do `m3-wizard`:**
+
+- **`m3-wizard` — Welcome wizard, middleware mock e Cmd+K**
+  - `lib/auth/cookies.ts` + `lib/auth/auth-mock-provider.tsx` (client provider via cookies)
+  - `middleware.ts` Edge runtime com matcher excluindo /api, /\_next, /legal, /dev, estáticos
+  - `features/onboarding/components/welcome-wizard.tsx` (Dialog + ProgressBar + 4 steps)
+  - 4 steps independentes em `features/onboarding/components/steps/`: workspace, whatsapp (QR SVG mock + status pulse), agent (cards-radio com 4 templates), csv (input file + preview hardcoded)
+  - `features/onboarding/components/welcome-wizard-controller.tsx` — auto-abre quando `firstAccess && !wizardCompleted`
+  - `apps/web/app/(dashboard)/dashboard/dashboard-content.tsx` — variantes pré e pós-onboarding com `Skeleton` enquanto cookie hidrata
+  - `hooks/use-global-shortcuts.ts` + `components/app-shell/cmdk-palette.tsx` (Dialog + cmdk com lista de rotas)
+  - `UserMenu` agora chama `signOut`; `WorkspaceSwitcher` lê do AuthMock e persiste via cookie
+  - Commit: `feat(web): welcome wizard, auth-mock provider, middleware and cmdk placeholder`
+
+**Commit final do M3:** `feat(web): welcome wizard, auth-mock provider, middleware and cmdk placeholder` (PR `m3-wizard` pendente).
 
 ---
 

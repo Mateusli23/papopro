@@ -11,6 +11,8 @@ import { Controller, useForm } from 'react-hook-form';
 import { Button, Checkbox } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
+import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+
 import { signupSchema, type SignupInput } from '../schemas';
 
 import { FormField } from './form-field';
@@ -25,6 +27,7 @@ import { FormField } from './form-field';
  */
 export function SignupForm() {
   const router = useRouter();
+  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -38,12 +41,16 @@ export function SignupForm() {
     mode: 'onTouched',
   });
 
-  const onSubmit = handleSubmit(async () => {
+  const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
     // Mock: simula latência da rede. Em M7, troca por Server Action real.
     await new Promise((resolve) => setTimeout(resolve, 600));
 
+    // Marca como "logado" pra destravar /onboarding (middleware libera). Em
+    // M7 quem vai entrar primeiro é o /verify-email, mas a UX intermediária
+    // (signup → onboarding) já vale como mock pra fechar o fluxo de M3.
+    signIn(data.email);
     router.push('/onboarding');
   });
 

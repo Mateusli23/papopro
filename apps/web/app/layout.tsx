@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import { ThemeProvider } from '@papopro/ui';
 
 import { Toaster } from '@/components/toaster';
+import { AuthMockProvider } from '@/lib/auth/auth-mock-provider';
 
 import './globals.css';
 
@@ -40,8 +41,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR" suppressHydrationWarning>
       <body className="bg-background text-foreground min-h-screen font-sans antialiased">
         <ThemeProvider>
-          {children}
-          <Toaster />
+          <AuthMockProvider>
+            {children}
+            <Toaster />
+          </AuthMockProvider>
         </ThemeProvider>
       </body>
     </html>

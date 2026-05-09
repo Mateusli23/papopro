@@ -11,6 +11,8 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
+import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+
 import { loginSchema, type LoginInput } from '../schemas';
 
 import { FormField } from './form-field';
@@ -28,6 +30,7 @@ import { FormField } from './form-field';
  */
 export function LoginForm() {
   const router = useRouter();
+  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -40,13 +43,16 @@ export function LoginForm() {
     mode: 'onTouched',
   });
 
-  const onSubmit = handleSubmit(async () => {
+  const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
     // Mock: simula latência da rede pra mostrar o loading do botão.
     // Em M7, troca por Server Action real.
     await new Promise((resolve) => setTimeout(resolve, 600));
 
+    // Marca o cookie de "logado" antes de navegar — o middleware checa esse
+    // cookie no próximo render e libera /dashboard sem redirect pra /login.
+    signIn(data.email);
     router.push('/dashboard');
   });
 

@@ -70,6 +70,7 @@ export {
   Send,
   Settings,
   ShieldCheck,
+  Smartphone,
   Smile,
   Sparkles,
   Star,
