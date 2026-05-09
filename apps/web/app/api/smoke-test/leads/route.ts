@@ -11,9 +11,11 @@
  */
 import { NextResponse } from 'next/server';
 
-import { calcRotState } from '@/features/kanban/rotting';
+import { dealCreateSchema } from '@/features/deals/schemas';
 import { applyLeadFilters } from '@/features/leads/queries';
+import { calcRotState } from '@/features/leads/rotting';
 import { leadCreateSchema } from '@/features/leads/schemas';
+import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 
 interface CheckResult {
@@ -200,6 +202,62 @@ export function GET() {
     const lead = FAKE_LEADS.find((l) => l.stageId === 'perdido')!;
     return calcRotState(lead) === 'none';
   });
+
+  // ── Deals (Pipeline Kanban) ─────────────────────────────────────────────
+  t = run('deals', results);
+  t('deals fixture > 50', () => FAKE_DEALS.length > 50 || `count=${FAKE_DEALS.length}`);
+  t('IDs únicos', () => new Set(FAKE_DEALS.map((d) => d.id)).size === FAKE_DEALS.length);
+  t('Cobre todas as 6 etapas no Kanban', () => {
+    const stages = new Set(FAKE_DEALS.map((d) => d.stageId));
+    return ['novo', 'em_contato', 'proposta', 'negociacao', 'ganho', 'perdido'].every((s) =>
+      stages.has(s),
+    );
+  });
+  t('Status terminais batem com etapa terminal', () => {
+    return FAKE_DEALS.every((d) => {
+      if (d.stageId === 'ganho') return d.status === 'won';
+      if (d.stageId === 'perdido') return d.status === 'lost';
+      return d.status === 'open';
+    });
+  });
+  t('Deals abertos têm probability definida', () =>
+    FAKE_DEALS.filter((d) => d.status === 'open').every((d) => typeof d.probability === 'number'),
+  );
+  t('Todo deal aponta pra um lead existente', () => {
+    const leadIds = new Set(FAKE_LEADS.map((l) => l.id));
+    return FAKE_DEALS.every((d) => leadIds.has(d.leadId));
+  });
+
+  // ── Validação Zod (dealCreateSchema) ────────────────────────────────────
+  t = run('zod-deal', results);
+  const baseValidDeal = {
+    title: 'Demo deal de teste',
+    leadId: 'lead_001',
+    stageId: 'novo',
+    valueCents: 500_000_00,
+    ownerId: 'user_mateus',
+  };
+  t('input mínimo de deal válido', () => dealCreateSchema.safeParse(baseValidDeal).success);
+  t(
+    'título vazio é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, title: '' }).success,
+  );
+  t(
+    'título com 2 chars é rejeitado (min 3)',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, title: 'AB' }).success,
+  );
+  t(
+    'leadId vazio é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, leadId: '' }).success,
+  );
+  t(
+    'stageId vazio é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, stageId: '' }).success,
+  );
+  t(
+    'valueCents negativo é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, valueCents: -1 }).success,
+  );
 
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
