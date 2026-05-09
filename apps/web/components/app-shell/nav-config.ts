@@ -44,7 +44,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Inbox', href: '/inbox', icon: Inbox, soon: true, badge: 4 },
       { label: 'Agentes', href: '/agents', icon: Sparkles, soon: true },
       { label: 'Cadências', href: '/cadences', icon: Repeat, soon: true },
-      { label: 'Tarefas', href: '/tasks', icon: ListChecks, soon: true },
+      { label: 'Tarefas', href: '/tasks', icon: ListChecks },
       { label: 'Relatórios', href: '/reports', icon: PieChart },
     ],
   },
