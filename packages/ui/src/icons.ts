@@ -46,6 +46,7 @@ export {
   Layers,
   LayoutDashboard,
   LifeBuoy,
+  List,
   ListChecks,
   Loader2,
   LogOut,

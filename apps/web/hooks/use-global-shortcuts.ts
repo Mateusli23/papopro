@@ -3,37 +3,41 @@
 import * as React from 'react';
 
 /**
- * Captura sequências e atalhos globais. Hoje (M3) atende:
- *  - `g` seguido de `n` (em até 1.5s) → callback `onOpenCmdK`
- *  - `Ctrl/⌘ + K` → mesmo callback
+ * Captura sequências e atalhos globais. Atalhos suportados:
  *
- * Em M5+ esse hook ganha mais combos (`/` foca busca, `n` adiciona lead,
- * `Esc` fecha modal/detalhe — PLAN.md M4) seguindo o padrão Linear/Notion.
+ *  - `Ctrl/⌘ + K` ou sequência `g + n` → abre Cmd+K palette (`onOpenCmdK`)
+ *  - `g + l` → navega pra `/leads` (`onGoLeads`)
+ *  - `g + k` → navega pra `/kanban` (`onGoKanban`)
+ *  - `n` → abre modal "Adicionar lead" (`onCreateLead`) — só na rota Leads/Kanban
+ *  - `/` → foca elemento com `data-shortcut-search` (`onFocusSearch`) — atualmente
+ *    o input de busca da `LeadFilters`; nenhum efeito noutras rotas
+ *  - `Esc` em modal/sheet/detalhe → tratado pelo Radix; este hook não captura
  *
  * Regras importantes:
- *  - Ignora quando o foco está em `<input>`, `<textarea>` ou `[contenteditable]`
- *    — caso contrário o "g" virava insert no campo.
- *  - `data-shortcut-ignore` pode ser usado em containers customizados que
- *    queiram opt-out (ex: o próprio Cmd+K palette quando aberto).
+ *  - Ignora quando o foco está em `<input>`/`<textarea>`/`[contenteditable]` —
+ *    caso contrário "n" virava texto no campo.
+ *  - `data-shortcut-ignore` em containers customizados opta por ignorar
+ *    (ex: o próprio Cmd+K palette quando aberto).
+ *  - Callbacks são opcionais — passe só os que importam pra rota atual.
  */
 
 interface UseGlobalShortcutsOptions {
-  onOpenCmdK: () => void;
+  onOpenCmdK?: () => void;
+  onGoLeads?: () => void;
+  onGoKanban?: () => void;
+  onCreateLead?: () => void;
+  onFocusSearch?: () => void;
 }
 
 const SEQUENCE_WINDOW_MS = 1500;
 
-export function useGlobalShortcuts({ onOpenCmdK }: UseGlobalShortcutsOptions) {
-  // `lastG` guarda o timestamp da última tecla `g` — se a próxima tecla `n`
-  // chegar antes de `SEQUENCE_WINDOW_MS`, dispara. Usamos ref pra não
-  // re-criar o listener a cada render.
+export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
   const lastGRef = React.useRef<number | null>(null);
-  const cbRef = React.useRef(onOpenCmdK);
+  const optsRef = React.useRef(opts);
 
-  // Mantém o callback fresh sem re-anexar listeners a cada render.
   React.useEffect(() => {
-    cbRef.current = onOpenCmdK;
-  }, [onOpenCmdK]);
+    optsRef.current = opts;
+  }, [opts]);
 
   React.useEffect(() => {
     function isEditableTarget(target: EventTarget | null): boolean {
@@ -45,34 +49,90 @@ export function useGlobalShortcuts({ onOpenCmdK }: UseGlobalShortcutsOptions) {
       return false;
     }
 
+    function focusSearch() {
+      const cb = optsRef.current.onFocusSearch;
+      if (cb) {
+        cb();
+        return true;
+      }
+      // Fallback genérico — qualquer input com `data-shortcut-search` funciona.
+      const el = document.querySelector<HTMLElement>('[data-shortcut-search]');
+      if (el) {
+        el.focus();
+        return true;
+      }
+      return false;
+    }
+
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
       if (isEditableTarget(event.target)) return;
 
-      // Ctrl+K / ⌘+K
+      // Ctrl+K / ⌘+K → palette
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault();
-        cbRef.current();
+        if (optsRef.current.onOpenCmdK) {
+          event.preventDefault();
+          optsRef.current.onOpenCmdK();
+        }
         return;
       }
 
-      // Sequência g+n — só trata teclas "puras" (sem modifier).
+      // Sequência g+x — só trata teclas "puras" (sem modifier).
       if (event.ctrlKey || event.metaKey || event.altKey) return;
 
       const now = Date.now();
+
+      // Atalhos simples (não-sequência)
+      if (event.key === 'n') {
+        if (lastGRef.current && now - lastGRef.current <= SEQUENCE_WINDOW_MS) {
+          // g + n → palette (mantém compat com M3). Só consome o evento se
+          // ESTE hook tem o callback — caso contrário, deixa fluir pra outro
+          // listener (ex: o `CmdKPalette` no shell).
+          lastGRef.current = null;
+          if (optsRef.current.onOpenCmdK) {
+            event.preventDefault();
+            optsRef.current.onOpenCmdK();
+          }
+          return;
+        }
+        if (optsRef.current.onCreateLead) {
+          event.preventDefault();
+          optsRef.current.onCreateLead();
+          return;
+        }
+      }
+
+      if (event.key === '/') {
+        if (focusSearch()) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      // Sequência g + ?
       if (event.key === 'g') {
         lastGRef.current = now;
         return;
       }
-      if (event.key === 'n' && lastGRef.current !== null) {
-        if (now - lastGRef.current <= SEQUENCE_WINDOW_MS) {
+      if (lastGRef.current && now - lastGRef.current <= SEQUENCE_WINDOW_MS) {
+        // Como em `g+n`: só "consome" se este hook tem o callback. Caso
+        // contrário deixa fluir — outro listener pode resolver.
+        if (event.key === 'l' && optsRef.current.onGoLeads) {
           event.preventDefault();
           lastGRef.current = null;
-          cbRef.current();
+          optsRef.current.onGoLeads();
           return;
         }
-        lastGRef.current = null;
+        if (event.key === 'k' && optsRef.current.onGoKanban) {
+          event.preventDefault();
+          lastGRef.current = null;
+          optsRef.current.onGoKanban();
+          return;
+        }
       }
+      // Tecla diferente após `g` → reseta (não atrapalha a chance dos
+      // outros listeners ainda lerem o `lastGRef` deles próprios).
+      if (lastGRef.current && event.key !== 'g') lastGRef.current = null;
     }
 
     window.addEventListener('keydown', onKeyDown);
