@@ -80,6 +80,7 @@ export {
   ThermometerSnowflake,
   ThermometerSun,
   Trash2,
+  TrendingUp,
   Trophy,
   Upload,
   User,
