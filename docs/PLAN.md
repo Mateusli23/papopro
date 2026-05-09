@@ -304,10 +304,20 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - [ ] Preferências de notificação por evento × canal (matriz PRD §3.2)
 - [ ] Convite de membros (lista + form de convite com papel RBAC)
 
-**Entregas — Relatórios:**
+**Entregas — Relatórios** ✅ _(entregue separadamente, ver "Sub-PR M5#1" abaixo)_:
 
-- [ ] `/reports/page.tsx` com cards: total de leads, pipeline aberto, conversão por etapa, tempo médio por etapa, leads esfriando, performance por vendedor
-- [ ] Gráfico de funil (Recharts) com volume e valor por etapa
+- [x] `/reports/page.tsx` com cards: total de leads, pipeline aberto, conversão por etapa, tempo médio por etapa, leads esfriando, performance por vendedor
+- [x] Gráfico de funil (Recharts) com volume e valor por etapa
+
+**Sub-PR M5#1 — Relatórios `/reports`** (entregue antes do resto do M5):
+
+- 5 famílias de visualização: 4 KPIs (Total leads · Pipeline aberto · Conversão 30d · Ciclo médio) + ConversionFunnel BarChart Recharts (6 etapas com taxas de avanço) + RepPerformanceTable (5 reps ordenados por valor ganho) + StageTimeCard (4 mini-cards com semáforo) + CoolingLeadsCard (top 6 leads em risco)
+- Funções puras em [features/reports/transforms.ts](apps/web/features/reports/transforms.ts) reusam `aggregateByStage`, `sumOpenPipelineCents` (deals), `calcRotState` (leads/rotting) — fontes canônicas
+- Funil acumulado (cumulative) diferente do FunnelChart trapezoidal do dashboard (que mostra só abertos por etapa) — Reports é analytics, não snapshot
+- Smoke endpoint [/api/smoke-test/reports](apps/web/app/api/smoke-test/reports/route.ts) com 36 asserts cobrindo as 5 famílias + edge cases (workspaces vazios não geram NaN)
+- Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` do item Relatórios
+- Filtros (período, vendedor) ficaram fora desta versão pra manter escopo curto — entram em iteração futura ou direto em M8 quando virar Server Action
+- Commit: `feat(reports): KPIs, funil de conversão, performance e leads esfriando (mocked)`
 
 **Commit final:** `feat(web): inbox, agents, cadences, tasks, reports and settings UI (mocked)`
 
