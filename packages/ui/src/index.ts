@@ -42,6 +42,7 @@ export {
   DropdownMenuTrigger,
 } from './components/dropdown-menu';
 export { Input, type InputProps } from './components/input';
+export { Label } from './components/label';
 export { ScrollArea, ScrollBar } from './components/scroll-area';
 export { Separator } from './components/separator';
 export {
@@ -58,11 +59,7 @@ export {
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/tooltip';
 
 // Domínio
-export {
-  BrandArcs,
-  type BrandArcsProps,
-  type BrandArcsVariant,
-} from './components/brand-arcs';
+export { BrandArcs, type BrandArcsProps, type BrandArcsVariant } from './components/brand-arcs';
 export { EmptyState } from './components/empty-state';
 export { KbdShortcut } from './components/kbd-shortcut';
 export { LogoFull, LogoMark } from './components/logo';

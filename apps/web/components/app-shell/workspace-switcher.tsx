@@ -66,7 +66,7 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
           <span className="flex min-w-0 items-center gap-2.5">
             <Avatar className="size-8 rounded-md">
               <AvatarFallback
-                className={cn('rounded-md text-caption font-bold', ACCENT_BG[active.accent])}
+                className={cn('text-caption rounded-md font-bold', ACCENT_BG[active.accent])}
               >
                 {active.initials}
               </AvatarFallback>
@@ -99,7 +99,7 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
             >
               <Avatar className="size-8 rounded-md">
                 <AvatarFallback
-                  className={cn('rounded-md text-caption font-bold', ACCENT_BG[ws.accent])}
+                  className={cn('text-caption rounded-md font-bold', ACCENT_BG[ws.accent])}
                 >
                   {ws.initials}
                 </AvatarFallback>
@@ -109,7 +109,9 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
                 <span className="text-caption text-muted-foreground">{ws.role}</span>
               </span>
               <Badge
-                variant={ws.plan === 'Enterprise' ? 'info' : ws.plan === 'Pro IA' ? 'default' : 'secondary'}
+                variant={
+                  ws.plan === 'Enterprise' ? 'info' : ws.plan === 'Pro IA' ? 'default' : 'secondary'
+                }
                 className="shrink-0"
               >
                 {ws.plan}

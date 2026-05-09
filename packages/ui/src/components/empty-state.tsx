@@ -39,9 +39,7 @@ export function EmptyState({
       )}
       <div className="flex flex-col gap-1">
         <h3 className="text-title text-foreground">{title}</h3>
-        {description && (
-          <p className="text-body text-muted-foreground max-w-sm">{description}</p>
-        )}
+        {description && <p className="text-body text-muted-foreground max-w-sm">{description}</p>}
       </div>
       {action && <div className="mt-2">{action}</div>}
     </div>

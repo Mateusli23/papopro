@@ -16,7 +16,7 @@ export function SidebarFooter() {
           <span className="text-caption text-muted-foreground truncate">+55 11 9 9999-0000</span>
         </div>
       </div>
-      <div className="text-muted-foreground flex items-center justify-between px-1.5 text-caption">
+      <div className="text-muted-foreground text-caption flex items-center justify-between px-1.5">
         <span>Buscar</span>
         <KbdShortcut keys={['Ctrl', 'K']} />
       </div>

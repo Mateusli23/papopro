@@ -17,7 +17,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
         'placeholder:text-muted-foreground',
         'focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
         'disabled:cursor-not-allowed disabled:opacity-50',
-        'file:border-0 file:bg-transparent file:text-body file:font-medium',
+        'file:text-body file:border-0 file:bg-transparent file:font-medium',
         className,
       )}
       {...props}

@@ -16,7 +16,7 @@ interface KbdShortcutProps extends React.HTMLAttributes<HTMLElement> {
 export function KbdShortcut({ keys, separator = '+', className, ...props }: KbdShortcutProps) {
   return (
     <kbd
-      className={cn('text-muted-foreground inline-flex items-center gap-1 text-caption', className)}
+      className={cn('text-muted-foreground text-caption inline-flex items-center gap-1', className)}
       {...props}
     >
       {keys.map((key, i) => (

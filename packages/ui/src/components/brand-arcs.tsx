@@ -65,7 +65,16 @@ const VARIANT_ARCS: Record<BrandArcsVariant, ArcSpec[]> = {
   'landing-hero': [
     { cx: 80, cy: 100, r: 130, width: 18, start: 230, end: 340, tone: 'primary', opacity: 0.7 },
     { cx: 320, cy: 80, r: 90, width: 16, start: 70, end: 180, tone: 'accent', opacity: 0.85 },
-    { cx: 360, cy: 340, r: 120, width: 18, start: 150, end: 260, tone: 'foreground', opacity: 0.25 },
+    {
+      cx: 360,
+      cy: 340,
+      r: 120,
+      width: 18,
+      start: 150,
+      end: 260,
+      tone: 'foreground',
+      opacity: 0.25,
+    },
     { cx: 120, cy: 360, r: 70, width: 14, start: 320, end: 50, tone: 'accent', opacity: 0.6 },
   ],
 };
@@ -88,7 +97,7 @@ function arcPath({ cx, cy, r, start, end }: ArcSpec): string {
   const x2 = cx + r * Math.cos(toRad(end));
   const y2 = cy + r * Math.sin(toRad(end));
   // Sweep do arco: se a varredura passar de 180°, marca `large-arc-flag`.
-  const sweep = ((end - start + 360) % 360) > 180 ? 1 : 0;
+  const sweep = (end - start + 360) % 360 > 180 ? 1 : 0;
   return `M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${sweep} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`;
 }
 

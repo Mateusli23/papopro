@@ -20,7 +20,7 @@ export function Topbar() {
     >
       <MobileNav />
 
-      <div className="relative hidden flex-1 max-w-md md:flex">
+      <div className="relative hidden max-w-md flex-1 md:flex">
         <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
         <Input
           type="search"

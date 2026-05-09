@@ -44,7 +44,10 @@ export function StatusDot({ tone, pulse = false, label, className, ...props }: S
           className={cn('absolute inset-0 animate-ping rounded-full opacity-75', TONE_CLASS[tone])}
         />
       )}
-      <span aria-hidden className={cn('relative inline-flex size-2.5 rounded-full', TONE_CLASS[tone])} />
+      <span
+        aria-hidden
+        className={cn('relative inline-flex size-2.5 rounded-full', TONE_CLASS[tone])}
+      />
     </span>
   );
 }

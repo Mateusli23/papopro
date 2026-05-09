@@ -13,10 +13,10 @@ import { WorkspaceSwitcher } from './workspace-switcher';
 export function Sidebar() {
   return (
     <aside
-      className="bg-sidebar text-sidebar-foreground border-sidebar-border hidden h-screen w-sidebar shrink-0 flex-col border-r lg:flex"
+      className="bg-sidebar text-sidebar-foreground border-sidebar-border w-sidebar hidden h-screen shrink-0 flex-col border-r lg:flex"
       aria-label="Barra lateral"
     >
-      <div className="border-sidebar-border flex h-14 items-center px-4 border-b">
+      <div className="border-sidebar-border flex h-14 items-center border-b px-4">
         <LogoFull />
       </div>
       <div className="border-sidebar-border border-b p-2">
