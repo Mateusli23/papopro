@@ -123,15 +123,15 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ## M3 — App Shell + Auth UI + Onboarding (mockado)
 
-**Branch:** `m3-app-shell` · **Status:** parcial — sub-PR de auth + onboarding mínimo mergeado em `main`. Marco fecha quando os itens pendentes abaixo entrarem em PRs subsequentes.
+**Branch:** `m3-app-shell` · **Status:** parcial — 2 sub-PRs mergeados em `main` (auth + onboarding mínimo; forgot/verify-email + stubs legais). Marco fecha quando os itens pendentes abaixo entrarem em PRs subsequentes.
 
 **Objetivo:** Telas de autenticação, layout do produto (sidebar + topbar + workspace switcher) e wizard de onboarding navegáveis com mocks. Produto "parece" funcionar sem backend.
 
 **Entregas:**
 
 - [x] `(auth)/login/page.tsx` e `(auth)/signup/page.tsx` — formulários com validação Zod + RHF, loading nos botões, erros inline (`role="alert"`, `aria-invalid`, `aria-describedby`) e slot pronto pra erro de submit; navegação fake (login → `/dashboard`, signup → `/onboarding`)
-- [ ] `(auth)/forgot/page.tsx`
-- [ ] `(auth)/verify-email/page.tsx` — estado de espera por confirmação
+- [x] `(auth)/forgot/page.tsx` — pede email + estado pós-envio com mensagem genérica (anti-enumeração) e instruções "não chegou?"
+- [x] `(auth)/verify-email/page.tsx` — espera confirmação com botão "Reenviar" + countdown de 60s, aceita `?email=` opcional
 - [x] `(dashboard)/layout.tsx` — sidebar fixa 240px + topbar _(coberto pelo M2)_
 - [x] Sidebar com itens: Dashboard, Leads, Kanban, Inbox, Agentes, Cadências, Tarefas, Relatórios, Configurações _(coberto pelo M2)_
 - [x] Workspace switcher no topo da sidebar (mock de 3 workspaces) _(coberto pelo M2)_
@@ -150,12 +150,10 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [x] Primitivo `Label` em `@papopro/ui` (gap remanescente do M2)
 - [x] `/onboarding` minimalista de 1 passo (nome do workspace) — destrava o fluxo fim-a-fim antes do wizard de 4 passos chegar
 - [x] `FormField` composto (Label + Input + erro/hint acessível) em `features/auth/components/`
-- [x] Schemas Zod compartilhados de login/signup/onboarding em `features/auth/schemas.ts`
+- [x] Schemas Zod compartilhados de login/signup/onboarding/forgot em `features/auth/schemas.ts`
 - [x] `react-hook-form ^7.75`, `zod ^4.4` e `@hookform/resolvers ^5.2` adicionados em `apps/web`
-
-**Conhecidos para resolver antes do close do marco:**
-
-- Links `/forgot`, `/legal/terms` e `/legal/privacy` referenciados nos forms ainda apontam para 404 — neutralizar ou stubar quando as telas correspondentes entrarem.
+- [x] Stubs `/legal/terms` e `/legal/privacy` com layout próprio + EmptyState (texto definitivo entra no M13 com revisão jurídica)
+- [x] Ícones `ShieldCheck` e `FileText` adicionados ao re-export central em `@papopro/ui/icons`
 
 **Commit final:** `feat(web): app shell with auth screens, onboarding wizard and mocked auth`
 

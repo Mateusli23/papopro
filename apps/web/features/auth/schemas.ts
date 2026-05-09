@@ -49,6 +49,15 @@ export const signupSchema = z.object({
 
 export type SignupInput = z.infer<typeof signupSchema>;
 
+export const forgotPasswordSchema = z.object({
+  email: z
+    .string()
+    .min(1, 'Informe seu email')
+    .email('Email inválido — confira o formato (exemplo: voce@empresa.com)'),
+});
+
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+
 export const onboardingSchema = z.object({
   workspaceName: z
     .string()
