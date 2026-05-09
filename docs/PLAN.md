@@ -291,11 +291,29 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - [ ] Editor visual de passos: D+0, D+1, D+3, D+7, D+14, D+30 com canal (WhatsApp/email) e template
 - [ ] Templates pré-configurados (imobiliário, B2B, alto ticket) selecionáveis
 
-**Entregas — Tarefas e Calendário:**
+**Entregas — Tarefas e Calendário** ✅ _(entregue separadamente, ver "Sub-PR M5#2" abaixo)_:
 
-- [ ] `/tasks/page.tsx` com abas "Minhas tarefas", "Atribuídas a mim", "Calendário"
-- [ ] Calendário views mês/semana/dia (`react-day-picker` customizado)
-- [ ] Modal de criação com tipo, status, prazo, lembrete, recorrência, atribuição
+- [x] `/tasks/page.tsx` com abas "Minhas tarefas", "Time" e "Calendário" _(decisão: "Atribuídas a mim" virou "Minhas" — todo task atribuída ao usuário logado já satisfaz o caso de uso)_
+- [x] Calendário views mês/semana/dia (grid customizado com helpers do `date-fns`; `react-day-picker` instalado mas não usado nas views — tratamos task-rich days melhor com grid próprio)
+- [x] Modal de criação com tipo, status (auto-pending), prazo e atribuição. _Lembrete e recorrência ficaram pra iteração futura — adiciam complexidade sem valor pra demo mockada._
+
+**Sub-PR M5#2 — Tarefas + Calendário `/tasks`** (entregue antes do resto do M5):
+
+- 3 abas Tabs Radix: **Minhas** (filtro por usuário logado) · **Time** (todas) · **Calendário** (Mês/Semana/Dia toggle)
+- Lista usa `<TaskRow>` (checkbox + ícone tipo + título + lead linkado + DueDatePill + RepAvatar). Pendentes em cima, concluídas embaixo com line-through + opacity.
+- Calendário com 3 vistas em [features/tasks/components/](apps/web/features/tasks/components/):
+  - **Mês**: grid 7×6 com chips coloridos (max 3 visíveis + "+N mais"), click → vista Dia
+  - **Semana**: 7 colunas verticais com TaskRow por dia, click no header → vista Dia
+  - **Dia**: lista vertical pra um dia específico, com EmptyState orientador
+- Toggle Mês/Semana/Dia no header + navegação ←→ + botão "Hoje"
+- Modal `TaskCreateDialog` (RHF + Zod) com Combobox de leads, Select de tipo/vendedor, input date pra prazo. `dueAt` default "amanhã 09:00". Pode ser disparado com `defaultDueDate` (quando criar a partir de uma célula do calendário).
+- 6 tipos de task com cores semânticas: `call` (info) · `whatsapp` (success) · `email` (warning) · `meeting` (destructive) · `follow_up`/`other` (muted). Mapa central em `task-kind-icon.tsx`.
+- Store [features/tasks/store.ts](apps/web/features/tasks/store.ts) com `useSyncExternalStore` (mesmo padrão de leads/deals). Mutações: `createTask`, `updateTask`, `toggleTaskDone`.
+- Transforms puras [features/tasks/transforms.ts](apps/web/features/tasks/transforms.ts): `filterTasks`, `getOverdueTasks`, `getTasksOnDay`, `getTasksInRange`, `groupTasksByDay`, `getNextWeekTasks`, `countTasks`. Reusam fixtures de leads + sales-reps.
+- Smoke endpoint [/api/smoke-test/tasks](apps/web/app/api/smoke-test/tasks/route.ts) com **34 asserts** em 7 grupos (fixtures, filters, aggregations, calendar, overdue, mutations, schema)
+- `react-day-picker` adicionado como dependência (planejado pra usar em formulários de seleção de data futuros, mas o calendário usa grid próprio)
+- Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` de Tarefas
+- Commit: `feat(tasks): list, calendar 3-view (mês/semana/dia) and creation modal (mocked)`
 
 **Entregas — Configurações:**
 
