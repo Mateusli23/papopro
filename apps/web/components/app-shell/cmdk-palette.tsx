@@ -39,7 +39,14 @@ import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 export function CmdKPalette() {
   const [open, setOpen] = React.useState(false);
 
-  useGlobalShortcuts({ onOpenCmdK: () => setOpen(true) });
+  useGlobalShortcuts({
+    onOpenCmdK: () => setOpen(true),
+    // `g+l` / `g+k` ficam aqui (no shell) pra funcionar de qualquer rota.
+    // Pra navegação simples usamos `window.location.assign` — o Next captura
+    // como navegação client-side intra-app sem precisar do `useRouter`.
+    onGoLeads: () => window.location.assign('/leads'),
+    onGoKanban: () => window.location.assign('/kanban'),
+  });
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -62,16 +69,14 @@ export function CmdKPalette() {
               <PaletteItem
                 icon={Users}
                 label="Leads"
-                href="/dashboard"
+                href="/leads"
                 onClose={() => setOpen(false)}
-                soon
               />
               <PaletteItem
                 icon={KanbanSquare}
                 label="Kanban"
-                href="/dashboard"
+                href="/kanban"
                 onClose={() => setOpen(false)}
-                soon
               />
               <PaletteItem
                 icon={Inbox}
@@ -90,10 +95,12 @@ export function CmdKPalette() {
             </CommandGroup>
           </CommandList>
         </Command>
-        <footer className="border-border bg-muted/30 text-muted-foreground text-caption flex items-center justify-between border-t px-4 py-2">
-          <span>
-            Dica: <kbd className="text-foreground font-semibold">G</kbd> →{' '}
-            <kbd className="text-foreground font-semibold">N</kbd> abre essa busca
+        <footer className="border-border bg-muted/30 text-muted-foreground text-caption flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2">
+          <span className="flex flex-wrap items-center gap-2">
+            <Shortcut keys={['G', 'L']} label="Leads" />
+            <Shortcut keys={['G', 'K']} label="Kanban" />
+            <Shortcut keys={['N']} label="Adicionar lead" />
+            <Shortcut keys={['/']} label="Buscar" />
           </span>
           <span>Versão completa em M5</span>
         </footer>
@@ -108,6 +115,22 @@ interface PaletteItemProps {
   href: string;
   onClose: () => void;
   soon?: boolean;
+}
+
+function Shortcut({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1">
+      {keys.map((k, i) => (
+        <React.Fragment key={`${k}-${i}`}>
+          <kbd className="border-border bg-card text-foreground inline-flex h-4 min-w-4 items-center justify-center rounded border px-1 text-[10px] font-semibold">
+            {k}
+          </kbd>
+          {i < keys.length - 1 && <span className="text-muted-foreground/60">+</span>}
+        </React.Fragment>
+      ))}
+      <span>{label}</span>
+    </span>
+  );
 }
 
 function PaletteItem({ icon: Icon, label, href, onClose, soon }: PaletteItemProps) {

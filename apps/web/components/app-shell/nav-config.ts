@@ -39,8 +39,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { label: 'Leads', href: '/leads', icon: Users, soon: true },
-      { label: 'Kanban', href: '/kanban', icon: KanbanSquare, soon: true },
+      { label: 'Leads', href: '/leads', icon: Users },
+      { label: 'Kanban', href: '/kanban', icon: KanbanSquare },
       { label: 'Inbox', href: '/inbox', icon: Inbox, soon: true, badge: 4 },
       { label: 'Agentes', href: '/agents', icon: Sparkles, soon: true },
       { label: 'Cadências', href: '/cadences', icon: Repeat, soon: true },
