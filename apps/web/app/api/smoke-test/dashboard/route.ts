@@ -1,6 +1,6 @@
 /**
- * Smoke test do Dashboard — valida as 3 famílias de cálculo (KPIs,
- * FunnelData, UpcomingDeals) que alimentam a tela `/dashboard`.
+ * Smoke test do Dashboard — valida as 4 famílias de cálculo (KPIs,
+ * FunnelData, UpcomingDeals, TrendData) que alimentam a tela `/dashboard`.
  *
  * Existe pra dar confiança nas fórmulas antes de Vitest entrar em M7+,
  * e pra fixar contratos que vão virar Server Action em M8 (mesmas funções
@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 
 import {
   buildFunnelData,
+  buildTrendData,
   computeDashboardKpis,
   getUpcomingDeals,
 } from '@/features/dashboard/transforms';
@@ -167,6 +168,44 @@ export function GET() {
     return top3.length === 3;
   });
   t('com lista vazia retorna [] (não quebra)', () => getUpcomingDeals([], [], 8).length === 0);
+
+  // ── Trend data (LineChart 30 dias) ──────────────────────────────────────
+  const trend = buildTrendData(FAKE_DEALS);
+  t = run('trend', results);
+
+  t('data.length === 30 (default 30 dias)', () => trend.length === 30 || `got ${trend.length}`);
+  t('cada ponto tem date no formato yyyy-MM-dd', () =>
+    trend.every((p) => /^\d{4}-\d{2}-\d{2}$/.test(p.date)),
+  );
+  t('cada ponto tem label não-vazio', () =>
+    trend.every((p) => typeof p.label === 'string' && p.label.length > 0),
+  );
+  t('created e won são inteiros >= 0', () =>
+    trend.every(
+      (p) => Number.isInteger(p.created) && p.created >= 0 && Number.isInteger(p.won) && p.won >= 0,
+    ),
+  );
+  t('ordem cronológica ascendente (mais antigo → hoje)', () => {
+    for (let i = 1; i < trend.length; i++) {
+      const prev = trend[i - 1];
+      const curr = trend[i];
+      if (!prev || !curr) continue;
+      if (prev.date.localeCompare(curr.date) >= 0) return `desordem em [${i - 1},${i}]`;
+    }
+    return true;
+  });
+  t('granularidade configurável (days=7 retorna 7 pontos)', () => {
+    const t7 = buildTrendData(FAKE_DEALS, undefined, 7);
+    return t7.length === 7;
+  });
+  t('com lista vazia ainda gera 30 pontos zerados (linha não pula)', () => {
+    const empty = buildTrendData([]);
+    return empty.length === 30 && empty.every((p) => p.created === 0 && p.won === 0);
+  });
+  t('contém alguma atividade nos últimos 30 dias (sanity das fixtures)', () => {
+    const total = trend.reduce((acc, p) => acc + p.created + p.won, 0);
+    return total > 0 || `total=${total}`;
+  });
 
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;

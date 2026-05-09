@@ -11,7 +11,8 @@
  * Em M8, essas funções viram core de uma Server Action `getDashboard()`
  * que persiste workspace_id no scope e usa os mesmos cálculos.
  */
-import { differenceInCalendarDays, parseISO } from 'date-fns';
+import { differenceInCalendarDays, format as fmtDate, parseISO, subDays } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 
 import { aggregateByStage, sumOpenPipelineCents } from '@/features/deals/transforms';
 import type { Deal } from '@/features/deals/types';
@@ -19,7 +20,7 @@ import type { Lead } from '@/features/leads/types';
 import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 import { formatCentsCompact } from '@/lib/utils/format';
 
-import type { DashboardKpis, FunnelDatum, UpcomingDeal } from './types';
+import type { DashboardKpis, FunnelDatum, TrendDatum, UpcomingDeal } from './types';
 
 /**
  * Mapa etapa → cor do trapézio do FunnelChart.
@@ -132,4 +133,51 @@ export function getUpcomingDeals(deals: Deal[], leads: Lead[], limit: number = 8
     .sort((a, b) => a.dueAt!.localeCompare(b.dueAt!))
     .slice(0, limit)
     .map((deal) => ({ deal, lead: leadById.get(deal.leadId) }));
+}
+
+/**
+ * Série temporal dos últimos N dias (default 30) com count de deals
+ * **criados** vs **ganhos** por dia. Alimenta o `<TrendChart>` (Recharts
+ * LineChart) — vendedor lê de relance se a entrada e o fechamento estão
+ * acompanhando.
+ *
+ * Decisões:
+ *  - **Inclui hoje**: janela `[now - (days-1), now]`. 30 pontos pra 30 dias.
+ *  - **Dias sem atividade**: aparecem com `created: 0, won: 0` (linha
+ *    encosta no eixo X) — não pula buracos, senão a leitura mente.
+ *  - **Lost não entra**: o gráfico mostra "saúde positiva" (entrada + ganho).
+ *    Lost já está no KPI #4 (Taxa de conversão). Adicionar 3ª linha polui.
+ *  - **Chave de agrupamento**: `yyyy-MM-dd` em UTC (consistente com
+ *    `format(date, 'yyyy-MM-dd')`). Pra fixtures + Postgres em M8 vai
+ *    precisar normalizar pra timezone do workspace.
+ */
+export function buildTrendData(deals: Deal[], now: Date = NOW, days: number = 30): TrendDatum[] {
+  // Pré-computa contagens por dia em maps (1 pass por created, 1 pass por won)
+  const createdByDay = new Map<string, number>();
+  const wonByDay = new Map<string, number>();
+
+  for (const d of deals) {
+    const ck = fmtDate(parseISO(d.createdAt), 'yyyy-MM-dd');
+    createdByDay.set(ck, (createdByDay.get(ck) ?? 0) + 1);
+
+    if (d.status === 'won' && d.closedAt) {
+      const wk = fmtDate(parseISO(d.closedAt), 'yyyy-MM-dd');
+      wonByDay.set(wk, (wonByDay.get(wk) ?? 0) + 1);
+    }
+  }
+
+  // Gera os últimos N dias em ordem cronológica (mais antigo → hoje).
+  // Inclui dias zerados pra linha não pular buracos.
+  const out: TrendDatum[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dt = subDays(now, i);
+    const date = fmtDate(dt, 'yyyy-MM-dd');
+    out.push({
+      date,
+      label: fmtDate(dt, 'dd MMM', { locale: ptBR }),
+      created: createdByDay.get(date) ?? 0,
+      won: wonByDay.get(date) ?? 0,
+    });
+  }
+  return out;
 }

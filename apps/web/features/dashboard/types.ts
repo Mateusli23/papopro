@@ -65,3 +65,22 @@ export interface UpcomingDeal {
   deal: Deal;
   lead: Lead | undefined;
 }
+
+/**
+ * Ponto da série temporal de tendência (últimos 30 dias).
+ *
+ * Cada ponto corresponde a um dia. `created` conta deals com `createdAt`
+ * naquele dia; `won` conta deals com `closedAt` naquele dia + `status='won'`.
+ * Lost não entra — o gráfico mostra atividade positiva (entrada e ganho)
+ * pra leitura rápida de "saúde do mês".
+ */
+export interface TrendDatum {
+  /** ISO date no formato `yyyy-MM-dd` — chave estável de ordenação. */
+  date: string;
+  /** Label curto do eixo X: "08 mai", "09 mai" (date-fns pt-BR). */
+  label: string;
+  /** Quantidade de deals criados nesse dia. */
+  created: number;
+  /** Quantidade de deals ganhos (closedAt nesse dia, status='won'). */
+  won: number;
+}

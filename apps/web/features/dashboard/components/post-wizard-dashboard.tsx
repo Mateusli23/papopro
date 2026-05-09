@@ -5,6 +5,7 @@ import { PlusCircle, Sparkles } from '@papopro/ui/icons';
 
 import { DashboardFunnelChart } from './funnel-chart';
 import { KpiGrid } from './kpi-grid';
+import { DashboardTrendChart } from './trend-chart';
 import { UpcomingDealsTable } from './upcoming-deals-table';
 
 /**
@@ -12,17 +13,23 @@ import { UpcomingDealsTable } from './upcoming-deals-table';
  * antigo (mock hardcoded com KPIs fictícios + 3 cards estáticos) pelo
  * dashboard real derivado das fixtures de leads/deals.
  *
- * Estrutura:
+ * Estrutura (top → bottom):
  *  - `<PageHeader>` com greeting + ações
  *  - `<KpiGrid>`: 4 cards (Total Leads / Negócios Abertos / Valor Pipeline / Conversão)
+ *  - `<DashboardTrendChart>` full-width: linha temporal 30d criados vs ganhos
  *  - Linha responsiva: FunnelChart (1/3) + UpcomingDealsTable (2/3)
  *
- * Justificativa do split 1/3 + 2/3 em desktop:
+ * Justificativa de ordem:
+ *  - KPIs são "visão de momento" (números agora)
+ *  - Trend é "história curta" (últimos 30d) — entra como ponte temporal
+ *  - Funnel + Tabela são "ação" (o que está aberto, o que precisa de atenção)
+ *
+ * Justificativa do split 1/3 + 2/3 (funnel/tabela) em desktop:
  *  - Funnel é leitura ambiente — não precisa espaço pra clicar
  *  - Tabela é superfície de ação — vendedor escaneia 8 linhas × 6 colunas,
  *    precisa de largura pra não truncar nomes/títulos
  *
- * Em mobile (<lg) ambos viram full-width empilhados.
+ * Em mobile (<lg) tudo vira full-width empilhado.
  *
  * Os botões "Ativar agente IA" e "Adicionar lead" permanecem placeholders
  * por agora — virarão ações reais em milestones posteriores.
@@ -46,6 +53,8 @@ export function PostWizardDashboard({ greeting }: { greeting: string }) {
       />
 
       <KpiGrid />
+
+      <DashboardTrendChart />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
