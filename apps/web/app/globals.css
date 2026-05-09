@@ -1,9 +1,51 @@
+/*
+ * Pipeline de estilos do produto:
+ *  1. Poppins (CLAUDE.md §8) via @fontsource — pesos 400/500/600/700.
+ *     Auto-host via npm, sem fetch externo no build (ambientes corporativos
+ *     com TLS strict não conseguem alcançar fonts.googleapis.com).
+ *  2. Tokens (CSS vars light/dark) — vêm do design system, sem dependência Tailwind.
+ *  3. @tailwind base/components/utilities — geram as utilities a partir do preset.
+ *  4. @layer base — overrides de borda, body e foco visível usando @apply.
+ *
+ * Hex e cores literais NUNCA aparecem nesse arquivo. Toda cor flui dos tokens
+ * em `@papopro/ui/styles/tokens.css` → preset do Tailwind → utilities.
+ */
+@import '@fontsource/poppins/400.css';
+@import '@fontsource/poppins/500.css';
+@import '@fontsource/poppins/600.css';
+@import '@fontsource/poppins/700.css';
+@import '@papopro/ui/styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/*
- * M2 importa @papopro/ui/styles/tokens.css aqui para mover o controle de cores
- * (light/dark) pro design system. Por ora o preset do tailwind cobre as cores
- * estáticas que precisamos no placeholder.
- */
+@layer base {
+  /*
+   * `--font-sans` casa com o preset Tailwind (`font-sans` →
+   * `var(--font-sans)`). Definir aqui em :root mantém tokens.css livre de
+   * preocupações tipográficas (ele é só cor/superfície).
+   */
+  :root {
+    --font-sans:
+      'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      'Segoe UI', Roboto, sans-serif;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+
+  /* Foco visível e consistente (a11y baseline). */
+  :where(button, a, input, textarea, select, [role='button']):focus-visible {
+    @apply ring-ring outline-none ring-2 ring-offset-2;
+    --tw-ring-offset-color: hsl(var(--background));
+  }
+}

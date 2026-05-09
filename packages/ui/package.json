@@ -2,7 +2,7 @@
   "name": "@papopro/ui",
   "version": "0.1.0",
   "private": true,
-  "description": "Design system PapoPro: shadcn/ui + tokens compartilhados. Esqueleto de M1; primitivos chegam em M2.",
+  "description": "Design system PapoPro: tokens, primitivos shadcn-style e componentes de domínio.",
   "type": "module",
   "exports": {
     ".": {
@@ -10,6 +10,10 @@
       "default": "./src/index.ts"
     },
     "./styles/tokens.css": "./src/styles/tokens.css",
+    "./icons": {
+      "types": "./src/icons.ts",
+      "default": "./src/icons.ts"
+    },
     "./utils": {
       "types": "./src/utils/index.ts",
       "default": "./src/utils/index.ts"
@@ -25,7 +29,17 @@
     "clean": "rimraf .turbo node_modules"
   },
   "dependencies": {
+    "@radix-ui/react-avatar": "^1.1.2",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-dropdown-menu": "^2.1.4",
+    "@radix-ui/react-scroll-area": "^1.2.2",
+    "@radix-ui/react-separator": "^1.1.1",
+    "@radix-ui/react-slot": "^1.1.1",
+    "@radix-ui/react-tooltip": "^1.1.6",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "next-themes": "^0.4.4",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {

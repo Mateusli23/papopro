@@ -1,14 +1,24 @@
 /**
- * Tailwind preset compartilhado do PapoPro (placeholder de M1).
+ * Tailwind preset compartilhado do PapoPro.
  *
- * M1 expõe apenas os tokens semânticos (cores, radius, fontes) via valores estáticos
- * pra desbloquear o consumo nos apps. M2 substitui por CSS custom properties com
- * dark mode de primeira classe (paleta de [CLAUDE.md §8]) e adiciona o plugin
- * `tailwindcss-animate`.
+ * Princípio: nenhum hex pode aparecer em componente — só aqui (e em
+ * `packages/ui/styles/tokens.css`, que define as CSS vars usadas abaixo).
  *
- * Regra do projeto: nenhum hex pode aparecer em componente — só aqui no preset.
+ * Cores são referenciadas via CSS custom properties (formato HSL sem o `hsl()`)
+ * pra suportar dark mode "de primeira classe" (CLAUDE.md §8) — um toggle de
+ * `class="dark"` no `<html>` troca todos os tokens.
+ *
+ * Paleta canônica (light) em [CLAUDE.md §8]:
+ *   primary #367BEC · accent #FFB715 · foreground #0F1C3E · muted #F1F5F9
+ *   success #10B981 · warning #F59E0B · destructive #EF4444 · info #3B82F6
+ *
+ * `accent` é amarelo decorativo (CTAs, microcaixas, BrandArcs); `warning` é
+ * estado semântico (lead morno) — não confundir.
  */
 import type { Config } from 'tailwindcss';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — sem tipos no pacote, mas é o plugin oficial do shadcn.
+import animate from 'tailwindcss-animate';
 
 const preset = {
   darkMode: ['class'],
@@ -29,64 +39,71 @@ const preset = {
       colors: {
         // Marca
         primary: {
-          DEFAULT: '#4F46E5',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
         },
         accent: {
-          DEFAULT: '#6C5CE7',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
         },
 
         // Texto e fundos
-        foreground: '#0F172A',
-        background: '#FFFFFF',
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
         muted: {
-          DEFAULT: '#F1F5F9',
-          foreground: '#475569',
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
         },
-        border: '#E2E8F0',
-        input: '#E2E8F0',
-        ring: '#4F46E5',
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
 
-        // Status (semânticos)
+        // Status semânticos (CLAUDE.md §8)
         success: {
-          DEFAULT: '#10B981',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--success))',
+          foreground: 'hsl(var(--success-foreground))',
         },
         warning: {
-          DEFAULT: '#F59E0B',
-          foreground: '#0F172A',
+          DEFAULT: 'hsl(var(--warning))',
+          foreground: 'hsl(var(--warning-foreground))',
         },
         destructive: {
-          DEFAULT: '#EF4444',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
         },
         info: {
-          DEFAULT: '#3B82F6',
-          foreground: '#FFFFFF',
+          DEFAULT: 'hsl(var(--info))',
+          foreground: 'hsl(var(--info-foreground))',
         },
 
-        // Card / popover (necessários pro shadcn/ui em M2)
+        // Superfícies
         card: {
-          DEFAULT: '#FFFFFF',
-          foreground: '#0F172A',
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
         },
         popover: {
-          DEFAULT: '#FFFFFF',
-          foreground: '#0F172A',
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          accent: 'hsl(var(--sidebar-accent))',
+          'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
+          border: 'hsl(var(--sidebar-border))',
         },
 
-        // Temperatura de lead
+        // Temperatura de lead (alias semântico do trio success/warning/destructive)
         lead: {
-          hot: '#10B981',
-          warm: '#F59E0B',
-          cold: '#EF4444',
+          hot: 'hsl(var(--success))',
+          warm: 'hsl(var(--warning))',
+          cold: 'hsl(var(--destructive))',
         },
       },
       borderRadius: {
-        lg: '12px',
-        md: '10px',
-        sm: '8px',
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
         sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
@@ -102,16 +119,30 @@ const preset = {
       },
       spacing: {
         // Múltiplos de 4px (CLAUDE.md §8)
-        '18': '4.5rem',
+        18: '4.5rem',
         sidebar: '240px',
       },
       boxShadow: {
         sm: '0 1px 2px 0 rgb(15 23 42 / 0.05)',
         DEFAULT: '0 1px 3px 0 rgb(15 23 42 / 0.08), 0 1px 2px -1px rgb(15 23 42 / 0.05)',
       },
+      keyframes: {
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
+        },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
+      },
+      animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
+      },
     },
   },
-  plugins: [],
+  plugins: [animate],
 } satisfies Partial<Config>;
 
 export default preset;

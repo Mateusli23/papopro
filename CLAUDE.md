@@ -199,7 +199,7 @@ apps/web/
 - **Mutations** via Server Actions (`"use server"`). **Reads client-side** via TanStack Query. Reads server-side via queries Prisma diretas em Server Components.
 - **Validação:** **Zod em 100% do input externo** (form, search params, webhook body, API route). Valide na borda, confie no tipo internamente.
 - **Datas:** sempre `date-fns` com timezone `America/Sao_Paulo`. Não usar `new Date()` cru em lógica de negócio — passar por helper testável (`now()` injetável).
-- **Tailwind:** usar **tokens semânticos** do `packages/config/tailwind.preset.ts` (`bg-primary`, `text-muted-foreground`, `border-destructive`). **Nada de cor hardcoded** em componentes (`#4F46E5` só no preset).
+- **Tailwind:** usar **tokens semânticos** do `packages/config/tailwind.preset.ts` (`bg-primary`, `text-muted-foreground`, `border-destructive`). **Nada de cor hardcoded** em componentes (`#367BEC` só no preset/tokens).
 - **Variantes de componentes** com `cva` (class-variance-authority). Estilos coesos vivem no componente, não em strings espalhadas.
 - **Estado:** local com `useState`. Global compartilhado (workspace ativo, status WhatsApp) com **Zustand**. Server state sempre via TanStack Query, nunca em Zustand.
 - **Microcopy** sempre **pt-BR direto**. CTAs em verbo no infinitivo (`Adicionar lead`, `Conectar WhatsApp`, `Criar agente`). Mensagens de erro são propositivas.
@@ -275,23 +275,30 @@ apps/web/
 
 ### Paleta (tokens em `packages/config/tailwind.preset.ts`)
 
-| Token              | Hex       | Uso                          |
-| ------------------ | --------- | ---------------------------- |
-| `primary`          | `#4F46E5` | CTAs, navegação ativa, links |
-| `accent`           | `#6C5CE7` | destaque secundário          |
-| `foreground`       | `#0F172A` | texto principal              |
-| `muted-foreground` | `#475569` | texto secundário             |
-| `muted`            | `#F1F5F9` | fundos sutis                 |
-| `success`          | `#10B981` | lead quente, conexão ativa   |
-| `warning`          | `#F59E0B` | lead morno, instável         |
-| `destructive`      | `#EF4444` | lead frio, desconectado      |
-| `info`             | `#3B82F6` | informação neutra            |
+| Token              | Hex       | Uso                                                        |
+| ------------------ | --------- | ---------------------------------------------------------- |
+| `primary`          | `#367BEC` | CTAs, navegação ativa, links                               |
+| `accent`           | `#FFB715` | amarelo decorativo — microcaixas, BrandArcs, CTAs especiais |
+| `foreground`       | `#0F1C3E` | texto principal (navy)                                     |
+| `muted-foreground` | `#475569` | texto secundário                                           |
+| `muted`            | `#F1F5F9` | fundos sutis                                               |
+| `success`          | `#10B981` | lead quente, conexão ativa                                 |
+| `warning`          | `#F59E0B` | lead morno, instável (estado semântico — ≠ `accent`)       |
+| `destructive`      | `#EF4444` | lead frio, desconectado                                    |
+| `info`             | `#3B82F6` | informação neutra                                          |
+
+**Importante:** `accent` (amarelo) é decorativo; `warning` (amarelo mostarda) é estado semântico. Eles existem em paralelo justamente porque o produto precisa marcar "lead morno" sem que isso colida com a identidade da marca.
 
 **Dark mode é tema de primeira classe**, não opção secundária. Todo componente deve ser testado nos dois temas.
 
+### Elementos de marca (`BrandArcs`)
+
+Componente em `@papopro/ui` que renderiza arcos decorativos em SVG (azul + amarelo + foreground). **Uso restrito a superfícies de marketing e onboarding**: landing (`apps/landing`), telas de auth (`/login`, `/signup`, `/forgot`), e estados vazios grandes ("conecte o WhatsApp", "primeiro lead"). Não usar em superfícies densas (Kanban, inbox, tabelas) — a decoração compete com a leitura de dados.
+
 ### Tipografia
 
-- **Inter** ou **Geist Sans** (open source, ambos via `next/font`).
+- **Poppins** via `next/font/google` (auto-host, sem CDN externo).
+- Pesos carregados: 400 (body), 500 (highlights/botões), 600 (títulos), 700 (ênfase).
 - Títulos: 18–24px, peso 600.
 - Body: 14–16px, peso 400.
 - Captions: 12px, peso 500.
