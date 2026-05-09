@@ -5,12 +5,15 @@ import * as React from 'react';
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { toast } from 'react-hot-toast';
 
 import { useDeals, moveDealToStage } from '@/features/deals/store';
@@ -43,7 +46,27 @@ export function DealsKanbanBoard({ onAddDeal }: DealsKanbanBoardProps = {}) {
   const deals = useDeals();
   const [activeId, setActiveId] = React.useState<string | null>(null);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // Três sensores para cobrir todos os inputs sem que um sabote o outro:
+  //
+  //  - PointerSensor com `distance: 6` cobre mouse + caneta. Click <6px navega
+  //    pelo Link interno do card; arraste >6px ativa o drag (dnd-kit cancela
+  //    o synthetic click). Em touch, o PointerSensor poderia disparar com
+  //    apenas 6px de movimento — o que destruiria o gesto de scroll horizontal
+  //    em mobile. O TouchSensor abaixo sequestra touch antes disso.
+  //
+  //  - TouchSensor com `delay: 250 + tolerance: 5` só fecha contrato com
+  //    touch real (não mouse). Long-press de 250ms ativa o drag, igual
+  //    Trello/Pipedrive mobile. Movimento >5px durante o delay cancela
+  //    a ativação — o gesto vira scroll natural do carrossel/coluna.
+  //
+  //  - KeyboardSensor + sortableKeyboardCoordinates: Tab no card → Space
+  //    pega → Arrow move → Space solta. Anúncios via live region default
+  //    (em inglês — i18n PT-BR fica como follow-up).
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
   const dealsByStage = React.useMemo(() => {
     const map = new Map<string, Deal[]>();
@@ -113,7 +136,11 @@ export function DealsKanbanBoard({ onAddDeal }: DealsKanbanBoardProps = {}) {
       <div
         // Scroll horizontal estilo Pipedrive — colunas têm largura fixa e
         // rolagem suave via CSS scroll-snap (helpa quando passa de 4-5 colunas).
-        className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
+        // `touch-pan-x` instrui o browser a entregar o pan horizontal
+        // pra ele mesmo (60fps nativo); só verticais e taps chegam ao
+        // dnd-kit. Combinado com TouchSensor `delay: 250`, dá a UX
+        // canônica mobile: swipe = scroll, hold = drag.
+        className="-mx-4 flex touch-pan-x snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
       >
         {DEFAULT_STAGES.map((stage) => (
           <div key={stage.id} className="snap-start">
