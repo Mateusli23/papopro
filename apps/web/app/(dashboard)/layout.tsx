@@ -1,7 +1,9 @@
 import { TooltipProvider } from '@papopro/ui';
 
+import { CmdKPalette } from '@/components/app-shell/cmdk-palette';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Topbar } from '@/components/app-shell/topbar';
+import { WelcomeWizardController } from '@/features/onboarding/components/welcome-wizard-controller';
 
 /**
  * Layout do produto. Aplicado a TODAS as rotas dentro de `(dashboard)/` —
@@ -23,6 +25,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </main>
         </div>
       </div>
+      {/*
+       * Wizard de boas-vindas — auto-abre na primeira visita ao dashboard
+       * quando o usuário logou mas ainda não concluiu/pulou. Lógica
+       * encapsulada no controller; aqui é só ponto de montagem.
+       */}
+      <WelcomeWizardController />
+
+      {/*
+       * Cmd+K palette placeholder — `useGlobalShortcuts` registra o listener
+       * global (`g+n`, `Ctrl/⌘+K`). Em M5 isso vira a busca global real.
+       */}
+      <CmdKPalette />
     </TooltipProvider>
   );
 }

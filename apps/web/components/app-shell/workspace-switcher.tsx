@@ -1,7 +1,5 @@
 'use client';
 
-import * as React from 'react';
-
 import {
   Avatar,
   AvatarFallback,
@@ -17,12 +15,8 @@ import {
 } from '@papopro/ui';
 import { Check, ChevronsUpDown, PlusCircle } from '@papopro/ui/icons';
 
-import {
-  ACTIVE_WORKSPACE_ID,
-  FAKE_WORKSPACES,
-  getWorkspace,
-  type Workspace,
-} from '@/lib/fixtures/workspaces';
+import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { FAKE_WORKSPACES, type Workspace } from '@/lib/fixtures/workspaces';
 
 const ACCENT_BG: Record<Workspace['accent'], string> = {
   primary: 'bg-primary/10 text-primary',
@@ -44,13 +38,16 @@ interface WorkspaceSwitcherProps {
 /**
  * Switcher de workspace no topo da sidebar.
  *
- * Estado local até M7 — quando vier multi-tenant real, troca por server action +
- * cookie httpOnly (`active_workspace_id`) lido pelo `with-workspace.ts`.
+ * Lê o workspace ativo do `AuthMockProvider` (cookie compartilhado com o
+ * middleware). Em M7 quem fornece o estado vira o helper `with-workspace.ts`
+ * + Server Action que escreve o cookie httpOnly — o componente em si não
+ * muda, só a fonte do hook.
  */
 export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
-  const [activeId, setActiveId] = React.useState(ACTIVE_WORKSPACE_ID);
-  // Fallback duplo: ou achou pelo id, ou cai no primeiro fixture (sempre existe).
-  const active = (getWorkspace(activeId) ?? FAKE_WORKSPACES[0]) as Workspace;
+  const { activeWorkspace, setActiveWorkspace } = useAuthMock();
+  // Fallback: se o provider ainda não hidratou (loading), exibe o primeiro
+  // fixture pra a UI não piscar com placeholder vazio.
+  const active = (activeWorkspace ?? FAKE_WORKSPACES[0]) as Workspace;
 
   return (
     <DropdownMenu>
@@ -90,11 +87,11 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
         <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {FAKE_WORKSPACES.map((ws) => {
-          const isActive = ws.id === activeId;
+          const isActive = ws.id === active.id;
           return (
             <DropdownMenuItem
               key={ws.id}
-              onSelect={() => setActiveId(ws.id)}
+              onSelect={() => setActiveWorkspace(ws.id)}
               className="gap-3 py-2"
             >
               <Avatar className="size-8 rounded-md">
