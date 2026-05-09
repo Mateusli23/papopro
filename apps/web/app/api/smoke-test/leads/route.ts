@@ -12,6 +12,14 @@
 import { NextResponse } from 'next/server';
 
 import { dealCreateSchema } from '@/features/deals/schemas';
+import {
+  aggregateByStage,
+  applyCreateDeal,
+  applyMoveDeal,
+  defaultProbabilityFor,
+  statusForStage,
+  sumOpenPipelineCents,
+} from '@/features/deals/transforms';
 import { applyLeadFilters } from '@/features/leads/queries';
 import { calcRotState } from '@/features/leads/rotting';
 import { leadCreateSchema } from '@/features/leads/schemas';
@@ -258,6 +266,242 @@ export function GET() {
     'valueCents negativo é rejeitado',
     () => !dealCreateSchema.safeParse({ ...baseValidDeal, valueCents: -1 }).success,
   );
+
+  // ── Drag-and-drop (lógica que alimenta o DnD do Kanban) ─────────────────
+  t = run('drag-drop', results);
+
+  t('mover deal pra outra etapa muda stageId + status open', () => {
+    const open = FAKE_DEALS.find((d) => d.status === 'open' && d.stageId === 'novo');
+    if (!open) return 'fixture: nenhum deal aberto em novo';
+    const result = applyMoveDeal(FAKE_DEALS, open.id, 'em_contato');
+    const moved = result.find((d) => d.id === open.id)!;
+    return (
+      moved.stageId === 'em_contato' &&
+      moved.status === 'open' &&
+      moved.closedAt === undefined &&
+      moved.probability === defaultProbabilityFor('em_contato')
+    );
+  });
+
+  t('mover deal pra Ganho marca status=won + closedAt + probability=100', () => {
+    const open = FAKE_DEALS.find((d) => d.status === 'open');
+    if (!open) return 'fixture: nenhum deal aberto';
+    const result = applyMoveDeal(FAKE_DEALS, open.id, 'ganho');
+    const moved = result.find((d) => d.id === open.id)!;
+    return (
+      moved.stageId === 'ganho' &&
+      moved.status === 'won' &&
+      typeof moved.closedAt === 'string' &&
+      moved.probability === 100
+    );
+  });
+
+  t('mover deal pra Perdido marca status=lost + closedAt + probability=0', () => {
+    const open = FAKE_DEALS.find((d) => d.status === 'open');
+    if (!open) return 'fixture: nenhum deal aberto';
+    const result = applyMoveDeal(FAKE_DEALS, open.id, 'perdido');
+    const moved = result.find((d) => d.id === open.id)!;
+    return (
+      moved.stageId === 'perdido' &&
+      moved.status === 'lost' &&
+      typeof moved.closedAt === 'string' &&
+      moved.probability === 0
+    );
+  });
+
+  t('reabrir deal won (mover de Ganho para Negociação) zera closedAt', () => {
+    const won = FAKE_DEALS.find((d) => d.status === 'won');
+    if (!won) return 'fixture: nenhum deal won';
+    const result = applyMoveDeal(FAKE_DEALS, won.id, 'negociacao');
+    const moved = result.find((d) => d.id === won.id)!;
+    return (
+      moved.stageId === 'negociacao' && moved.status === 'open' && moved.closedAt === undefined
+    );
+  });
+
+  t('mover pra mesma etapa é no-op (referência preservada)', () => {
+    const any = FAKE_DEALS[0]!;
+    const result = applyMoveDeal(FAKE_DEALS, any.id, any.stageId);
+    return result === FAKE_DEALS;
+  });
+
+  t('mover deal inexistente é no-op', () => {
+    const result = applyMoveDeal(FAKE_DEALS, 'deal_inexistente_999', 'ganho');
+    return result === FAKE_DEALS;
+  });
+
+  t('imutabilidade: applyMoveDeal não muta o array original', () => {
+    const open = FAKE_DEALS.find((d) => d.status === 'open' && d.stageId === 'novo');
+    if (!open) return 'fixture: setup';
+    const before = JSON.stringify(open);
+    applyMoveDeal(FAKE_DEALS, open.id, 'ganho');
+    const after = JSON.stringify(FAKE_DEALS.find((d) => d.id === open.id));
+    return (
+      before === after || `mutou! before=${before.slice(0, 80)}... after=${after.slice(0, 80)}`
+    );
+  });
+
+  // ── Totalizadores das colunas (header + KPIs) ───────────────────────────
+  t = run('aggregations', results);
+
+  const STAGE_IDS = ['novo', 'em_contato', 'proposta', 'negociacao', 'ganho', 'perdido'];
+
+  t('aggregateByStage devolve as 6 etapas mesmo se vazias', () => {
+    const aggs = aggregateByStage([], STAGE_IDS);
+    return aggs.length === 6 && aggs.every((a) => a.count === 0 && a.totalCents === 0);
+  });
+
+  t('soma por etapa bate com soma manual da fixture', () => {
+    const aggs = aggregateByStage(FAKE_DEALS, STAGE_IDS);
+    for (const stageId of STAGE_IDS) {
+      const expected = FAKE_DEALS.filter((d) => d.stageId === stageId);
+      const expectedSum = expected.reduce((acc, d) => acc + d.valueCents, 0);
+      const agg = aggs.find((a) => a.stageId === stageId)!;
+      if (agg.count !== expected.length) return `count divergente em ${stageId}`;
+      if (agg.totalCents !== expectedSum) return `soma divergente em ${stageId}`;
+    }
+    return true;
+  });
+
+  t('total do header de cada coluna nunca é negativo', () => {
+    const aggs = aggregateByStage(FAKE_DEALS, STAGE_IDS);
+    return aggs.every((a) => a.count >= 0 && a.totalCents >= 0);
+  });
+
+  t('mover deal atualiza totais (subtrai origem, soma destino)', () => {
+    const deal = FAKE_DEALS.find((d) => d.stageId === 'novo' && d.valueCents > 0)!;
+    const before = aggregateByStage(FAKE_DEALS, STAGE_IDS);
+    const after = aggregateByStage(applyMoveDeal(FAKE_DEALS, deal.id, 'proposta'), STAGE_IDS);
+    const novoBefore = before.find((a) => a.stageId === 'novo')!;
+    const novoAfter = after.find((a) => a.stageId === 'novo')!;
+    const propBefore = before.find((a) => a.stageId === 'proposta')!;
+    const propAfter = after.find((a) => a.stageId === 'proposta')!;
+    return (
+      novoAfter.count === novoBefore.count - 1 &&
+      novoAfter.totalCents === novoBefore.totalCents - deal.valueCents &&
+      propAfter.count === propBefore.count + 1 &&
+      propAfter.totalCents === propBefore.totalCents + deal.valueCents
+    );
+  });
+
+  t('KPI Pipeline ativo = soma de todos status=open', () => {
+    const expected = FAKE_DEALS.filter((d) => d.status === 'open').reduce(
+      (a, d) => a + d.valueCents,
+      0,
+    );
+    return sumOpenPipelineCents(FAKE_DEALS) === expected;
+  });
+
+  t('mover deal aberto pra Ganho diminui Pipeline ativo no valor do deal', () => {
+    const open = FAKE_DEALS.find((d) => d.status === 'open' && d.valueCents > 0)!;
+    const before = sumOpenPipelineCents(FAKE_DEALS);
+    const after = sumOpenPipelineCents(applyMoveDeal(FAKE_DEALS, open.id, 'ganho'));
+    return after === before - open.valueCents;
+  });
+
+  // ── Criar novo negócio (form submit) ────────────────────────────────────
+  t = run('create-deal', results);
+
+  function fakeIdGen() {
+    let n = 999;
+    return () => `deal_test_${++n}`;
+  }
+
+  t('createDeal adiciona o deal no topo da lista', () => {
+    const { deals: newDeals, created } = applyCreateDeal(
+      FAKE_DEALS,
+      {
+        title: 'Novo deal de teste',
+        leadId: 'lead_001',
+        stageId: 'novo',
+        valueCents: 75_000_00,
+        ownerId: 'user_mateus',
+      },
+      fakeIdGen(),
+    );
+    return (
+      newDeals.length === FAKE_DEALS.length + 1 &&
+      newDeals[0]?.id === created.id &&
+      created.title === 'Novo deal de teste'
+    );
+  });
+
+  t('deal criado em Novo nasce com status=open + probability=10', () => {
+    const { created } = applyCreateDeal(
+      FAKE_DEALS,
+      {
+        title: 'Demo',
+        leadId: 'lead_001',
+        stageId: 'novo',
+        valueCents: 10000,
+        ownerId: 'user_mateus',
+      },
+      fakeIdGen(),
+    );
+    return created.status === 'open' && created.probability === 10;
+  });
+
+  t('deal criado direto em Ganho nasce com status=won', () => {
+    const { created } = applyCreateDeal(
+      FAKE_DEALS,
+      {
+        title: 'Demo já fechado',
+        leadId: 'lead_001',
+        stageId: 'ganho',
+        valueCents: 10000,
+        ownerId: 'user_mateus',
+      },
+      fakeIdGen(),
+    );
+    return created.status === 'won' && created.probability === 100;
+  });
+
+  t('createDeal preserva imutabilidade (FAKE_DEALS não cresce)', () => {
+    const sizeBefore = FAKE_DEALS.length;
+    applyCreateDeal(
+      FAKE_DEALS,
+      {
+        title: 'Demo',
+        leadId: 'lead_001',
+        stageId: 'novo',
+        valueCents: 0,
+        ownerId: 'user_mateus',
+      },
+      fakeIdGen(),
+    );
+    return FAKE_DEALS.length === sizeBefore;
+  });
+
+  t('statusForStage mapeia corretamente todas as 6 etapas', () => {
+    return (
+      statusForStage('novo') === 'open' &&
+      statusForStage('em_contato') === 'open' &&
+      statusForStage('proposta') === 'open' &&
+      statusForStage('negociacao') === 'open' &&
+      statusForStage('ganho') === 'won' &&
+      statusForStage('perdido') === 'lost'
+    );
+  });
+
+  t('deal criado aparece no aggregateByStage da etapa escolhida', () => {
+    const { deals: newDeals, created } = applyCreateDeal(
+      FAKE_DEALS,
+      {
+        title: 'Verifica agregação',
+        leadId: 'lead_001',
+        stageId: 'proposta',
+        valueCents: 50_000_00,
+        ownerId: 'user_mateus',
+      },
+      fakeIdGen(),
+    );
+    const before = aggregateByStage(FAKE_DEALS, STAGE_IDS).find((a) => a.stageId === 'proposta')!;
+    const after = aggregateByStage(newDeals, STAGE_IDS).find((a) => a.stageId === 'proposta')!;
+    return (
+      after.count === before.count + 1 &&
+      after.totalCents === before.totalCents + created.valueCents
+    );
+  });
 
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
