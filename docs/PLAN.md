@@ -197,33 +197,46 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ---
 
-## M4 — Leads, Pipeline e Kanban (UI completa, mockada)
+## M4 — Leads, Pipeline e Kanban (UI completa, mockada) ✅
 
-**Branch:** `m4-leads-kanban-ui`
+**Branch:** `m4-leads-kanban-ui` · entregue em 3 sub-PRs (commits squashed em main).
 
 **Objetivo:** Listagem de leads, página de detalhe e Kanban com drag-and-drop totalmente navegáveis com fixtures realistas. Mostra densidade visual, filtros, atalhos.
 
 **Entregas:**
 
-- [ ] Fixtures: 50 leads coerentes em `apps/web/lib/fixtures/leads.ts` (com timeline, tarefas, anexos)
-- [ ] `/leads/page.tsx` — tabela densa estilo Attio: nome, telefone, etapa, vendedor, temperatura, valor, última interação, próxima ação, tags
-- [ ] Filtros combináveis em chips (status, etapa, vendedor, origem, tag, temperatura, período de cadastro) — funcionais client-side sobre fixtures
-- [ ] Busca por nome/telefone/email/empresa (filtro client-side)
-- [ ] Modal "Adicionar lead" com formulário Zod
-- [ ] Modal "Importar CSV" com upload + mapeamento visual de colunas + preview
-- [ ] `/leads/[id]/page.tsx` — 3 colunas: ficha (esquerda), timeline cronológica (centro), próximas ações (direita)
-- [ ] Timeline com tipos visuais distintos: mensagem WhatsApp, ligação, email, reunião, nota interna (fundo amarelo), tarefa, mudança de etapa, anexo
-- [ ] Editor inline de campos da ficha (clique → edita → salva no fixture)
-- [ ] `/kanban/page.tsx` com colunas customizáveis e cards densos
-- [ ] Drag-and-drop com `@dnd-kit` (entre etapas + reordenar dentro da coluna)
-- [ ] Indicador de temperatura no canto superior do card
-- [ ] Indicador de "deal rotting" no canto do card (vermelho atrasado / amarelo próximo / verde do dia / cinza sem) — paleta Pipedrive
-- [ ] Top bar com switch de visualização (Kanban / Lista)
-- [ ] Atalhos: `n` adiciona lead, `/` foca busca, `Esc` fecha modal/detalhe
-- [ ] Empty states tratados (sem leads, sem resultados de filtro, sem etapas)
-- [ ] Mobile: Kanban vira lista colapsável por etapa; detalhe vira tabs
+- [x] Fixtures: 50 leads coerentes em [apps/web/lib/fixtures/leads.ts](apps/web/lib/fixtures/leads.ts) (com timeline em [activities.ts](apps/web/lib/fixtures/activities.ts) — 6 leads "ricos" artesanais + default pra resto — e tasks derivadas em [tasks.ts](apps/web/lib/fixtures/tasks.ts))
+- [x] `/leads/page.tsx` — tabela densa estilo Attio: nome, telefone, etapa, vendedor, temperatura, valor, última interação, próxima ação, tags
+- [x] Filtros combináveis em chips (etapa, vendedor, origem, tag, temperatura) — funcionais client-side sobre fixtures _(filtro de "período de cadastro" deslizou pra M5 junto com filtro avançado da inbox; resto entregue)_
+- [x] Busca por nome/telefone/email/empresa (filtro client-side)
+- [x] Modal "Adicionar lead" com formulário Zod
+- [x] Modal "Importar CSV" com upload + mapeamento visual de colunas + preview
+- [x] `/leads/[id]/page.tsx` — 3 colunas: ficha (esquerda), timeline cronológica (centro), próximas ações (direita)
+- [x] Timeline com tipos visuais distintos: mensagem WhatsApp, ligação, email, reunião, nota interna (fundo amarelo), tarefa, mudança de etapa, anexo
+- [x] Editor inline de campos da ficha (clique → edita → salva no fixture) — todos os campos da ficha (nome/telefone/email/empresa/cargo/etapa/vendedor/origem/valor/tags/observação) são edit-on-click
+- [x] `/kanban/page.tsx` com colunas customizáveis e cards densos
+- [x] Drag-and-drop com `@dnd-kit` (entre etapas) — _reordenar dentro da coluna ficou pra M8 quando o `order` virar coluna persistida; sem persistência, reorder é decorativo_
+- [x] Indicador de temperatura no canto superior do card
+- [x] Indicador de "deal rotting" no canto do card (vermelho atrasado / amarelo próximo / verde do dia / cinza sem) — paleta Pipedrive
+- [x] Top bar com switch de visualização (Kanban / Lista) — botão "Ver no Kanban"/"Ver em lista" no header de cada rota
+- [x] Atalhos: `n` adiciona lead, `/` foca busca + `g+l` (Leads), `g+k` (Kanban). `Esc` fecha modal/detalhe é nativo do Radix Dialog/Sheet.
+- [x] Empty states tratados (sem leads, sem resultados de filtro, sem etapas)
+- [x] Mobile: Kanban vira lista colapsável por etapa; detalhe vira tabs
 
-**Commit final:** `feat(web): leads list, detail page and kanban with drag-and-drop (mocked)`
+**Bônus entregue (não estava no plano):**
+
+- [x] Endpoint `/api/smoke-test/leads` — 31 asserts contra funções puras (filtro, Zod, deal rotting). Pode ser invocado em CI; entrega visibilidade antes de Vitest entrar em M7+.
+- [x] Fixtures de pipeline ([pipelines.ts](apps/web/lib/fixtures/pipelines.ts)) e vendedores ([sales-reps.ts](apps/web/lib/fixtures/sales-reps.ts)) separadas — ficam reaproveitáveis pelo Inbox/Cadências (M5).
+- [x] Helpers de formatação pt-BR ([lib/utils/format.ts](apps/web/lib/utils/format.ts)) — BRL, datas relativas, telefone, iniciais.
+- [x] Store in-memory client-side ([features/leads/store.ts](apps/web/features/leads/store.ts)) com mesma assinatura que vai virar Server Action em M8.
+- [x] `useGlobalShortcuts` ampliado pra suportar múltiplos hooks coexistindo sem conflito de evento.
+
+**Commits finais:**
+
+- `feat(leads): list, filters and CSV import (mocked)` (Sub-PR A)
+- `feat(leads): detail page with timeline and inline edit (mocked)` (Sub-PR B)
+- `feat(kanban): drag-and-drop board, deal rotting and global shortcuts` (Sub-PR C)
+- `chore(leads): smoke test endpoint for filters, zod and rotting` (revisão)
 
 ---
 
