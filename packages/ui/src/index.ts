@@ -25,6 +25,34 @@ export {
   CardTitle,
 } from './components/card';
 export { Checkbox } from './components/checkbox';
+export { Combobox, type ComboboxOption } from './components/combobox';
+export {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from './components/command';
+export {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuPortal,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from './components/context-menu';
 export {
   Dialog,
   DialogClose,
@@ -54,10 +82,33 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from './components/dropdown-menu';
+export {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+  useFormField,
+} from './components/form';
 export { Input, type InputProps } from './components/input';
 export { Label } from './components/label';
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './components/popover';
 export { RadioGroup, RadioGroupItem } from './components/radio-group';
 export { ScrollArea, ScrollBar } from './components/scroll-area';
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectScrollDownButton,
+  SelectScrollUpButton,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from './components/select';
 export { Separator } from './components/separator';
 export {
   Sheet,
@@ -72,6 +123,7 @@ export {
 } from './components/sheet';
 export { Skeleton } from './components/skeleton';
 export { Switch } from './components/switch';
+export { Tabs, TabsContent, TabsList, TabsTrigger } from './components/tabs';
 export { Textarea, type TextareaProps } from './components/textarea';
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './components/tooltip';
 
