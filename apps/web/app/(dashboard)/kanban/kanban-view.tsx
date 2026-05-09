@@ -7,18 +7,22 @@ import Link from 'next/link';
 import { Button, PageHeader } from '@papopro/ui';
 import { List, PlusCircle } from '@papopro/ui/icons';
 
-import { KanbanBoard } from '@/features/kanban/components/kanban-board';
-import { KanbanMobile } from '@/features/kanban/components/kanban-mobile';
-import { LeadCreateDialog } from '@/features/leads/components/lead-create-dialog';
+import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
+import { DealsKanbanBoard } from '@/features/deals/components/deals-kanban-board';
+import { DealsKanbanMobile } from '@/features/deals/components/deals-kanban-mobile';
+import { PipelineStats } from '@/features/deals/components/pipeline-stats';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 
 /**
- * `/kanban` — board responsivo. Em ≥md mostra colunas com drag-and-drop;
- * em <md vira lista colapsável (`KanbanMobile`). O switch de view (Kanban
- * × Lista) leva pra `/leads` — não duplicamos a tabela aqui.
+ * `/kanban` — Pipeline de Negócios. Layout responsivo:
+ *  - ≥md: board de 6 colunas com drag-and-drop entre todas
+ *  - <md: lista colapsável por etapa (drag em mobile compete com scroll)
  *
- * Em M5 entram `g+k` (Kanban) e `g+l` (Leads) no `useGlobalShortcuts`,
- * junto com `n` (novo lead) — preparado em hooks/use-global-shortcuts.ts.
+ * Atalho `n` (em /kanban) abre o modal "Adicionar negócio". O botão
+ * "+ Adicionar negócio" dentro de cada coluna pré-seleciona a etapa.
+ *
+ * Em M8 essa view passa a hidratar com dados reais (Server Component que
+ * lê `deals` via Prisma + RLS, passa snapshot inicial pro client).
  */
 export function KanbanView() {
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -34,30 +38,32 @@ export function KanbanView() {
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
-        title="Funil"
-        description="Arraste cards entre etapas para mover negócios. As cores no canto sinalizam temperatura e prazo."
+        title="Pipeline"
+        description="Arraste negócios entre etapas — as cores no header de cada coluna mapeiam o estado, o stripe lateral do card repete a etapa e o pill no rodapé indica o prazo."
         actions={
           <>
             <Button variant="outline" size="sm" asChild>
               <Link href="/leads">
-                <List /> Ver em lista
+                <List /> Ver leads
               </Link>
             </Button>
             <Button size="sm" onClick={() => openCreate()}>
-              <PlusCircle /> Adicionar lead
+              <PlusCircle /> Adicionar negócio
             </Button>
           </>
         }
       />
 
+      <PipelineStats />
+
       <div className="hidden md:block">
-        <KanbanBoard onAddLead={openCreate} />
+        <DealsKanbanBoard onAddDeal={openCreate} />
       </div>
       <div className="md:hidden">
-        <KanbanMobile />
+        <DealsKanbanMobile />
       </div>
 
-      <LeadCreateDialog
+      <DealCreateDialog
         open={createOpen}
         onOpenChange={(o) => {
           setCreateOpen(o);
