@@ -20,9 +20,11 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.75.0",
+    "react-hot-toast": "^2.4.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/react": "^4.10.0",
     "@papopro/config": "workspace:*",
     "@types/node": "^20.17.10",
     "@types/react": "^18.3.18",

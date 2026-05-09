@@ -6,9 +6,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 
-import { Button, cn } from '@papopro/ui';
+import { Button, Checkbox } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
 import { signupSchema, type SignupInput } from '../schemas';
@@ -28,6 +28,7 @@ export function SignupForm() {
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
+    control,
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
@@ -102,22 +103,32 @@ export function SignupForm() {
         />
 
         <div className="flex flex-col gap-1.5">
+          {/*
+           * Checkbox via Controller — o Radix Checkbox expõe `onCheckedChange`
+           * (booleano) em vez do `onChange` esperado pelo `register` do RHF.
+           * `Controller` é a ponte oficial: aceitamos `value` para o checked
+           * controlado e `onChange` para propagar a mudança ao form.
+           */}
           <label
             htmlFor="signup-terms"
             className="text-foreground text-body flex cursor-pointer items-start gap-2.5"
           >
-            <input
-              id="signup-terms"
-              type="checkbox"
-              aria-invalid={Boolean(errors.acceptTerms) || undefined}
-              aria-describedby={errors.acceptTerms ? 'signup-terms-error' : undefined}
-              className={cn(
-                'border-input text-primary focus-visible:ring-ring focus-visible:ring-offset-background',
-                'mt-0.5 size-4 shrink-0 cursor-pointer rounded border accent-[hsl(var(--primary))]',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
-                errors.acceptTerms && 'border-destructive',
+            <Controller
+              control={control}
+              name="acceptTerms"
+              render={({ field }) => (
+                <Checkbox
+                  id="signup-terms"
+                  ref={field.ref}
+                  name={field.name}
+                  checked={field.value}
+                  onCheckedChange={(checked) => field.onChange(checked === true)}
+                  onBlur={field.onBlur}
+                  aria-invalid={Boolean(errors.acceptTerms) || undefined}
+                  aria-describedby={errors.acceptTerms ? 'signup-terms-error' : undefined}
+                  className="mt-0.5"
+                />
               )}
-              {...register('acceptTerms')}
             />
             <span className="leading-snug">
               Concordo com os{' '}

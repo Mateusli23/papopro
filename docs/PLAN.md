@@ -97,27 +97,50 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ---
 
-## M2 — Design System & UI Primitives
+## M2 — Design System & UI Primitives ✅
 
-**Branch:** `m2-design-system`
+**Branches:** `m2-design-system` (entregue em 28-out-25 via PR #2) + `m2-ds-completion` (3 sub-PRs subsequentes preencheram os primitivos faltantes).
 
 **Objetivo:** `packages/ui` consumível com tokens, dark mode de primeira classe, primitivos shadcn customizados via `cva` e componentes de domínio reutilizáveis. Pronto para alimentar todas as telas.
 
 **Entregas:**
 
-- [ ] Tokens completos em `packages/config/tailwind.preset.ts` (paleta CLAUDE.md §8 — primary, accent, success/warning/destructive/info, foreground, muted)
-- [ ] CSS vars light/dark em `packages/ui/styles/tokens.css`
-- [ ] Provider `next-themes` configurado em `apps/web/app/layout.tsx`; toggle de tema no topbar
-- [ ] Tipografia: `next/font` com Inter, aplicado em `landing` e `web`
-- [ ] Re-export central de Lucide icons em `packages/ui/icons.ts`
-- [ ] Primitivos shadcn instalados e expostos via `@papopro/ui`: Button, Input, Textarea, Select, Combobox, Checkbox, Radio, Switch, Label, Form, Dialog, Sheet, Drawer, Popover, Tooltip, Toast, Toaster, Card, Badge, Avatar, Separator, Skeleton, Tabs, DropdownMenu, ContextMenu, ScrollArea, Command (Cmd+K placeholder)
-- [ ] Variantes via `cva` em todos os componentes com mais de 1 estilo
-- [ ] Componentes de domínio: `StatusDot` (verde/amarelo/vermelho), `TemperatureBadge` (quente/morno/frio), `PageHeader`, `EmptyState`, `LoadingState`, `ErrorState`, `KbdShortcut`
-- [ ] Toaster (`react-hot-toast`) montado nos layouts root
-- [ ] Rota interna `/_dev/components` em `apps/web` com showcase de todos os componentes em ambos os temas
-- [ ] Snapshot de acessibilidade básico (axe) na rota `/_dev/components`
+- [x] Tokens completos em `packages/config/tailwind.preset.ts` (paleta CLAUDE.md §8 — primary, accent, success/warning/destructive/info, foreground, muted) _(M2 original)_
+- [x] CSS vars light/dark em `packages/ui/styles/tokens.css` _(M2 original)_
+- [x] Provider `next-themes` configurado em `apps/web/app/layout.tsx`; toggle de tema no topbar _(M2 original)_
+- [x] Tipografia: `next/font` com Poppins (substituído de Inter por casar com a marca, CLAUDE.md §8), aplicado em `landing` e `web` via `@fontsource/poppins` _(M2 original — escolha de `@fontsource` em vez de `next/font/google` documentada em `apps/web/app/layout.tsx` por TLS strict bloquear `fonts.googleapis.com`)_
+- [x] Re-export central de Lucide icons em `packages/ui/icons.ts` _(M2 original)_
+- [x] Primitivos shadcn instalados e expostos via `@papopro/ui`: Button, Input, Textarea, Select, Combobox, Checkbox, Radio, Switch, Label, Form, Dialog, Sheet, Drawer, Popover, Tooltip, Toast (via `react-hot-toast`), Toaster, Card, Badge, Avatar, Separator, Skeleton, Tabs, DropdownMenu, ContextMenu, ScrollArea, Command (Cmd+K placeholder) _(M2 original entregou ~1/3; m2-ds-completion fechou o resto em 3 sub-PRs)_
+- [x] Variantes via `cva` em todos os componentes com mais de 1 estilo
+- [x] Componentes de domínio: `StatusDot` (online/idle/offline/neutral), `TemperatureBadge` (hot/warm/cold), `PageHeader`, `EmptyState`, `LoadingState`, `ErrorState`, `KbdShortcut`
+- [x] Toaster (`react-hot-toast`) montado em `apps/web/app/layout.tsx` via `apps/web/components/toaster.tsx` (wrapper com tokens semânticos do DS — mantemos `react-hot-toast` fora do package `@papopro/ui` para a landing não arrastar a lib)
+- [x] Rota interna `/dev/components` em `apps/web` com showcase de todos os componentes em ambos os temas (originalmente planejada como `/_dev/`, renomeada para `/dev/` porque Next 14 ignora pastas com prefixo `_` como private folders e não expõe como rota)
+- [x] Snapshot de acessibilidade básico (axe) na rota `/dev/components` via `@axe-core/react` carregado dinamicamente, ativo só em `NODE_ENV=development`
 
-**Commit final:** `feat(ui): design system with tokens, dark mode and shadcn primitives`
+**Sub-PRs de `m2-ds-completion`:**
+
+- **Sub-PR A — Form & Feedback core**
+  - `Checkbox` (Radix), `Textarea`, `RadioGroup` + `RadioGroupItem` (Radix), `Switch` (Radix), `Skeleton`, `Dialog` (Radix)
+  - `LoadingState` + `ErrorState` (domínio)
+  - `Toaster` em `apps/web/components/toaster.tsx` + montagem no `app/layout.tsx`; `react-hot-toast` em `apps/web/package.json`
+  - Refator: [signup-form.tsx](apps/web/features/auth/components/signup-form.tsx) trocou `<input type="checkbox">` cru pelo novo `Checkbox` via `Controller` (RHF)
+  - Commit: `feat(ui): form primitives, dialog, toast and loading/error states`
+
+- **Sub-PR B — Selects, Tabs e Form wrapper**
+  - `Popover` (Radix), `Select` (Radix), `Tabs` (Radix), `ContextMenu` (Radix), `Command` (cmdk), `Combobox` (Popover + Command)
+  - `Form` wrapper RHF-aware estilo shadcn: `Form`, `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage`, `useFormField`
+  - `react-hook-form` virou `peerDependency` opcional do `@papopro/ui`
+  - Commit: `feat(ui): selects, tabs, popover, context-menu, command and rhf form wrapper`
+
+- **Sub-PR C — Drawer, showcase e axe**
+  - `Drawer` (vaul) — painel deslizando da borda inferior, ideal pra mobile
+  - `/dev/layout.tsx` — header dev com `LogoMark` + `ThemeToggle`, retorna 404 em `VERCEL_ENV=production`, `robots: noindex`
+  - `/dev/axe.tsx` — `AxeDevtools` carrega `@axe-core/react` dinamicamente em dev e reporta violações no console (debounce 1000ms)
+  - `/dev/components/page.tsx` + `showcase.tsx` — 9 seções (Tipografia/Marca, Cores semânticas, Buttons, Form primitives, Status & Dados, Cards & Layout, Loading/Empty/Error, Tabs, Overlays, Toasts) com instâncias funcionais de todos os primitivos
+  - Commit: `feat(ui): drawer + /dev/components showcase com axe-core em dev`
+
+**Commit final do M2 original:** `feat(m2): design system, app shell e tema PapoPro` (PR #2)
+**Commit final do M2-completion:** `feat(ui): drawer + /dev/components showcase com axe-core em dev` (PR pendente).
 
 ---
 
