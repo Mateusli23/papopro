@@ -123,26 +123,39 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 
 ## M3 — App Shell + Auth UI + Onboarding (mockado)
 
-**Branch:** `m3-app-shell`
+**Branch:** `m3-app-shell` · **Status:** parcial — sub-PR de auth + onboarding mínimo mergeado em `main`. Marco fecha quando os itens pendentes abaixo entrarem em PRs subsequentes.
 
 **Objetivo:** Telas de autenticação, layout do produto (sidebar + topbar + workspace switcher) e wizard de onboarding navegáveis com mocks. Produto "parece" funcionar sem backend.
 
 **Entregas:**
 
-- [ ] `(auth)/login/page.tsx`, `(auth)/signup/page.tsx`, `(auth)/forgot/page.tsx` — formulários com validação Zod inline, sem submit real
+- [x] `(auth)/login/page.tsx` e `(auth)/signup/page.tsx` — formulários com validação Zod + RHF, loading nos botões, erros inline (`role="alert"`, `aria-invalid`, `aria-describedby`) e slot pronto pra erro de submit; navegação fake (login → `/dashboard`, signup → `/onboarding`)
+- [ ] `(auth)/forgot/page.tsx`
 - [ ] `(auth)/verify-email/page.tsx` — estado de espera por confirmação
-- [ ] `(dashboard)/layout.tsx` — sidebar fixa 240px + topbar
-- [ ] Sidebar com itens: Dashboard, Leads, Kanban, Inbox, Agentes, Cadências, Tarefas, Relatórios, Configurações
-- [ ] Workspace switcher no topo da sidebar (mock de 3 workspaces)
-- [ ] Topbar: busca placeholder, sino com badge, avatar com menu (perfil, alternar tema, sair)
-- [ ] Drawer de notificações com 30 dias de mocks
-- [ ] `(dashboard)/page.tsx` — dashboard com cards vazios orientando próximo passo (estado pré-onboarding)
-- [ ] Tela "Criar workspace" (primeiro acesso, 0 workspaces)
+- [x] `(dashboard)/layout.tsx` — sidebar fixa 240px + topbar _(coberto pelo M2)_
+- [x] Sidebar com itens: Dashboard, Leads, Kanban, Inbox, Agentes, Cadências, Tarefas, Relatórios, Configurações _(coberto pelo M2)_
+- [x] Workspace switcher no topo da sidebar (mock de 3 workspaces) _(coberto pelo M2)_
+- [x] Topbar: busca placeholder, sino com badge, avatar com menu (perfil, alternar tema, sair) _(coberto pelo M2)_
+- [x] Drawer de notificações com 30 dias de mocks _(coberto pelo M2)_
+- [ ] `(dashboard)/page.tsx` — variante pré-onboarding com cards orientando próximo passo _(M2 entregou só o estado pós-onboarding com KPIs)_
+- [ ] Tela "Criar workspace" (primeiro acesso, 0 workspaces) — substituída temporariamente por `/onboarding` mínimo neste PR
 - [ ] Welcome modal + Wizard de 4 passos (workspace, conectar WhatsApp com QR mock, criar agente IA, importar CSV) com botão "Pular este passo"
 - [ ] `middleware.ts` placeholder: redireciona `/` para `/dashboard` se "logado" (cookie mock), senão `/login`
 - [ ] Provider `AuthMockProvider` com toggle de usuário/workspace para acelerar dev — embrulhado no layout
 - [ ] Atalho `g + n` para abrir Cmd+K placeholder
-- [ ] Responsividade: shell colapsa pra menu drawer em <1024px
+- [x] Responsividade: shell colapsa pra menu drawer em <1024px _(M2)_ + auth screens responsivas em ≤md _(este PR)_
+
+**Adicional entregue (não estava no plano original do M3):**
+
+- [x] Primitivo `Label` em `@papopro/ui` (gap remanescente do M2)
+- [x] `/onboarding` minimalista de 1 passo (nome do workspace) — destrava o fluxo fim-a-fim antes do wizard de 4 passos chegar
+- [x] `FormField` composto (Label + Input + erro/hint acessível) em `features/auth/components/`
+- [x] Schemas Zod compartilhados de login/signup/onboarding em `features/auth/schemas.ts`
+- [x] `react-hook-form ^7.75`, `zod ^4.4` e `@hookform/resolvers ^5.2` adicionados em `apps/web`
+
+**Conhecidos para resolver antes do close do marco:**
+
+- Links `/forgot`, `/legal/terms` e `/legal/privacy` referenciados nos forms ainda apontam para 404 — neutralizar ou stubar quando as telas correspondentes entrarem.
 
 **Commit final:** `feat(web): app shell with auth screens, onboarding wizard and mocked auth`
 
