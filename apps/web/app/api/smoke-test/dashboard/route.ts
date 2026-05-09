@@ -1,6 +1,7 @@
 /**
- * Smoke test do Dashboard — valida as 4 famílias de cálculo (KPIs,
- * FunnelData, UpcomingDeals, TrendData) que alimentam a tela `/dashboard`.
+ * Smoke test do Dashboard — valida as 5 famílias de cálculo (KPIs,
+ * FunnelData, UpcomingDeals, TrendData, RecentActivity) que alimentam
+ * a tela `/dashboard`.
  *
  * Existe pra dar confiança nas fórmulas antes de Vitest entrar em M7+,
  * e pra fixar contratos que vão virar Server Action em M8 (mesmas funções
@@ -15,6 +16,7 @@ import {
   buildFunnelData,
   buildTrendData,
   computeDashboardKpis,
+  getRecentActivity,
   getUpcomingDeals,
 } from '@/features/dashboard/transforms';
 import { sumOpenPipelineCents } from '@/features/deals/transforms';
@@ -205,6 +207,47 @@ export function GET() {
   t('contém alguma atividade nos últimos 30 dias (sanity das fixtures)', () => {
     const total = trend.reduce((acc, p) => acc + p.created + p.won, 0);
     return total > 0 || `total=${total}`;
+  });
+
+  // ── Recent activity (timeline) ──────────────────────────────────────────
+  const activity = getRecentActivity(FAKE_DEALS, 6);
+  t = run('activity', results);
+
+  t('respeita o limite (length <= 6)', () => activity.length <= 6 || `got ${activity.length}`);
+  t('todos os tipos são created|won|lost', () =>
+    activity.every((a) => a.type === 'created' || a.type === 'won' || a.type === 'lost'),
+  );
+  t('ordenado por timestamp descendente (mais recentes primeiro)', () => {
+    for (let i = 1; i < activity.length; i++) {
+      const prev = activity[i - 1];
+      const curr = activity[i];
+      if (!prev || !curr) continue;
+      if (prev.timestamp.localeCompare(curr.timestamp) < 0) return `desordem em [${i - 1},${i}]`;
+    }
+    return true;
+  });
+  t('todos têm dealId, dealTitle, leadId, ownerId não-vazios', () =>
+    activity.every(
+      (a) =>
+        typeof a.dealId === 'string' &&
+        a.dealId.length > 0 &&
+        typeof a.dealTitle === 'string' &&
+        a.dealTitle.length > 0 &&
+        typeof a.leadId === 'string' &&
+        a.leadId.length > 0 &&
+        typeof a.ownerId === 'string' &&
+        a.ownerId.length > 0,
+    ),
+  );
+  t('limit configurável (limit=3 retorna 3)', () => getRecentActivity(FAKE_DEALS, 3).length === 3);
+  t('com lista vazia retorna [] (não quebra)', () => getRecentActivity([], 6).length === 0);
+  t('inclui pelo menos 1 evento de cada tipo (sanity das fixtures)', () => {
+    const all = getRecentActivity(FAKE_DEALS, FAKE_DEALS.length * 2);
+    const types = new Set(all.map((a) => a.type));
+    return (
+      (types.has('created') && types.has('won') && types.has('lost')) ||
+      `tipos encontrados: ${Array.from(types).join(',')}`
+    );
   });
 
   const passed = results.filter((r) => r.ok).length;

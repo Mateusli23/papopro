@@ -5,6 +5,7 @@ import { PlusCircle, Sparkles } from '@papopro/ui/icons';
 
 import { DashboardFunnelChart } from './funnel-chart';
 import { KpiGrid } from './kpi-grid';
+import { RecentActivityCard } from './recent-activity-card';
 import { DashboardTrendChart } from './trend-chart';
 import { UpcomingDealsTable } from './upcoming-deals-table';
 
@@ -17,17 +18,21 @@ import { UpcomingDealsTable } from './upcoming-deals-table';
  *  - `<PageHeader>` com greeting + ações
  *  - `<KpiGrid>`: 4 cards (Total Leads / Negócios Abertos / Valor Pipeline / Conversão)
  *  - `<DashboardTrendChart>` full-width: linha temporal 30d criados vs ganhos
- *  - Linha responsiva: FunnelChart (1/3) + UpcomingDealsTable (2/3)
+ *  - Grid responsivo:
+ *      Coluna esquerda (1/3): FunnelChart + RecentActivityCard empilhados
+ *      Coluna direita (2/3): UpcomingDealsTable
  *
  * Justificativa de ordem:
  *  - KPIs são "visão de momento" (números agora)
  *  - Trend é "história curta" (últimos 30d) — entra como ponte temporal
  *  - Funnel + Tabela são "ação" (o que está aberto, o que precisa de atenção)
+ *  - Activity é "narrativa" complementar — quem fez o quê, recente
  *
- * Justificativa do split 1/3 + 2/3 (funnel/tabela) em desktop:
- *  - Funnel é leitura ambiente — não precisa espaço pra clicar
+ * Justificativa do split 1/3 + 2/3:
+ *  - Funnel + Activity são leituras compactas e narrativas (1/3 chega)
  *  - Tabela é superfície de ação — vendedor escaneia 8 linhas × 6 colunas,
  *    precisa de largura pra não truncar nomes/títulos
+ *  - Activity embaixo do Funnel evita espaço vazio e mantém densidade Attio
  *
  * Em mobile (<lg) tudo vira full-width empilhado.
  *
@@ -57,8 +62,9 @@ export function PostWizardDashboard({ greeting }: { greeting: string }) {
       <DashboardTrendChart />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-1">
+        <div className="flex flex-col gap-6 lg:col-span-1">
           <DashboardFunnelChart />
+          <RecentActivityCard />
         </div>
         <div className="lg:col-span-2">
           <UpcomingDealsTable />

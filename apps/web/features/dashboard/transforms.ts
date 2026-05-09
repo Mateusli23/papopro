@@ -20,7 +20,7 @@ import type { Lead } from '@/features/leads/types';
 import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 import { formatCentsCompact } from '@/lib/utils/format';
 
-import type { DashboardKpis, FunnelDatum, TrendDatum, UpcomingDeal } from './types';
+import type { ActivityItem, DashboardKpis, FunnelDatum, TrendDatum, UpcomingDeal } from './types';
 
 /**
  * Mapa etapa → cor do trapézio do FunnelChart.
@@ -180,4 +180,53 @@ export function buildTrendData(deals: Deal[], now: Date = NOW, days: number = 30
     });
   }
   return out;
+}
+
+/**
+ * Timeline derivada das fixtures de deals — top N eventos mais recentes
+ * em ordem decrescente. Tipos suportados:
+ *
+ *  - `created`: deal entrou no pipeline (`createdAt`)
+ *  - `won`: deal fechou como ganho (`closedAt` + status='won')
+ *  - `lost`: deal fechou como perdido (`closedAt` + status='lost')
+ *
+ * **Por que sem `updated` ou `stage_change`**: as fixtures não guardam
+ * histórico de mudanças de etapa nem distinguem update significativo
+ * de updateAt automático. Inventar esses eventos seria mentir. Em M8
+ * a tabela `activities` Postgres terá registro real e adicionamos os
+ * tipos faltantes sem mudar a shape externa.
+ *
+ * **Sem cap de período**: pega os N mais recentes sem filtrar "últimos
+ * 30d". Se o pipeline está parado faz mais sentido mostrar o evento mais
+ * antigo do que esconder a tela.
+ */
+export function getRecentActivity(deals: Deal[], limit: number = 6): ActivityItem[] {
+  const events: ActivityItem[] = [];
+
+  for (const d of deals) {
+    // Evento "created" pra todo deal
+    events.push({
+      timestamp: d.createdAt,
+      type: 'created',
+      dealId: d.id,
+      dealTitle: d.title,
+      leadId: d.leadId,
+      ownerId: d.ownerId,
+    });
+
+    // Evento "won"/"lost" se fechado
+    if (d.closedAt && (d.status === 'won' || d.status === 'lost')) {
+      events.push({
+        timestamp: d.closedAt,
+        type: d.status,
+        dealId: d.id,
+        dealTitle: d.title,
+        leadId: d.leadId,
+        ownerId: d.ownerId,
+      });
+    }
+  }
+
+  // Mais recentes primeiro. ISO localeCompare funciona pra ordem cronológica.
+  return events.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit);
 }

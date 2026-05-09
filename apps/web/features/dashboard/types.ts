@@ -84,3 +84,28 @@ export interface TrendDatum {
   /** Quantidade de deals ganhos (closedAt nesse dia, status='won'). */
   won: number;
 }
+
+/**
+ * Item da timeline "Atividade recente". Derivado das fixtures de deals:
+ *
+ *  - `created`: deal apareceu no pipeline (`createdAt`)
+ *  - `won`: deal fechado como ganho (`closedAt` + status='won')
+ *  - `lost`: deal fechado como perdido (`closedAt` + status='lost')
+ *
+ * Em M8 vira tabela `activities` no Postgres com mais tipos
+ * (mensagem WhatsApp, mudança de etapa, nota, ligação) — `type` cresce
+ * mas a shape sobrevive. Por enquanto reflete só os eventos que dá pra
+ * inferir das fixtures atuais sem inventar dados.
+ */
+export interface ActivityItem {
+  /** ISO datetime do evento — usado pra ordenar e pra `formatRelative`. */
+  timestamp: string;
+  /** Tipo do evento — controla ícone, cor e verbo. */
+  type: 'created' | 'won' | 'lost';
+  /** Deal a que se refere (clique → `/leads/{leadId}`). */
+  dealId: string;
+  dealTitle: string;
+  leadId: string;
+  /** Vendedor que executou a ação. */
+  ownerId: string;
+}
