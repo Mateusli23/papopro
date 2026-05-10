@@ -17,6 +17,7 @@ import {
 } from '@papopro/ui';
 import {
   ArrowRight,
+  Bot,
   Inbox,
   KanbanSquare,
   LayoutDashboard,
@@ -50,6 +51,7 @@ export function CmdKPalette() {
     onGoKanban: () => window.location.assign('/kanban'),
     onGoCadences: () => window.location.assign('/cadences'),
     onGoInbox: () => window.location.assign('/inbox'),
+    onGoAgents: () => window.location.assign('/agents'),
   });
 
   return (
@@ -95,6 +97,12 @@ export function CmdKPalette() {
                 onClose={() => setOpen(false)}
               />
               <PaletteItem
+                icon={Bot}
+                label="Agentes IA"
+                href="/agents"
+                onClose={() => setOpen(false)}
+              />
+              <PaletteItem
                 icon={Settings}
                 label="Configurações"
                 href="/dashboard"
@@ -110,6 +118,7 @@ export function CmdKPalette() {
             <Shortcut keys={['G', 'K']} label="Kanban" />
             <Shortcut keys={['G', 'C']} label="Cadências" />
             <Shortcut keys={['G', 'I']} label="Inbox" />
+            <Shortcut keys={['G', 'A']} label="Agentes" />
             <Shortcut keys={['N']} label="Adicionar lead" />
             <Shortcut keys={['/']} label="Buscar" />
           </span>

@@ -8,6 +8,7 @@
  */
 import {
   Bell,
+  Bot,
   Inbox,
   KanbanSquare,
   LayoutDashboard,
@@ -16,7 +17,6 @@ import {
   PieChart,
   Repeat,
   Settings,
-  Sparkles,
   Users,
 } from '@papopro/ui/icons';
 
@@ -46,7 +46,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // que sem mensagens não-lidas o número simplesmente some — o componente
       // só pinta o `<Badge>` quando `item.badge !== undefined`.
       { label: 'Inbox', href: '/inbox', icon: Inbox },
-      { label: 'Agentes', href: '/agents', icon: Sparkles, soon: true },
+      // Ícone Bot (não Sparkles) — alinhado com cmdk-palette, editor e
+      // empty state da lista (review MEDIUM M5#5: visual consistency).
+      { label: 'Agentes', href: '/agents', icon: Bot },
       { label: 'Cadências', href: '/cadences', icon: Repeat },
       { label: 'Tarefas', href: '/tasks', icon: ListChecks },
       { label: 'Relatórios', href: '/reports', icon: PieChart },

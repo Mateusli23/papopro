@@ -5,7 +5,7 @@ import * as React from 'react';
 import { cn, Input, Label } from '@papopro/ui';
 import { Sparkles } from '@papopro/ui/icons';
 
-import { AGENT_TEMPLATES, type AgentTemplateId } from '../../schemas';
+import { WIZARD_AGENT_TEMPLATES, type AgentTemplateId } from '../../schemas';
 
 interface AgentStepProps {
   template: string | null;
@@ -37,7 +37,7 @@ export function AgentStep({ template, agentName, onChange }: AgentStepProps) {
         <legend id="agent-template-label" className="sr-only">
           Template do agente
         </legend>
-        {AGENT_TEMPLATES.map((tpl) => {
+        {WIZARD_AGENT_TEMPLATES.map((tpl) => {
           const isActive = template === tpl.id;
           return (
             <label

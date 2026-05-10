@@ -2,8 +2,6 @@
 
 import * as React from 'react';
 
-import toast from 'react-hot-toast';
-
 import {
   Button,
   cn,
@@ -18,6 +16,7 @@ import { Archive, ArchiveRestore } from '@papopro/ui/icons';
 import { moveLeadToStage } from '@/features/leads/store';
 import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 import { SALES_REPS } from '@/lib/fixtures/sales-reps';
+import { showUndoableToast } from '@/lib/utils/show-undoable-toast';
 
 import {
   archiveConversation,
@@ -162,32 +161,5 @@ export function LeadFichaQuickActions({
   );
 }
 
-/**
- * Toast com botão "Desfazer" inline. Padrão extraído pra remover duplicação
- * dos 3 handlers (review M5#4c). Cada toast captura seu `undo` por closure
- * — toasts concorrentes preservam o estado anterior independentemente.
- *
- * Em M9 quando essas ações virarem Server Actions, este helper continua
- * útil — só troca o callback síncrono por um async com optimistic update +
- * revert no erro. A UI permanece igual.
- */
-function showUndoableToast(message: string, undo: () => void) {
-  toast.success(
-    (t) => (
-      <span className="flex items-center gap-3">
-        {message}
-        <button
-          type="button"
-          onClick={() => {
-            undo();
-            toast.dismiss(t.id);
-          }}
-          className="text-primary text-caption font-semibold hover:underline"
-        >
-          Desfazer
-        </button>
-      </span>
-    ),
-    { duration: 5000 },
-  );
-}
+// `showUndoableToast` extraído pra `lib/utils/show-undoable-toast.tsx` em M5#5
+// — segundo consumer (versionamento de agentes IA) precisava do mesmo padrão.
