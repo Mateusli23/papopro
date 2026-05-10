@@ -24,6 +24,11 @@ export function useRelativeListTime(iso: string, fallback = '—'): string {
   return label;
 }
 
+// Hardcoded em vez de `toLocaleDateString({ weekday: 'short' }).replace(...)`
+// — algumas runtimes retornam "Seg." (com ponto), outras "seg" (sem). Array
+// fixo elimina dependência do output do Intl.
+const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'] as const;
+
 function computeRelativeListTime(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -33,7 +38,11 @@ function computeRelativeListTime(iso: string): string {
     d.getMonth() === now.getMonth() &&
     d.getDate() === now.getDate();
   if (sameDay) {
-    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'America/Sao_Paulo',
+    });
   }
 
   const yesterday = new Date(now);
@@ -46,8 +55,12 @@ function computeRelativeListTime(iso: string): string {
 
   const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
   if (diffDays < 7) {
-    return d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('-feira', '').slice(0, 3);
+    return WEEKDAY_SHORT[d.getDay()] ?? '';
   }
 
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  return d.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  });
 }

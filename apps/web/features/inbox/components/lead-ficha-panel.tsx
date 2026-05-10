@@ -65,12 +65,14 @@ export function LeadFichaPanel({ conversationId }: LeadFichaPanelProps) {
     );
   }
 
-  return <PanelContent conversationId={conversation.id} leadId={conversation.leadId} />;
+  return <PanelContent leadId={conversation.leadId} />;
 }
 
-function PanelContent({ conversationId, leadId }: { conversationId: string; leadId: string }) {
+function PanelContent({ leadId }: { leadId: string }) {
   const lead = getLead(leadId);
-  const recentActivities = React.useMemo(() => getActivitiesForLead(leadId).slice(0, 4), [leadId]);
+  // `getActivitiesForLead` é Map.get + slice — O(1). Sem `useMemo`,
+  // que custaria mais que o trabalho real.
+  const recentActivities = getActivitiesForLead(leadId).slice(0, 4);
 
   if (!lead) {
     return (
@@ -80,8 +82,8 @@ function PanelContent({ conversationId, leadId }: { conversationId: string; lead
       >
         <EmptyState
           icon={User}
-          title="Lead não encontrado"
-          description={`A conversa ${conversationId} faz referência a um lead que não está disponível.`}
+          title="Lead não disponível"
+          description="O lead vinculado a essa conversa não foi encontrado. Recarregue a inbox; se persistir, fale com o suporte."
         />
       </aside>
     );

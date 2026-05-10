@@ -37,14 +37,18 @@ export function InboxView() {
   // Estado mobile: lista visível ou thread visível. Default = lista.
   const [mobileView, setMobileView] = React.useState<'list' | 'thread'>('list');
 
-  function handleSelect(id: string) {
+  // `useCallback` mantém referência estável → preserva a `React.memo` em
+  // `<ConversationListItem>`. Sem isso, o store re-emit (ex: markRead zera
+  // unread) força um novo `handleSelect` em cada render do `<InboxView>`,
+  // quebrando a memo e re-renderizando todos os items da lista.
+  const handleSelect = React.useCallback((id: string) => {
     setSelectedId(id);
     setMobileView('thread'); // mobile: ao selecionar, vai pra thread
-  }
+  }, []);
 
-  function handleBack() {
+  const handleBack = React.useCallback(() => {
     setMobileView('list');
-  }
+  }, []);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden">

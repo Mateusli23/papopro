@@ -54,8 +54,8 @@ function ConversationListItemImpl({ conversation, selected, onSelect }: Conversa
   return (
     <button
       type="button"
-      role="option"
-      aria-selected={selected}
+      aria-current={selected ? 'true' : undefined}
+      aria-pressed={selected}
       onClick={() => onSelect(conversation.id)}
       className={cn(
         'group relative flex w-full items-start gap-3 px-3 py-3 text-left transition-colors',
@@ -63,7 +63,11 @@ function ConversationListItemImpl({ conversation, selected, onSelect }: Conversa
         selected && 'bg-muted',
       )}
     >
-      <span aria-hidden className={cn('absolute inset-y-2 left-0 w-0.5 rounded-r-full', stripe)} />
+      {/* Stripe lateral 3px na cor do status — alinha com a spec do PR. */}
+      <span
+        aria-hidden
+        className={cn('absolute inset-y-2 left-0 w-[3px] rounded-r-full', stripe)}
+      />
 
       <Avatar className="size-10 shrink-0">
         <AvatarFallback className="bg-primary/15 text-primary text-caption font-semibold">
@@ -95,7 +99,7 @@ function ConversationListItemImpl({ conversation, selected, onSelect }: Conversa
             )}
           >
             {conversation.lastMessageDirection === 'out' && conversation.lastMessagePreview && (
-              <span className="text-muted-foreground/80 mr-1">você:</span>
+              <span className="text-muted-foreground/80 mr-1">Você:</span>
             )}
             {conversation.lastMessagePreview || 'sem conteúdo'}
           </p>

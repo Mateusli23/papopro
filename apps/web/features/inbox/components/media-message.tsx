@@ -1,7 +1,5 @@
 'use client';
 
-import * as React from 'react';
-
 import { Button } from '@papopro/ui';
 import { Download, FileAudio, FileText, ImageIcon, Play } from '@papopro/ui/icons';
 
@@ -123,6 +121,3 @@ function formatDuration(seconds: number): string {
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
-
-// React.memo otimiza thread longa — bubbles não re-render se props iguais.
-export const MediaMessageMemo = React.memo(MediaMessage);

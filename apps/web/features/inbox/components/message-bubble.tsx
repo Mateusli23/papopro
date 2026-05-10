@@ -2,6 +2,7 @@ import { cn } from '@papopro/ui';
 
 import { formatDateTime } from '@/lib/utils/format';
 
+import { formatTimeBrt } from '../hooks/inbox-tz';
 import type { Message } from '../types';
 
 import { MediaMessage } from './media-message';
@@ -36,7 +37,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message, className }: MessageBubbleProps) {
   const hasMedia = message.kind !== 'text' && message.kind !== 'internal_note';
-  const time = formatTime(message.createdAt);
+  const time = formatTimeBrt(message.createdAt);
 
   return (
     <div className="flex w-full">
@@ -61,16 +62,4 @@ export function MessageBubble({ message, className }: MessageBubbleProps) {
       </div>
     </div>
   );
-}
-
-/**
- * "14:32" — formato curto extraído **direto da string ISO** (regex), pra
- * evitar non-determinismo entre SSR (TZ do server) e CSR (TZ do browser).
- * Os ISOs das fixtures sempre carregam `-03:00` (BRT). Em M9 os timestamps
- * vão ser TIMESTAMPTZ do Postgres em UTC; aí trocamos por `formatInTimeZone`
- * com a TZ do workspace (default `America/Sao_Paulo`).
- */
-function formatTime(iso: string): string {
-  const m = iso.match(/T(\d{2}):(\d{2})/);
-  return m ? `${m[1]}:${m[2]}` : '—';
 }

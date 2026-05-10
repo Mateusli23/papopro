@@ -43,12 +43,18 @@ export function MessageThread({ conversationId, onBack }: MessageThreadProps) {
   const messages = useMessages(conversationId);
   const isTyping = useSimulatedTyping(conversationId);
 
-  // Mark-as-read ao abrir conversa não-lida
+  // Mark-as-read ao abrir conversa não-lida.
+  // Deps usam o **primitivo** `unreadCount` (não o objeto `conversation`
+  // inteiro): o `useConversation` retorna nova referência cada vez que o
+  // store re-emite, mesmo que `unreadCount` não tenha mudado. Isso fazia
+  // o effect rodar 2x por abertura. Travar nas primitivas evita execução
+  // desnecessária e mantém o guard `> 0` funcionando.
+  const unreadCount = conversation?.unreadCount ?? 0;
   React.useEffect(() => {
-    if (conversationId && conversation && conversation.unreadCount > 0) {
+    if (conversationId && unreadCount > 0) {
       markConversationRead(conversationId);
     }
-  }, [conversationId, conversation]);
+  }, [conversationId, unreadCount]);
 
   if (!conversationId || !conversation) {
     return (
@@ -198,20 +204,30 @@ interface ScrollAnchorProps {
  *  - nova mensagem (length aumenta)
  *  - typing indicator aparece/some
  *
- * `behavior: 'auto'` na primeira render (sem animação ao abrir) e
- * `'smooth'` em mudanças subsequentes.
+ * **Por que `scrollTop` direto e não `scrollIntoView`?** O `scrollIntoView`
+ * walks up the DOM e alinha o elemento em **todo ancestral scrollável**,
+ * incluindo o `<main className="overflow-y-auto">` do dashboard layout —
+ * em viewports baixas isso empurra o header da inbox pra fora da tela. Subir
+ * o `scrollTop` do viewport do Radix ScrollArea explicitamente mantém o
+ * scroll local sem afetar a página.
  */
 function ScrollAnchor({ messagesLength, typing }: ScrollAnchorProps) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const isFirstRender = React.useRef(true);
 
   React.useEffect(() => {
-    if (!ref.current) return;
-    ref.current.scrollIntoView({
-      behavior: isFirstRender.current ? 'auto' : 'smooth',
-      block: 'end',
-    });
-    isFirstRender.current = false;
+    const anchor = ref.current;
+    if (!anchor) return;
+    // Subir até o viewport do Radix ScrollArea (data attribute estável da
+    // lib). Fallback: ancestral scrollável mais próximo.
+    const viewport = anchor.closest<HTMLElement>('[data-radix-scroll-area-viewport]');
+    if (!viewport) return;
+    if (isFirstRender.current) {
+      viewport.scrollTop = viewport.scrollHeight;
+      isFirstRender.current = false;
+    } else {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+    }
   }, [messagesLength, typing]);
 
   return <div ref={ref} aria-hidden />;

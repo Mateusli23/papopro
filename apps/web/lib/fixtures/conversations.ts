@@ -536,10 +536,12 @@ const SEEDS: ConversationSeed[] = [
         state: 'read',
       },
       {
+        // Áudio inbound de 30s: WhatsApp não tem caption pra áudios; deixar
+        // só o waveform/duração. Em M11 o transcript do agente IA aparece
+        // numa nota interna anexada, não no body da mensagem.
         hoursAgo: 12,
         kind: 'audio',
         direction: 'in',
-        body: 'Áudio: "tá tudo certo, pode mandar pra assinatura"',
         mediaDurationSeconds: 30,
       },
     ],
@@ -839,12 +841,16 @@ function nextMessageId(): string {
 }
 
 function seedDate(seed: MessageSeed): Date {
-  // Precedência: minutesAgo > hoursAgo > daysAgo. `subHours`/`subDays` aceitam
-  // fracionários (1.5h = 90min) — útil pra timestamps tipo "1h25min" sem
-  // precisar de minutesAgo separado.
+  // Precedência: minutesAgo > hoursAgo > daysAgo. **Importante**: o
+  // `subDays` do date-fns 4.x trunca valores fracionários (`subDays(d, 1.5)`
+  // == `subDays(d, 1)`), o que colapsava timestamps como `1.1` e `1.2`
+  // para o mesmo instante e quebrava o sort de seeds. Convertemos
+  // `daysAgo` fracionário para horas pra preservar precisão sub-diária.
+  // `subHours` aceita fracionários sem perda (chama `addMilliseconds`
+  // internamente).
   if (seed.minutesAgo !== undefined) return subMinutes(NOW, seed.minutesAgo);
   if (seed.hoursAgo !== undefined) return subHours(NOW, seed.hoursAgo);
-  if (seed.daysAgo !== undefined) return subDays(NOW, seed.daysAgo);
+  if (seed.daysAgo !== undefined) return subHours(NOW, seed.daysAgo * 24);
   return NOW;
 }
 

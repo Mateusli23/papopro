@@ -5,12 +5,16 @@ import * as React from 'react';
 import { EmptyState, Input, ScrollArea, Separator } from '@papopro/ui';
 import { Inbox, Search } from '@papopro/ui/icons';
 
-import { getLead } from '@/lib/fixtures/leads';
+import { FAKE_LEADS } from '@/lib/fixtures/leads';
 
 import { useSortedConversations } from '../store';
 import { countConversations } from '../transforms';
 
 import { ConversationListItem } from './conversation-list-item';
+
+// Map de leads montado uma vez no módulo — evita `find()` em loop de busca.
+// Em M9 a ficha do lead vem com a query da inbox via JOIN, sem custo extra.
+const LEAD_BY_ID = new Map(FAKE_LEADS.map((l) => [l.id, l]));
 
 /**
  * Painel esquerdo da Inbox: header com busca + counts, lista de conversas
@@ -34,18 +38,25 @@ export function ConversationList({
   const conversations = useSortedConversations();
   const [search, setSearch] = React.useState('');
 
-  const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return conversations;
-    return conversations.filter((c) => {
-      const lead = getLead(c.leadId);
+  // Pré-computa um índice "buscável" por conversa pra evitar O(N×M)
+  // (find no FAKE_LEADS) em cada keystroke. Roda só quando `conversations`
+  // muda — busca em si é só `includes` em string já normalizada.
+  const searchableConversations = React.useMemo(() => {
+    return conversations.map((c) => {
+      const lead = LEAD_BY_ID.get(c.leadId);
       const haystack = [lead?.name, lead?.company, c.contactPhone, c.lastMessagePreview]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-      return haystack.includes(q);
+      return { conversation: c, haystack };
     });
-  }, [conversations, search]);
+  }, [conversations]);
+
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return conversations;
+    return searchableConversations.filter((s) => s.haystack.includes(q)).map((s) => s.conversation);
+  }, [conversations, searchableConversations, search]);
 
   const counts = React.useMemo(() => countConversations(conversations), [conversations]);
 
@@ -98,7 +109,14 @@ export function ConversationList({
         </div>
       ) : (
         <ScrollArea className="flex-1">
-          <ul role="listbox" aria-label="Conversas" className="flex flex-col">
+          {/*
+           * Lista de navegação simples (não-listbox). Listbox/option do ARIA
+           * exigiria gestão de aria-activedescendant + setas ↑↓ que entram
+           * só em M5#4b. Aqui usamos `aria-current` na seleção, padrão
+           * análogo à sidebar (`aria-current="page"`) — funciona com
+           * leitores de tela e mantém o `<button>` com role nativo.
+           */}
+          <ul aria-label="Conversas" className="flex flex-col">
             {filtered.map((c) => (
               <li key={c.id}>
                 <ConversationListItem

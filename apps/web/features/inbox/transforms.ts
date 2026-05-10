@@ -11,9 +11,9 @@
  * **M5#4a entrega só leitura** — sort/group/filter/preview. Mutações
  * (`applySendMessage`, `applyArchiveConversation`, etc) entram em M5#4b/c.
  */
-import { differenceInDays, format as fmtDate, isToday, isYesterday, parseISO } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { differenceInDays, parseISO } from 'date-fns';
 
+import { dayKeyBrt, dayLabelBrt } from './hooks/inbox-tz';
 import type { Conversation, Message, MessageKind } from './types';
 
 // ─── Sort / busca por entidade ────────────────────────────────────────────
@@ -49,25 +49,27 @@ export interface DayGroup {
 }
 
 /**
- * Agrupa mensagens por dia local — usado pra divisores na thread.
- * Espera entrada já ordenada cronológicamente (use `messagesForConversation`).
+ * Agrupa mensagens por dia **no fuso da workspace** (`America/Sao_Paulo`)
+ * — usado pra divisores na thread. Espera entrada ordenada cronológicamente
+ * (use `messagesForConversation`).
  *
- * Datas são parsed com a TZ embutida no ISO string (todas as fixtures usam
- * `-03:00`). Em M9 a TZ vem do workspace (default `America/Sao_Paulo`).
+ * **TZ-safe**: usa `Intl.DateTimeFormat` com `timeZone` explícito (ver
+ * `hooks/inbox-tz.ts`). `date-fns` puro usaria a TZ do runtime — server
+ * (UTC) e browser (BRT) gerariam dayKeys diferentes pra mensagens entre
+ * 21h e 24h locais → hydration mismatch. O wrapper Intl resolve.
+ *
+ * `now` parametrizável pra testes; default `new Date()`. **Cuidado**:
+ * o `now` é usado só pra "Hoje"/"Ontem" — agrupar messagens é
+ * determinístico independente de quando rodou.
  */
-export function groupMessagesByDay(messages: Message[]): DayGroup[] {
+export function groupMessagesByDay(messages: Message[], now: Date = new Date()): DayGroup[] {
   if (messages.length === 0) return [];
   const groups: DayGroup[] = [];
   let current: DayGroup | undefined;
   for (const msg of messages) {
-    const d = parseISO(msg.createdAt);
-    const dayKey = fmtDate(d, 'yyyy-MM-dd');
+    const dayKey = dayKeyBrt(msg.createdAt);
     if (!current || current.dayKey !== dayKey) {
-      let label: string;
-      if (isToday(d)) label = 'Hoje';
-      else if (isYesterday(d)) label = 'Ontem';
-      else label = fmtDate(d, "EEE, d 'de' MMM", { locale: ptBR });
-      current = { label, dayKey, messages: [] };
+      current = { label: dayLabelBrt(msg.createdAt, now), dayKey, messages: [] };
       groups.push(current);
     }
     current.messages.push(msg);
