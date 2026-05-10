@@ -63,7 +63,7 @@ import type {
 
 // ─── Snapshots ─────────────────────────────────────────────────────────────
 
-let workspaceState: Workspace = FAKE_WORKSPACE;
+let workspaceState: Workspace = { ...FAKE_WORKSPACE };
 const workspaceListeners = new Set<() => void>();
 const emitWorkspace = () => workspaceListeners.forEach((fn) => fn());
 const subscribeWorkspace = (fn: () => void) => {
@@ -73,7 +73,10 @@ const subscribeWorkspace = (fn: () => void) => {
 const getWorkspaceSnapshot = () => workspaceState;
 const getWorkspaceServerSnapshot = () => FAKE_WORKSPACE;
 
-let membersState: Member[] = [...FAKE_MEMBERS];
+// Deep-ish clone das fixtures: toda mutação cria objeto novo via spread,
+// mas se algum código futuro mutar in-place sem querer, queremos quebrar
+// só este workspace, não a fixture global compartilhada (review HIGH M5#6).
+let membersState: Member[] = FAKE_MEMBERS.map((m) => ({ ...m }));
 const membersListeners = new Set<() => void>();
 const emitMembers = () => membersListeners.forEach((fn) => fn());
 const subscribeMembers = (fn: () => void) => {
@@ -83,7 +86,11 @@ const subscribeMembers = (fn: () => void) => {
 const getMembersSnapshot = () => membersState;
 const getMembersServerSnapshot = () => FAKE_MEMBERS;
 
-let prefsState: NotificationPrefs = { ...FAKE_NOTIFICATION_PREFS };
+// Cada bucket interno (`{ inapp, push, email }`) é objeto novo — spread raso
+// no nível superior compartilharia esses objetos com a fixture (review M5#6).
+let prefsState: NotificationPrefs = Object.fromEntries(
+  Object.entries(FAKE_NOTIFICATION_PREFS).map(([k, v]) => [k, { ...v }]),
+) as NotificationPrefs;
 const prefsListeners = new Set<() => void>();
 const emitPrefs = () => prefsListeners.forEach((fn) => fn());
 const subscribePrefs = (fn: () => void) => {
@@ -93,7 +100,10 @@ const subscribePrefs = (fn: () => void) => {
 const getPrefsSnapshot = () => prefsState;
 const getPrefsServerSnapshot = () => FAKE_NOTIFICATION_PREFS;
 
-let connectionState: WhatsAppConnection = FAKE_WHATSAPP_CONNECTION;
+let connectionState: WhatsAppConnection = {
+  ...FAKE_WHATSAPP_CONNECTION,
+  outages: FAKE_WHATSAPP_CONNECTION.outages.map((o) => ({ ...o })),
+};
 const connectionListeners = new Set<() => void>();
 const emitConnection = () => connectionListeners.forEach((fn) => fn());
 const subscribeConnection = (fn: () => void) => {
@@ -103,8 +113,7 @@ const subscribeConnection = (fn: () => void) => {
 const getConnectionSnapshot = () => connectionState;
 const getConnectionServerSnapshot = () => FAKE_WHATSAPP_CONNECTION;
 
-let integrationsState: Integration[] = [...FAKE_INTEGRATIONS];
-let webhookState: WebhookConfig = FAKE_WEBHOOK;
+let integrationsState: Integration[] = FAKE_INTEGRATIONS.map((i) => ({ ...i }));
 const integrationsListeners = new Set<() => void>();
 const emitIntegrations = () => integrationsListeners.forEach((fn) => fn());
 const subscribeIntegrations = (fn: () => void) => {
@@ -113,6 +122,18 @@ const subscribeIntegrations = (fn: () => void) => {
 };
 const getIntegrationsSnapshot = () => integrationsState;
 const getIntegrationsServerSnapshot = () => FAKE_INTEGRATIONS;
+
+// Webhook é snapshot independente (review CRITICAL #2): listener próprio
+// pra que `regenerateWebhookToken` notifique só `useWebhookConfig` e não
+// dispare re-render espúrio em `useIntegrations`. Total = 5 snapshots
+// independentes como anuncia o header.
+let webhookState: WebhookConfig = { ...FAKE_WEBHOOK };
+const webhookListeners = new Set<() => void>();
+const emitWebhook = () => webhookListeners.forEach((fn) => fn());
+const subscribeWebhook = (fn: () => void) => {
+  webhookListeners.add(fn);
+  return () => webhookListeners.delete(fn);
+};
 const getWebhookSnapshot = () => webhookState;
 const getWebhookServerSnapshot = () => FAKE_WEBHOOK;
 
@@ -155,11 +176,7 @@ export function useIntegrations(): Integration[] {
 }
 
 export function useWebhookConfig(): WebhookConfig {
-  return React.useSyncExternalStore(
-    subscribeIntegrations,
-    getWebhookSnapshot,
-    getWebhookServerSnapshot,
-  );
+  return React.useSyncExternalStore(subscribeWebhook, getWebhookSnapshot, getWebhookServerSnapshot);
 }
 
 export function useSubscription(): Subscription {
@@ -292,6 +309,6 @@ export function toggleIntegration(input: ToggleIntegrationInput): {
 
 export function regenerateWebhookToken(): WebhookConfig {
   webhookState = applyRegenerateWebhookToken(webhookState);
-  emitIntegrations();
+  emitWebhook();
   return webhookState;
 }

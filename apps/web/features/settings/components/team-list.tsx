@@ -28,7 +28,7 @@ import { MoreHorizontal, Search } from '@papopro/ui/icons';
 import { changeRole, removeMember, resendInvite, useMembers } from '../store';
 import type { Member, MemberRole } from '../types';
 
-import { RoleBadge } from './role-badge';
+import { ROLE_LABELS, RoleBadge } from './role-badge';
 
 const ROLE_FILTER_OPTIONS: Array<{ value: 'all' | MemberRole; label: string }> = [
   { value: 'all', label: 'Todos os papéis' },
@@ -192,7 +192,7 @@ function MemberActions({ member }: { member: Member }) {
       toast.error(r.reason ?? 'Não foi possível mudar o papel');
       return;
     }
-    toast.success(`Papel atualizado para ${newRole}`);
+    toast.success(`Papel atualizado para ${ROLE_LABELS[newRole]}`);
   }
 
   function handleResend() {
@@ -220,7 +220,7 @@ function MemberActions({ member }: { member: Member }) {
       <DropdownMenuContent align="end">
         {CHANGEABLE_ROLES.filter((r) => r !== member.role).map((role) => (
           <DropdownMenuItem key={role} onSelect={() => handleChangeRole(role)}>
-            Mudar para {role}
+            Mudar para {ROLE_LABELS[role]}
           </DropdownMenuItem>
         ))}
         {member.status === 'invited' && (
@@ -229,14 +229,20 @@ function MemberActions({ member }: { member: Member }) {
             <DropdownMenuItem onSelect={handleResend}>Reenviar convite</DropdownMenuItem>
           </>
         )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onSelect={handleRemove}
-          disabled={member.role === 'owner'}
-          className="text-destructive focus:text-destructive"
-        >
-          Remover do workspace
-        </DropdownMenuItem>
+        {member.role !== 'owner' && (
+          <>
+            <DropdownMenuSeparator />
+            {/* Owner não aparece aqui — review HIGH M5#6: evita item disabled
+                em destaque vermelho. Pra remover Owner é necessário transferir
+                propriedade primeiro (Workspace → Zona de perigo). */}
+            <DropdownMenuItem
+              onSelect={handleRemove}
+              className="text-destructive focus:text-destructive"
+            >
+              Remover do workspace
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

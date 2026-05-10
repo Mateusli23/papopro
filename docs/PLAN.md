@@ -364,7 +364,7 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - [x] Integrações: webhook de leads com URL única + Copiar + Regenerar (32 chars hex), Google Calendar conectado mock, Meta/Google Ads/RD/Hotmart como "Em breve"
 - [x] Atalho global `g + s` registrado em `use-global-shortcuts.ts` + footer Cmd+K + item `Configurações` removido do `soon: true` (palette + sidebar)
 - [x] Smoke endpoint `/api/smoke-test/settings` com ~70 asserts em 6 grupos (fixtures, schemas, transforms-workspace, transforms-members, transforms-notifications, transforms-connections, transforms-integrations)
-- [x] 3 ícones novos em `@papopro/ui/icons`: `CreditCard`, `Plug`, `QrCode`, `Webhook`
+- [x] 2 ícones novos em `@papopro/ui/icons`: `CreditCard`, `Plug`
 
 **Entregas — Relatórios** ✅ _(entregue separadamente, ver "Sub-PR M5#1" abaixo)_:
 

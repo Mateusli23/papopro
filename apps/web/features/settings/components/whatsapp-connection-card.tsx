@@ -46,6 +46,18 @@ export function WhatsAppConnectionCard() {
   const conn = useWhatsAppConnection();
   const [confirmDisconnect, setConfirmDisconnect] = React.useState(false);
   const [qrSeed, setQrSeed] = React.useState('papopro-initial');
+  const reconnectTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup do timeout no unmount evita race entre Reconectar → navegar pra
+  // outra rota / desconectar manualmente antes dos 2s mock (review HIGH M5#6).
+  React.useEffect(() => {
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const isConnected = conn.status === 'connected';
   const isConnecting = conn.status === 'connecting';
@@ -53,13 +65,19 @@ export function WhatsAppConnectionCard() {
   function handleReconnect() {
     setConnectingState();
     setQrSeed(`papopro-${Date.now()}`);
-    setTimeout(() => {
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    reconnectTimeoutRef.current = setTimeout(() => {
+      reconnectTimeoutRef.current = null;
       connectWhatsApp();
       toast.success('Número reconectado');
     }, 2000);
   }
 
   function handleDisconnect() {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     disconnectWhatsApp();
     setConfirmDisconnect(false);
     toast('Número desconectado — escaneie o QR Code novamente para voltar.');

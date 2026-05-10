@@ -46,14 +46,13 @@ import type {
 
 // ─── Workspace ────────────────────────────────────────────────────────────
 
+/**
+ * Atualiza dados do workspace. Não faz early-return mesmo quando o patch é
+ * idêntico — `WorkspaceUpdateInput` ganha campos novos em M7+ (logo upload,
+ * branding) e early-return baseado em comparação de 3 campos silenciosamente
+ * descartaria atualizações dos campos novos. Custo zero, defesa boa.
+ */
 export function applyUpdateWorkspace(workspace: Workspace, patch: WorkspaceUpdateInput): Workspace {
-  if (
-    patch.name === workspace.name &&
-    patch.segment === workspace.segment &&
-    patch.timezone === workspace.timezone
-  ) {
-    return workspace;
-  }
   return {
     ...workspace,
     name: patch.name,
@@ -202,6 +201,11 @@ export function applyTogglePref(
     };
   }
   const eventPrefs = prefs[def.key as keyof NotificationPrefs] ?? {};
+  // Detecta no-op pra não disparar listener (e re-render dos 30 switches)
+  // quando o switch já estava no estado pedido — review HIGH M5#6.
+  if (eventPrefs[input.channel] === input.enabled) {
+    return { prefs, ok: true };
+  }
   const next: NotificationPrefs = {
     ...prefs,
     [def.key]: { ...eventPrefs, [input.channel]: input.enabled },
@@ -327,21 +331,18 @@ export function applyRegenerateWebhookToken(
 }
 
 function defaultRandomHex(bytes: number): string {
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    const arr = new Uint8Array(bytes);
-    globalThis.crypto.getRandomValues(arr);
-    return Array.from(arr)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+  if (typeof globalThis.crypto?.getRandomValues !== 'function') {
+    // Math.random NÃO é seguro pra token de webhook que controla acesso ao
+    // funil de leads — antes silenciar com fallback fraco, falhamos alto pra
+    // forçar detecção em dev. Node 18+ e todos os runtimes modernos têm
+    // WebCrypto, então este caminho é dead code em prod (review M5#6).
+    throw new Error('WebCrypto indisponível — não é seguro gerar token de webhook neste runtime');
   }
-  // Fallback determinístico-ish — só usado em SSR antigo sem WebCrypto.
-  let out = '';
-  for (let i = 0; i < bytes; i += 1) {
-    out += Math.floor(Math.random() * 256)
-      .toString(16)
-      .padStart(2, '0');
-  }
-  return out;
+  const arr = new Uint8Array(bytes);
+  globalThis.crypto.getRandomValues(arr);
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 // ─── Helpers / agregações ─────────────────────────────────────────────────

@@ -46,7 +46,7 @@ export function PlanCard({ onChangePlan, onCancel }: PlanCardProps) {
           <span>Plano atual: {PLAN_LABELS[sub.plan]}</span>
           {isTrial && (
             <Badge variant={daysLeft <= 2 ? 'warning' : 'info'}>
-              Trial: {daysLeft <= 0 ? 'expirado' : `faltam ${daysLeft} dias`}
+              Trial: {formatTrialRemaining(daysLeft)}
             </Badge>
           )}
           {sub.status === 'past_due' && <Badge variant="destructive">Pagamento em atraso</Badge>}
@@ -105,4 +105,10 @@ function Field({ label, value }: { label: string; value: string }) {
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function formatTrialRemaining(daysLeft: number): string {
+  if (daysLeft <= 0) return 'expirado';
+  if (daysLeft === 1) return 'falta 1 dia';
+  return `faltam ${daysLeft} dias`;
 }

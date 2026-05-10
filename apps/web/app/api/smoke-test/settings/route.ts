@@ -248,13 +248,20 @@ export function GET() {
     });
     return next.name === 'Outro Nome';
   });
-  t('applyUpdateWorkspace é estável quando não há mudança', () => {
+  t('applyUpdateWorkspace preserva campos não-editados', () => {
+    // Já não faz early-return (review M5#6: protege futuras props como `logo`).
+    // Garantia: campos não passados no patch sobrevivem (ex: `logo`, `createdAt`).
     const next = applyUpdateWorkspace(FAKE_WORKSPACE, {
       name: FAKE_WORKSPACE.name,
       segment: FAKE_WORKSPACE.segment,
       timezone: FAKE_WORKSPACE.timezone,
     });
-    return next === FAKE_WORKSPACE;
+    return (
+      next !== FAKE_WORKSPACE &&
+      next.logo === FAKE_WORKSPACE.logo &&
+      next.createdAt === FAKE_WORKSPACE.createdAt &&
+      next.locale === FAKE_WORKSPACE.locale
+    );
   });
   t('applyTransferOwnership rebaixa Owner anterior', () => {
     const target = FAKE_MEMBERS.find((m) => m.id === 'mb_00002')!;
@@ -389,6 +396,14 @@ export function GET() {
     });
     return !r.ok;
   });
+  t('applyTogglePref no-op preserva referência do snapshot', () => {
+    const r = applyTogglePref(FAKE_NOTIFICATION_PREFS, NOTIFICATION_EVENTS, {
+      event: 'lead_cooling',
+      channel: 'push',
+      enabled: true, // já estava ON no default
+    });
+    return r.ok && r.prefs === FAKE_NOTIFICATION_PREFS;
+  });
 
   // ── Transforms: connections ────────────────────────────────────────────
   t = run('transforms-connections', results);
@@ -437,6 +452,15 @@ export function GET() {
   t('applyDisconnect é idempotente em conn já desconectada', () => {
     const next = applyDisconnect(FAKE_WHATSAPP_DISCONNECTED, 'rede', outageIdGen);
     return next === FAKE_WHATSAPP_DISCONNECTED;
+  });
+  t('applyDisconnect deixa durationMin undefined (queda em andamento)', () => {
+    const next = applyDisconnect(FAKE_WHATSAPP_CONNECTION, 'manual', outageIdGen);
+    return next.outages[0]?.durationMin === undefined;
+  });
+  t('applyTransferOwnership rejeita workspace sem Owner', () => {
+    const semOwner = FAKE_MEMBERS.filter((m) => m.role !== 'owner');
+    const r = applyTransferOwnership(semOwner, { newOwnerId: 'mb_00002' });
+    return !r.ok;
   });
 
   // ── Transforms: integrations / billing ─────────────────────────────────

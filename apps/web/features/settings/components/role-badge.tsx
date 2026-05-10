@@ -16,7 +16,12 @@ import type { MemberRole } from '../types';
  * Cores semânticas, não decorativas — um Vendedor não vira "warning" por
  * estar abaixo de Manager. Status (ativo/convite) fica em outro badge.
  */
-const ROLE_LABELS: Record<MemberRole, string> = {
+/**
+ * Labels canônicas dos papéis em PascalCase. Exportado pra ser reusado por
+ * outras superfícies (DropdownMenu de "Mudar para X", toasts de confirmação,
+ * etc.) — mantém capitalização consistente em todo o produto.
+ */
+export const ROLE_LABELS: Record<MemberRole, string> = {
   owner: 'Owner',
   admin: 'Admin',
   manager: 'Manager',
