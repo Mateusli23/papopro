@@ -17,18 +17,18 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                        |
-| -------- | ------- | --------------- | ------------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                  |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                                  |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                                  |
-| Sprint 4 | 46–60   | M5              | ⚠️ em andamento — 3,67 / 6 sub-PRs (M5#4 partido em 4a/4b/4c) |
-| Sprint 5 | 61–75   | M6, M7          | ⏳ pendente                                                   |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                   |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                   |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                   |
+| Sprint   | Dias    | Marcos cobertos | Status                                                     |
+| -------- | ------- | --------------- | ---------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                               |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                               |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                               |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2) |
+| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 1 / 3 sub-PRs (M6#1 entregue)         |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                |
 
-**Posição atual (10-mai-26):** Bloco A (UI mockada) ~73% completo. M1–M4 entregues; M5 em andamento — Cadências, Tarefas, Relatórios e Inbox 4a/4b prontos (3 painéis + composer com tabs Mensagem/Nota, emoji, anexo, áudio mock e atalhos). Faltam M5#4c (filtros + mobile), M5#5 (Agentes IA) e M5#6 (Configurações). M6 (landing) ainda não iniciado.
+**Posição atual (10-mai-26):** Bloco A (UI mockada) ~95% completo. M1–M5 entregues (M5 fechou com 6 sub-PRs + 2 polimentos pós-merge: M5p#1 dashboard refresh com filtro de período/trends/donut origem, M5p#2 fixes de review com deep-links funcionais). M6 (Landing) em andamento — M6#1 entregue (base do `apps/landing` com Poppins + ThemeProvider, novo primitivo `Accordion` no `@papopro/ui`, Header com drawer mobile, Hero com BrandArcs + mockup Kanban, Problema com 4 stats + fontes citadas, Funcionalidades em 4 blocos zigue-zague com mockups sintéticos). Faltam M6#2 (Demo + ROI + Planos + FAQ + CTA + WhatsApp FAB + Footer) e M6#3 (SEO + OG + analytics + Lighthouse ≥ 90).
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 
@@ -453,28 +453,57 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 ## M6 — Landing Page
 
-**Branch:** `m6-landing`
+**Branch:** `m6-landing` (sub-PRs empilhados; ver tabela abaixo).
 
 **Objetivo:** Landing page completa em `apps/landing` com 8 seções, otimizada para Lighthouse 90+, calculadora de ROI funcional e formulário de trial linkando para `app.`.
 
-**Entregas:**
+**📊 Status (10-mai-26):** 1 / 3 sub-PRs entregues — em andamento. Próximo: M6#2.
 
-- [ ] Hero com proposta de valor + CTA principal "Começar grátis 7 dias"
-- [ ] Seção de problema com estatísticas (48% / 80% / 92% / 79%) com fontes citadas
-- [ ] Seção de funcionalidades em 4 blocos (Kanban + WhatsApp + IA + Cadência) com mockups/screenshots
-- [ ] Seção de demo em vídeo com poster placeholder (vídeo a ser produzido depois)
-- [ ] Calculadora de ROI funcional: input leads/mês + ticket médio → output receita estimada recuperada
+**Decisões registradas:**
+
+- **ROI claim:** 15% conservador → `receitaRecuperada = leadsMes × ticketMedio × 0.15`. Defensável com qualquer baseline SMB; copy: _"Recupere ~15% dos leads que hoje esfriam sem follow-up."_
+- **Estratégia PR:** 3 sub-PRs incrementais empilhados sobre `m6-landing` (espelha M5).
+
+| Sub-PR | Escopo                                                                         | Status      | PR                                                   |
+| ------ | ------------------------------------------------------------------------------ | ----------- | ---------------------------------------------------- |
+| M6#1   | Base (Poppins + ThemeProvider + Accordion) + Hero + Problema + Funcionalidades | ✅ entregue | [#29](https://github.com/Mateusli23/papopro/pull/29) |
+| M6#2   | Demo + ROI + Planos + FAQ + CTA final + WhatsApp FAB + Footer                  | ⏳ pendente | —                                                    |
+| M6#3   | SEO + OG + sitemap + robots + analytics condicionadas + Lighthouse ≥ 90        | ⏳ pendente | —                                                    |
+
+**Entregas — M6#1 Base + Hero + Problema + Funcionalidades:**
+
+- [x] Setup base do `apps/landing`: Poppins via `@fontsource`, tokens do design system, `--font-sans` em `:root`, `scroll-behavior: smooth` e `scroll-margin-top` compensando header fixo
+- [x] `ThemeProvider` no layout + `themeColor` light/dark casando com `--background`
+- [x] Novo primitivo `Accordion` em `@papopro/ui` (Radix wrapper, padrão shadcn) — usa as keyframes `accordion-down/up` já pré-configuradas no preset Tailwind. Pronto pra FAQ em M6#2.
+- [x] Header fixo (`'use client'`) com blur, logo + 4 links âncora, CTAs Entrar/Começar grátis, `ThemeToggle` e drawer mobile via `Sheet`
+- [x] Hero com `BrandArcs variant="landing-hero"`, badge "Novo · IA", H1 com highlight em `text-primary`, 2 CTAs, 3 trust signals e mockup Kanban sintético à direita (3 colunas + peek WhatsApp)
+- [x] Problema com 4 stats (48% / 80% / 92% / 79%) em cards tonificados por status semântico + fontes citadas (InsideSales, Marketing Donut, Opinion Box, MarketingSherpa)
+- [x] Funcionalidades em zigue-zague (Kanban / WhatsApp / IA / Cadência) com badge, headline, descrição, 4 bullets e mockup sintético próprio em cada bloco (KanbanMockup, InboxMockup com bolhas de chat, AgentMockup com card de memória recuperada, CadenceMockup com timeline de gatilhos)
+- [x] Zero hex hardcoded; 100% tokens semânticos; dark mode preservado em cada bloco; mobile-first 360/768/1280
+- [x] `pnpm typecheck` + `pnpm lint` verdes; `pnpm --filter @papopro/landing build` gera 4/4 static pages com 166 kB First Load JS; smoke test `pnpm dev` retorna 200 OK sem warnings
+
+**Commit:** `feat(landing): base setup + hero, problema e funcionalidades`
+
+**Entregas — M6#2 Demo + ROI + Planos + FAQ + CTA + FAB + Footer:**
+
+- [ ] Seção de demo em vídeo com poster placeholder (vídeo a ser produzido depois) + dialog "em breve" no click do play
+- [ ] Calculadora de ROI funcional: input leads/mês + ticket médio → output `× 0.15` (claim conservador validado), helper em `lib/roi.ts` com `RECOVERY_RATE` constante
 - [ ] Tabela de planos (Pro R$197 / Pro IA R$497 / Enterprise sob consulta) com CTAs distintos
-- [ ] FAQ acordeão (LGPD, troca de plano, cancelamento, segurança, suporte)
-- [ ] Seção CTA final + formulário (nome, email, senha, empresa) → POST mockado redirect para `app.pipeflow.com.br/signup`
-- [ ] Botão WhatsApp flutuante (link `wa.me`)
-- [ ] SEO: meta tags por seção, schema.org `SoftwareApplication`, sitemap.xml + robots.txt
-- [ ] OG image dinâmica (Vercel OG) ou estática
-- [ ] Snippets de Meta Pixel + GA4 condicionados a env (não disparam em dev)
-- [ ] Lighthouse ≥ 90 em performance, acessibilidade, best practices, SEO
-- [ ] Responsivo mobile-first; testado em 360px, 768px, 1280px
+- [ ] FAQ acordeão (LGPD, troca de plano, cancelamento, segurança, suporte, multi-vendedor) usando o `Accordion` entregue em M6#1
+- [ ] Seção CTA final + formulário React Hook Form + Zod (nome, email, senha, empresa) → POST mockado a `/api/trial-signup` → redirect pra `app.pipeflow.com.br/signup`
+- [ ] Botão WhatsApp flutuante (link `wa.me`) parametrizado por env `NEXT_PUBLIC_WHATSAPP_NUMBER`
+- [ ] Footer com `LogoMark`, links legais e copyright em pt-BR
 
-**Commit final:** `feat(landing): full landing page with 8 sections, ROI calculator and SEO`
+**Entregas — M6#3 SEO + OG + analytics + Lighthouse:**
+
+- [ ] SEO: meta tags por seção, schema.org `SoftwareApplication` + `FAQPage` via JSON-LD, sitemap.xml + robots.txt (Next 14 metadata convention)
+- [ ] OG image dinâmica via `next/og` (1200×630) ou estática como fallback
+- [ ] Snippets de PostHog + Meta Pixel + GA4 condicionados a env (não disparam em dev)
+- [ ] Favicon + apple-touch-icon a partir do `LogoMark`
+- [ ] Lighthouse ≥ 90 em performance, acessibilidade, best practices, SEO (desktop + mobile)
+- [ ] `next/image` com `priority` no hero, `loading="lazy"` no resto
+
+**Commit final do milestone (após M6#3):** `feat(landing): full landing page with 8 sections, ROI calculator and SEO`
 
 ---
 
