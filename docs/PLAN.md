@@ -412,6 +412,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 | Sub-PR | Escopo                                                                      | Status      | PR                                                   |
 | ------ | --------------------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
 | M5p#1  | Dashboard refresh — filtro de período, trends, donut Origem, banner quentes | ✅ entregue | [#25](https://github.com/Mateusli23/papopro/pull/25) |
+| M5p#2  | Fixes do review pós-merge — deep-links funcionais + 6 polimentos            | ✅ entregue | [#27](https://github.com/Mateusli23/papopro/pull/27) |
 
 **Entregas — M5p#1 Dashboard refresh:**
 
@@ -433,6 +434,20 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] Dark mode preservado em todos os blocos (tokens semânticos, sem hex)
 
 **Commit:** `feat(dashboard): refresh com filtro de período, trends e donut origem`
+
+**Entregas — M5p#2 Fixes do review pós-merge:**
+
+- [x] **CRÍTICO #1**: removido `proposalsTrend` (sempre `flat 0` por construção — comparava snapshot consigo mesmo; vendedor lia "Propostas R$ 1,2M → 0%" e concluía erroneamente que nada havia mudado). Volta em M8+ quando `deal.stageHistory[]` permitir comparação real entre janelas
+- [x] **CRÍTICO #2**: deep-links funcionais — `/leads` consome `?origin=X` e `?temperature=Y` via `useSearchParams` na inicialização (whitelist + state local); `/kanban` consome `?stage=X` via `scrollIntoView` na coluna correspondente. `<LeadsPage>` e `<KanbanPage>` envolvidos em `<Suspense>` (exigência Next 14 pra prerender com `useSearchParams`)
+- [x] **HIGH**: `<DayPicker>` usa `DASHBOARD_NOW` (não `new Date()`) — alinhamento com fixtures M5
+- [x] **HIGH**: `?range=custom` sem `from`/`to` válidos é limpo pra default na próxima paint via `useEffect` (URL out-of-sync corrigido)
+- [x] **HIGH**: classe `scrollbar-thin` morta removida
+- [x] **HIGH**: funil horizontal não pinta barra fantasma quando `count === 0` (só renderiza `<div>` da barra quando `row.count > 0`)
+- [x] **MEDIUM**: `<DashboardRangePills>` ganhou `role="group"` + `aria-label` + `aria-pressed` no botão Personalizado
+- [x] **MEDIUM**: `<KpiGrid>` mudou pra `md:grid-cols-3 lg:grid-cols-5` (em tablets os 5 cards ficavam apertados; agora 3+2 com cards respirando)
+- [x] Smoke test ampliado pra **70/70 asserts** (era 67): boundary `(102, 100) → up 2`, `parseDashboardRange` aceita os 5 válidos e cai em "week" no resto, `buildOriginData` com origem desconhecida cai em "other"
+
+**Commit:** `fix(dashboard): corrigir críticos do review pós-merge de M5p#1`
 
 ---
 
