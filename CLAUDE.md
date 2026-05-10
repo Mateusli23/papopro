@@ -357,6 +357,21 @@ Componente em `@papopro/ui` que renderiza arcos decorativos em SVG (azul + amare
 
 **Validação fechada com 5–10 usuários** antes de abrir trial público.
 
+### Estratégia de branching (gitflow strict, ativado em 10-mai-26)
+
+A partir do fim do M6 (Bloco A UI mockada) o repo adotou **gitflow strict** com duas branches longas:
+
+- **`main`** — apenas **releases**. Recebe PRs **somente** vindos de `dev` (`PR dev → main`). Cada merge em `main` representa um conjunto pronto pra produção (ex: "release: M7 backend foundation"). Branch protection ativa.
+- **`dev`** — **integration trunk + deploy preview**. É a **default branch no GitHub**. Todo PR de feature/fix/docs sai de `dev` e mira `dev`. Quando um conjunto de PRs em `dev` fechar um milestone ou ficar pronto pra deploy, abre-se um `PR dev → main` de release.
+
+**Regras operacionais:**
+
+- **Branch de feature:** sempre sai de `dev`, mira `dev`. Naming sugerido: `<milestone>-<slug>` (ex: `m7-supabase-auth`, `m6-landing-3`).
+- **PR único por feature inclui docs.** O update do `PLAN.md` que registra a feature entra **no mesmo PR**, não em PR separado pós-merge — `dev` é integration, não produção; o registro está sempre alinhado com o código.
+- **Release (`PR dev → main`):** abrir quando um milestone (M7, M8 …) ou conjunto coeso de polimentos estiver pronto. Title sugerido: `release: <descrição curta do conjunto>`. Body lista os PRs incluídos. CI deve estar verde em `dev` antes de abrir.
+- **CI** dispara em `push` e `pull_request` mirando **`main` ou `dev`** (ver [.github/workflows/ci.yml](.github/workflows/ci.yml)). Nenhum PR mergeia sem checks verdes.
+- **Hotfix em `main`** (cenário raro — bug crítico em produção que não pode esperar release): cria branch `hotfix-<slug>` saindo de `main`, abre PR contra `main`, mergeia, e **imediatamente após** abre PR sincronizando `dev` com o hotfix (ou cherry-picka).
+
 ---
 
 ## 11. Pointers

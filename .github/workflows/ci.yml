@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` é a integration trunk (gitflow strict — ver CLAUDE.md §10).
+    # Todo push de feature passa por ela antes de promover pra `main`
+    # (release). `main` continua disparando o CI pra cobrir release direto
+    # ou hotfix.
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    # PRs miram `dev` por default; `main` só recebe PRs de release
+    # (`dev → main`). Listar ambos garante gate em qualquer fluxo.
+    branches: [main, dev]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
