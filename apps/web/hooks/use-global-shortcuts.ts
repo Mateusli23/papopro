@@ -9,6 +9,7 @@ import * as React from 'react';
  *  - `g + l` → navega pra `/leads` (`onGoLeads`)
  *  - `g + k` → navega pra `/kanban` (`onGoKanban`)
  *  - `g + c` → navega pra `/cadences` (`onGoCadences`)
+ *  - `g + i` → navega pra `/inbox` (`onGoInbox`)
  *  - `n` → abre modal "Adicionar lead" (`onCreateLead`) — só na rota Leads/Kanban
  *  - `/` → foca elemento com `data-shortcut-search` (`onFocusSearch`) — atualmente
  *    o input de busca da `LeadFilters`; nenhum efeito noutras rotas
@@ -27,6 +28,7 @@ interface UseGlobalShortcutsOptions {
   onGoLeads?: () => void;
   onGoKanban?: () => void;
   onGoCadences?: () => void;
+  onGoInbox?: () => void;
   onCreateLead?: () => void;
   onFocusSearch?: () => void;
 }
@@ -135,6 +137,12 @@ export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
           event.preventDefault();
           lastGRef.current = null;
           optsRef.current.onGoCadences();
+          return;
+        }
+        if (event.key === 'i' && optsRef.current.onGoInbox) {
+          event.preventDefault();
+          lastGRef.current = null;
+          optsRef.current.onGoInbox();
           return;
         }
       }

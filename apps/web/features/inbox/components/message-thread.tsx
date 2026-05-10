@@ -15,6 +15,7 @@ import type { Conversation } from '../types';
 import { DateSeparator } from './date-separator';
 import { InternalNoteBubble } from './internal-note-bubble';
 import { MessageBubble } from './message-bubble';
+import { MessageComposer } from './message-composer';
 import { TypingIndicator, useSimulatedTyping } from './typing-indicator';
 
 /**
@@ -106,7 +107,11 @@ export function MessageThread({ conversationId, onBack }: MessageThreadProps) {
       </ScrollArea>
 
       <Separator />
-      <ComposerPlaceholder />
+      <MessageComposer
+        conversationId={conversation.id}
+        leadId={conversation.leadId}
+        archived={Boolean(conversation.archivedAt)}
+      />
     </section>
   );
 }
@@ -171,23 +176,6 @@ function ThreadHeader({ conversation, onBack }: ThreadHeaderProps) {
         </Button>
       </div>
     </header>
-  );
-}
-
-// ─── Composer placeholder (real em M5#4b) ─────────────────────────────────
-
-function ComposerPlaceholder() {
-  return (
-    <div
-      className="bg-muted/30 border-border flex items-center justify-center border-t px-4 py-4 text-center"
-      role="region"
-      aria-label="Composer"
-    >
-      <span className="text-caption text-muted-foreground max-w-md">
-        Composer chega no próximo PR (M5#4b) — texto, emoji, anexo, áudio, notas internas e
-        respostas rápidas.
-      </span>
-    </div>
   );
 }
 

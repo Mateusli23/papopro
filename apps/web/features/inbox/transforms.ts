@@ -6,14 +6,16 @@
  * (`store.ts`) é wrapper fino que aplica e dispara listeners.
  *
  * Em M9 cada uma vira input pra Server Actions / queries Prisma; o motor
- * uazapi consome `applySendMessage` (M5#4b) antes de tocar o adapter.
+ * uazapi consome `applySendMessage` antes de tocar o adapter.
  *
- * **M5#4a entrega só leitura** — sort/group/filter/preview. Mutações
- * (`applySendMessage`, `applyArchiveConversation`, etc) entram em M5#4b/c.
+ * **M5#4a entregou leitura** (sort/group/filter/preview). **M5#4b adiciona
+ * mutações** (`applySendMessage`, `applySendInternalNote`, `applyAttachMedia`,
+ * `resolvePlaceholders`). `applyArchiveConversation` entra em M5#4c.
  */
 import { differenceInDays, parseISO } from 'date-fns';
 
 import { dayKeyBrt, dayLabelBrt } from './hooks/inbox-tz';
+import type { AttachMediaInput, SendInternalNoteInput, SendTextMessageInput } from './schemas';
 import type { Conversation, Message, MessageKind } from './types';
 
 // ─── Sort / busca por entidade ────────────────────────────────────────────
@@ -194,4 +196,220 @@ export function countConversations(conversations: Conversation[]): InboxCounts {
     },
     { total: 0, awaiting: 0, responded: 0, archived: 0, unread: 0 } as InboxCounts,
   );
+}
+
+// ─── Placeholders (quick replies) ─────────────────────────────────────────
+
+/**
+ * Contexto pra resolver placeholders de quick replies. Não importamos `Lead`
+ * aqui pra manter o transform 100% puro / agnóstico de fixtures (caller
+ * extrai do `getLead(leadId)` e passa só os campos relevantes).
+ *
+ * `produto` ainda não tem campo no `Lead` em M5; passa como `undefined` e o
+ * placeholder fica literal (`{produto}`). Em M11 vem do "Cérebro da Empresa".
+ */
+export interface PlaceholderContext {
+  nome?: string;
+  empresa?: string;
+  produto?: string;
+}
+
+/**
+ * Substitui `{nome}`, `{empresa}`, `{produto}` no body. Tokens sem match
+ * (ex: contexto sem `empresa`) ficam **literais** — facilita ver no
+ * composer que faltou dado, em vez de ficar `Olá ,` silencioso.
+ *
+ * **Robusto a typos** (MEDIUM #3 do review M5#4b): usa regex única
+ * `\{(\w+)\}` em vez de `replaceAll` por token. Isso evita que um template
+ * com `{nomeempresa}` tenha o `{nome}` extraído por substring match
+ * (`replaceAll('{nome}', 'João')` em `{nomeempresa}` viraria
+ * `Joãoempresa}`). Tokens desconhecidos ficam literais.
+ *
+ * Match case-sensitive (alinhado com `placeholder-hint.tsx` de cadences).
+ * Em M10 a engine usa o mesmo padrão.
+ */
+const PLACEHOLDER_KEYS: Record<string, keyof PlaceholderContext> = {
+  nome: 'nome',
+  empresa: 'empresa',
+  produto: 'produto',
+};
+
+export function resolvePlaceholders(body: string, ctx: PlaceholderContext): string {
+  return body.replace(/\{(\w+)\}/g, (full, key) => {
+    const ctxKey = PLACEHOLDER_KEYS[key];
+    if (!ctxKey) return full; // token desconhecido → mantém literal
+    const value = ctx[ctxKey];
+    return value ?? full;
+  });
+}
+
+// ─── Mutações puras (M5#4b) ───────────────────────────────────────────────
+
+/**
+ * Resultado canônico das mutações. `conversations` e `messages` são SEMPRE
+ * novas referências (nunca mutamos in-place) — isso é o que o store devolve
+ * pros listeners do `useSyncExternalStore` re-renderizarem.
+ */
+export interface MutationResult {
+  conversations: Conversation[];
+  messages: Message[];
+  /** A mensagem recém-criada — usada pra optimistic UI / scroll-to-bottom. */
+  message: Message;
+}
+
+/**
+ * Atualiza os agregados denormalizados da conversa após uma nova mensagem.
+ *  - `lastMessageAt` / `lastMessagePreview` / `lastMessageDirection` sempre.
+ *  - `status`: regra abaixo.
+ *
+ * **Status:**
+ *  - mensagem outbound (não-nota) → `awaiting` (vendedor mandou, agora espera).
+ *  - mensagem inbound → `responded` (lead respondeu, vendedor precisa agir).
+ *  - **nota interna** → preserva o status atual (notas não contam como
+ *    "interação com cliente" — `getLastOutboundMessage` já as exclui).
+ *  - mídia outbound (image/audio/document) é tratada igual a outbound: vai
+ *    pro lead → vira `awaiting`.
+ *
+ * Em M9 isso vira derived: `status` deriva de "última mensagem não-nota".
+ * Aqui denormalizamos pra evitar recomputar em cada render da lista.
+ */
+function recomputeAggregates(
+  conversation: Conversation,
+  newMessage: Message,
+  preview: string,
+): Conversation {
+  const isInternalNote = newMessage.kind === 'internal_note';
+  const nextStatus: Conversation['status'] = isInternalNote
+    ? conversation.status
+    : newMessage.direction === 'out'
+      ? 'awaiting'
+      : 'responded';
+
+  return {
+    ...conversation,
+    status: nextStatus,
+    lastMessageAt: newMessage.createdAt,
+    lastMessagePreview: preview,
+    lastMessageDirection: newMessage.direction,
+  };
+}
+
+/**
+ * Cria mensagem de texto outbound. `idGen` injetável pra testes.
+ *
+ * Não desarquiva conversa arquivada (M5#4c traz `applyUnarchive`); a
+ * mensagem fica registrada e o vendedor pode desarquivar manualmente.
+ */
+export function applySendMessage(
+  conversations: Conversation[],
+  messages: Message[],
+  conversationId: string,
+  input: SendTextMessageInput,
+  authorId: string,
+  idGen: () => string,
+  now: string = new Date().toISOString(),
+): MutationResult {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  const message: Message = {
+    id: idGen(),
+    conversationId,
+    kind: 'text',
+    direction: 'out',
+    body: input.body,
+    authorId,
+    createdAt: now,
+    deliveredAt: now, // mock: entrega imediata. Em M9 vem do callback uazapi.
+  };
+  const preview = formatMessagePreview(message);
+  const updatedConversation = recomputeAggregates(target, message, preview);
+
+  return {
+    conversations: conversations.map((c) => (c.id === conversationId ? updatedConversation : c)),
+    messages: [...messages, message],
+    message,
+  };
+}
+
+/**
+ * Cria nota interna. Sempre `direction: 'out'` (PRD §3.8 — visível só ao
+ * time, mas é registrada pelo workspace, não pelo lead).
+ *
+ * Status da conversa **não muda** — ver `recomputeAggregates`.
+ */
+export function applySendInternalNote(
+  conversations: Conversation[],
+  messages: Message[],
+  conversationId: string,
+  input: SendInternalNoteInput,
+  authorId: string,
+  idGen: () => string,
+  now: string = new Date().toISOString(),
+): MutationResult {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  const message: Message = {
+    id: idGen(),
+    conversationId,
+    kind: 'internal_note',
+    direction: 'out',
+    body: input.body,
+    authorId,
+    createdAt: now,
+  };
+  const preview = formatMessagePreview(message);
+  const updatedConversation = recomputeAggregates(target, message, preview);
+
+  return {
+    conversations: conversations.map((c) => (c.id === conversationId ? updatedConversation : c)),
+    messages: [...messages, message],
+    message,
+  };
+}
+
+/**
+ * Cria mensagem de mídia (image/audio/document). Caption opcional vira
+ * `body`; sem caption fica `undefined` e a bolha mostra só a mídia.
+ *
+ * `mediaSizeKb` aceita 0 só pra `audio` (gravação mock não tem arquivo).
+ * Validação de campo está em [./schemas.ts](./schemas.ts).
+ */
+export function applyAttachMedia(
+  conversations: Conversation[],
+  messages: Message[],
+  conversationId: string,
+  input: AttachMediaInput,
+  authorId: string,
+  idGen: () => string,
+  now: string = new Date().toISOString(),
+): MutationResult {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  const message: Message = {
+    id: idGen(),
+    conversationId,
+    kind: input.kind,
+    direction: 'out',
+    body: input.caption,
+    authorId,
+    createdAt: now,
+    deliveredAt: now,
+    mediaName: input.mediaName,
+    mediaSizeKb: input.mediaSizeKb,
+    mediaDurationSeconds: input.mediaDurationSeconds,
+  };
+  const preview = formatMessagePreview(message);
+  const updatedConversation = recomputeAggregates(target, message, preview);
+
+  return {
+    conversations: conversations.map((c) => (c.id === conversationId ? updatedConversation : c)),
+    messages: [...messages, message],
+    message,
+  };
 }

@@ -6,7 +6,20 @@ import { FAKE_CONVERSATIONS, FAKE_WHATSAPP_CONNECTION } from '@/lib/fixtures/con
 import { FAKE_MESSAGES } from '@/lib/fixtures/messages';
 import { FAKE_QUICK_REPLIES } from '@/lib/fixtures/quick-replies';
 
-import { countUnreadConversations, messagesForConversation, sortConversations } from './transforms';
+import {
+  attachMediaSchema,
+  type AttachMediaInput,
+  type SendInternalNoteInput,
+  type SendTextMessageInput,
+} from './schemas';
+import {
+  applyAttachMedia,
+  applySendInternalNote,
+  applySendMessage,
+  countUnreadConversations,
+  messagesForConversation,
+  sortConversations,
+} from './transforms';
 import type { Conversation, Message, QuickReply, WhatsAppConnection } from './types';
 
 /**
@@ -100,13 +113,18 @@ export function useMessages(conversationId: string | undefined): Message[] {
   );
 }
 
-const QUICK_REPLIES: ReadonlyArray<QuickReply> = [...FAKE_QUICK_REPLIES].sort(
-  (a, b) => a.order - b.order,
-);
-
-/** Lista de respostas rápidas — estática em M5; em M9 vira useQuery contra `quick_replies`. */
+/**
+ * Lista de respostas rápidas — estática em M5; em M9 vira `useQuery` contra
+ * `quick_replies` no Postgres com RLS por workspace.
+ *
+ * **Por que `useMemo` em vez de constante de módulo?** Quando M5#6 (settings)
+ * adicionar CRUD de quick replies que mute `FAKE_QUICK_REPLIES`, a Inbox
+ * precisa ver a lista atualizada. Constante avaliada no module-load
+ * congela o snapshot. Custo do sort: trivial (8 itens). Fix do review M5#4b
+ * (HIGH #6).
+ */
 export function useQuickReplies(): ReadonlyArray<QuickReply> {
-  return QUICK_REPLIES;
+  return React.useMemo(() => [...FAKE_QUICK_REPLIES].sort((a, b) => a.order - b.order), []);
 }
 
 /**
@@ -123,7 +141,7 @@ export function useUnreadCount(): number {
   return React.useMemo(() => countUnreadConversations(conversations), [conversations]);
 }
 
-// ─── Mutações disponíveis em M5#4a ───────────────────────────────────────
+// ─── Mutações ─────────────────────────────────────────────────────────────
 
 /**
  * Marca uma conversa como lida — zera `unreadCount` e seta `readAt` em todas
@@ -150,4 +168,143 @@ export function markConversationRead(conversationId: string): void {
 
   emitConversations();
   emitMessages();
+}
+
+// ─── Identidade do usuário logado (mock) ──────────────────────────────────
+
+/**
+ * Em M5 o "vendedor logado" é fixo. Em M7+ vem do contexto Supabase Auth
+ * via `useAuthMockProvider` → `useSession`. Centralizamos aqui pra trocar
+ * num único lugar quando chegar a hora.
+ *
+ * `user_mateus` casa com o `authorId` usado nas fixtures de mensagem
+ * outbound — mantém o avatar consistente com o histórico.
+ */
+const CURRENT_USER_ID = 'user_mateus';
+
+// ─── ID generator para mensagens locais ──────────────────────────────────
+
+/**
+ * Gerador monotônico para mensagens criadas pelo composer. Prefixo `local_`
+ * evita colisão com `msg_NNN` das fixtures e deixa fácil distinguir em
+ * debug/smoke o que veio do seed vs. da sessão.
+ *
+ * Reset entre testes: o smoke endpoint chama os transforms diretamente com
+ * seu próprio `idGen`, sem tocar este contador.
+ */
+let nextLocalMsgIdx = 0;
+function nextLocalMessageId(): string {
+  nextLocalMsgIdx += 1;
+  return `msg_local_${nextLocalMsgIdx}`;
+}
+
+// ─── Mutações do composer (M5#4b) ────────────────────────────────────────
+
+/**
+ * Aplica mark-read sobre o resultado de uma mutação SEM emitir, para fazer
+ * envio + auto-mark numa única transação (uma emissão de listeners apenas).
+ *
+ * Sem isso, `sendMessage` emitia 2x sequencialmente (envio + mark), o que
+ * provoca double-render no `ScrollAnchor` e flicker no badge. Crítico
+ * fixado no review do M5#4b (CRITICAL #4).
+ */
+function applyAutoMarkRead(
+  conversations: Conversation[],
+  messages: Message[],
+  conversationId: string,
+): { conversations: Conversation[]; messages: Message[] } {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target || target.unreadCount === 0) return { conversations, messages };
+  const now = new Date().toISOString();
+  return {
+    conversations: conversations.map((c) =>
+      c.id === conversationId ? { ...c, unreadCount: 0 } : c,
+    ),
+    messages: messages.map((m) => {
+      if (m.conversationId !== conversationId) return m;
+      if (m.direction !== 'in' || m.readAt) return m;
+      return { ...m, readAt: now };
+    }),
+  };
+}
+
+/**
+ * Envia mensagem de texto. Após persistir, marca a conversa como lida —
+ * espelha WhatsApp Web: vendedor responder ⇒ leu tudo (decisão UX M5#4b).
+ *
+ * Retorna a `Message` criada pra que o caller possa fazer optimistic UX
+ * (highlight, scroll-to-bottom imediato) sem ter que reler o snapshot.
+ *
+ * Em M9 `applySendMessage` é chamado pela Server Action que primeiro passa
+ * pelo `lib/whatsapp/anti-ban.ts`; aqui é direto porque tudo é mock.
+ */
+export function sendMessage(conversationId: string, input: SendTextMessageInput): Message {
+  const sendResult = applySendMessage(
+    conversationsState,
+    messagesState,
+    conversationId,
+    input,
+    CURRENT_USER_ID,
+    nextLocalMessageId,
+  );
+  // Combina mark-read na mesma transação — uma emissão final apenas.
+  const marked = applyAutoMarkRead(sendResult.conversations, sendResult.messages, conversationId);
+  conversationsState = marked.conversations;
+  messagesState = marked.messages;
+  emitConversations();
+  emitMessages();
+  return sendResult.message;
+}
+
+/**
+ * Salva nota interna (visível só ao time, fundo amarelo + cadeado na thread).
+ * **Não** mexe em `status` da conversa nem aciona auto-mark-read — nota
+ * interna não é interação com cliente.
+ */
+export function sendInternalNote(conversationId: string, input: SendInternalNoteInput): Message {
+  const result = applySendInternalNote(
+    conversationsState,
+    messagesState,
+    conversationId,
+    input,
+    CURRENT_USER_ID,
+    nextLocalMessageId,
+  );
+  conversationsState = result.conversations;
+  messagesState = result.messages;
+  emitConversations();
+  emitMessages();
+  return result.message;
+}
+
+/**
+ * Anexa mídia (image/audio/document) à conversa. Auto-mark-read igual a
+ * `sendMessage` — anexar mídia é mandar pro lead, conta como resposta.
+ *
+ * Em M5 é mock: `mediaSizeKb` vem do `File.size` mas o arquivo não vai
+ * pra Storage. Em M9 a Server Action upload via Supabase Storage e troca
+ * o `mediaName` pelo `storage_path`.
+ *
+ * Validação Zod aplicada antes de mutar — protege invariantes do schema
+ * (ex: `kind: 'audio'` sem `mediaDurationSeconds` quebra aqui em dev).
+ * Crítico fixado no review do M5#4b (CRITICAL #3).
+ */
+export function attachMedia(conversationId: string, input: AttachMediaInput): Message {
+  // Validação inline pra blindar contra callers que não fizeram parse
+  // antes (ex: file picker do composer pegando arquivos sem duração).
+  const parsed = attachMediaSchema.parse(input);
+  const sendResult = applyAttachMedia(
+    conversationsState,
+    messagesState,
+    conversationId,
+    parsed,
+    CURRENT_USER_ID,
+    nextLocalMessageId,
+  );
+  const marked = applyAutoMarkRead(sendResult.conversations, sendResult.messages, conversationId);
+  conversationsState = marked.conversations;
+  messagesState = marked.messages;
+  emitConversations();
+  emitMessages();
+  return sendResult.message;
 }

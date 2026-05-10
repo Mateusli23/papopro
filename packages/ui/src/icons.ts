@@ -84,6 +84,7 @@ export {
   Smartphone,
   Smile,
   Sparkles,
+  Square,
   SquarePen,
   Star,
   Sun,

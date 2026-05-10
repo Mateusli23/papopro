@@ -17,18 +17,18 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                          |
-| -------- | ------- | --------------- | ------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                    |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                    |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                    |
-| Sprint 4 | 46–60   | M5              | ⚠️ em andamento — 3 / 6 sub-PRs |
-| Sprint 5 | 61–75   | M6, M7          | ⏳ pendente                     |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                     |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                     |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                     |
+| Sprint   | Dias    | Marcos cobertos | Status                                                        |
+| -------- | ------- | --------------- | ------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                  |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                  |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                  |
+| Sprint 4 | 46–60   | M5              | ⚠️ em andamento — 3,67 / 6 sub-PRs (M5#4 partido em 4a/4b/4c) |
+| Sprint 5 | 61–75   | M6, M7          | ⏳ pendente                                                   |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                   |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                   |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                   |
 
-**Posição atual (09-mai-26):** Bloco A (UI mockada) ~70% completo. M1–M4 entregues; M5 em andamento (Cadências, Tarefas e Relatórios prontos; faltam Inbox, Agentes IA e Configurações). M6 (landing) ainda não iniciado.
+**Posição atual (10-mai-26):** Bloco A (UI mockada) ~73% completo. M1–M4 entregues; M5 em andamento — Cadências, Tarefas, Relatórios e Inbox 4a/4b prontos (3 painéis + composer com tabs Mensagem/Nota, emoji, anexo, áudio mock e atalhos). Faltam M5#4c (filtros + mobile), M5#5 (Agentes IA) e M5#6 (Configurações). M6 (landing) ainda não iniciado.
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 
@@ -266,28 +266,47 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 
 **Objetivo:** UI das demais features de domínio. Maior marco de UI do plano — finaliza o produto navegável de ponta a ponta com fixtures.
 
-**📊 Status (09-mai-26):** 3 / 6 sub-PRs entregues.
+**📊 Status (10-mai-26):** 3,67 / 6 sub-PRs entregues — Inbox em andamento, partido em 3 fatias (4a/4b entregues, 4c próximo).
 
-| Sub-PR | Escopo                  | Status      | PR                                                   |
-| ------ | ----------------------- | ----------- | ---------------------------------------------------- |
-| M5#1   | Relatórios `/reports`   | ✅ entregue | [#12](https://github.com/Mateusli23/papopro/pull/12) |
-| M5#2   | Tarefas `/tasks`        | ✅ entregue | [#14](https://github.com/Mateusli23/papopro/pull/14) |
-| M5#3   | Cadências `/cadences`   | ✅ entregue | [#15](https://github.com/Mateusli23/papopro/pull/15) |
-| M5#4   | Inbox WhatsApp `/inbox` | ⏳ pendente | —                                                    |
-| M5#5   | Agentes IA `/agents`    | ⏳ pendente | —                                                    |
-| M5#6   | Configurações           | ⏳ pendente | —                                                    |
+| Sub-PR | Escopo                                                        | Status      | PR                                                   |
+| ------ | ------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
+| M5#1   | Relatórios `/reports`                                         | ✅ entregue | [#12](https://github.com/Mateusli23/papopro/pull/12) |
+| M5#2   | Tarefas `/tasks`                                              | ✅ entregue | [#14](https://github.com/Mateusli23/papopro/pull/14) |
+| M5#3   | Cadências `/cadences`                                         | ✅ entregue | [#15](https://github.com/Mateusli23/papopro/pull/15) |
+| M5#4a  | Inbox `/inbox` — layout 3 painéis + fixtures + store readonly | ✅ entregue | [#17](https://github.com/Mateusli23/papopro/pull/17) |
+| M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | _este PR_                                            |
+| M5#4c  | Inbox filtros + mobile single-pane + smoke + sidebar live     | ⏳ pendente | —                                                    |
+| M5#5   | Agentes IA `/agents`                                          | ⏳ pendente | —                                                    |
+| M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
 
-**Próximo na fila:** Inbox WhatsApp (M5#4) — diferencial nº 3 do produto e o que fecha a história "lead novo → primeira mensagem → cadência → resposta" na demo.
+**Próximo na fila:** M5#4c (filtros da Inbox + mobile) ou M5#5 (Agentes IA) — depende de prioridade. Composer já destrava a história "lead novo → primeira mensagem → cadência → resposta" para a demo.
 
-**Entregas — Inbox WhatsApp:**
+**Entregas — Inbox WhatsApp (parte 4a — entregue):**
 
-- [ ] `/inbox/page.tsx` em 3 painéis: lista de conversas (esquerda), thread (centro), ficha do lead (direita)
-- [ ] Composer: texto + emoji picker, anexar imagem/áudio/documento, gravação de áudio (Web Audio API)
-- [ ] Bolhas com timestamps, check de leitura, indicador "digitando..."
-- [ ] Notas internas com fundo amarelo + ícone de cadeado
-- [ ] Botões de respostas rápidas (templates do workspace)
-- [ ] Atalhos: `Enter` envia, `Shift+Enter` quebra linha, `↑↓` navega conversas, `Esc` fecha thread
+- [x] `/inbox/page.tsx` em 3 painéis: lista de conversas (esquerda), thread (centro), ficha do lead (direita)
+- [x] Bolhas com timestamps BRT, check de leitura (3 estados), indicador "digitando..." mock
+- [x] Notas internas com fundo amarelo + ícone de cadeado (renderização)
+- [x] Mídia inbound: image/audio/document com componentes dedicados
+
+**Entregas — Inbox WhatsApp (parte 4b — entregue):**
+
+- [x] Composer real: texto + emoji picker (48 emojis curados, zero deps) + anexar imagem/áudio/documento + gravação de áudio (mock animado, sem MediaRecorder real)
+- [x] Tabs `Mensagem ↔ Nota interna` no topo do composer (decisão UX: toggle inline ao invés de botão separado)
+- [x] Botões de respostas rápidas com placeholders `{nome}`/`{empresa}` resolvidos contra o lead da conversa
+- [x] Atalhos: `Enter` envia, `Shift+Enter` quebra linha, `Esc` esvazia draft, **IME-safe** (não envia durante composição de acentos pt-BR)
+- [x] Auto-mark-read ao enviar mensagem (paridade com WhatsApp Web)
+- [x] Atalho global `g + i` navega para `/inbox` (registrado em `use-global-shortcuts.ts` + footer Cmd+K)
+- [x] Inbox sai do `soon` no Cmd+K palette
+- [x] Smoke test endpoint `/api/smoke-test/inbox` — **56 asserts** em 8 grupos (fixtures, transforms-read, placeholders, mutations-send-message, mutations-internal-note, mutations-attach-media, edge-cases, schema)
+- [x] AutoResizeTextarea custom (1–6 linhas, depois scrolla) — local em `features/inbox/`, promovido pra `@papopro/ui` quando outro feature precisar
+
+**Entregas — Inbox WhatsApp (parte 4c — pendente):**
+
 - [ ] Filtros: vendedor, status (aguardando/respondido/arquivado), etapa, sem resposta há X dias
+- [ ] Atalhos `↑↓` para navegar conversas na lista
+- [ ] Mobile single-pane com Drawer pra ficha do lead
+- [ ] Sidebar badge ao vivo via `useUnreadCount()` (hoje fixo em 3)
+- [ ] Quick actions na ficha do lead (mover etapa / atribuir vendedor / arquivar)
 
 **Entregas — Agentes IA:**
 
