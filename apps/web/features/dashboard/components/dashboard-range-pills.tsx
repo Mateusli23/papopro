@@ -12,6 +12,7 @@ import { Button, cn, Popover, PopoverContent, PopoverTrigger } from '@papopro/ui
 import { Calendar } from '@papopro/ui/icons';
 
 import { useDashboardRange } from '../hooks/use-dashboard-range';
+import { DASHBOARD_NOW } from '../range';
 import type { DashboardRange } from '../types';
 
 /**
@@ -42,7 +43,11 @@ export function DashboardRangePills() {
   const isCustom = bounds.range === 'custom';
 
   return (
-    <div className="scrollbar-thin flex snap-x items-center gap-1 overflow-x-auto">
+    <div
+      role="group"
+      aria-label="Filtro de período"
+      className="flex snap-x items-center gap-1 overflow-x-auto"
+    >
       {PILLS.map((pill) => {
         const active = bounds.range === pill.key;
         return (
@@ -67,6 +72,7 @@ export function DashboardRangePills() {
         <PopoverTrigger asChild>
           <button
             type="button"
+            aria-pressed={isCustom}
             className={cn(
               'text-caption inline-flex shrink-0 snap-start items-center gap-1 rounded-md border px-3 py-1.5 font-medium transition-colors',
               isCustom
@@ -114,8 +120,9 @@ function CustomRangePicker({ initial, onApply, onCancel }: CustomRangePickerProp
         weekStartsOn={1}
         showOutsideDays
         // Cap default — vendedor não compara décadas, evita range gigante.
-        // Em M8 com dados reais o cap pode ser revisto.
-        toDate={new Date()}
+        // Usa `DASHBOARD_NOW` (não `new Date()`) pra alinhar com fixtures
+        // congeladas em M5; em M8+ vira `new Date()` real (review M5p#2).
+        toDate={DASHBOARD_NOW}
       />
       <div className="text-caption text-muted-foreground">
         {selected?.from && selected?.to

@@ -39,7 +39,12 @@ export function KpiGrid({ bounds }: KpiGridProps) {
   );
 
   return (
-    <section aria-label="Indicadores principais" className="grid grid-cols-2 gap-3 md:grid-cols-5">
+    <section
+      aria-label="Indicadores principais"
+      // 2 cols em mobile, 3 em tablet (cards respiram), 5 em desktop largo
+      // pra acomodar valores monetários "R$ 999K" + trend sem quebrar.
+      className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5"
+    >
       <KpiCard
         label="Leads novos"
         value={String(k.newLeadsCount)}
@@ -82,12 +87,18 @@ export function KpiGrid({ bounds }: KpiGridProps) {
             : `${k.wonInRange} ${k.wonInRange === 1 ? 'ganho' : 'ganhos'} · ${k.lostInRange} ${k.lostInRange === 1 ? 'perdido' : 'perdidos'}`
         }
       />
+      {/*
+       * Propostas é snapshot puro do pipeline atual (deals abertos em
+       * `proposta`) — não há histórico de mudança de stage em M5, então
+       * comparar com período anterior produziria sempre `flat 0` (review
+       * M5p#2 CRÍTICO #1). Em M8+ quando `deal.stageHistory[]` existir,
+       * o trend real volta. Por enquanto, sem indicador.
+       */}
       <KpiCard
         label="Propostas"
         value={k.proposalsCents > 0 ? formatCentsCompact(k.proposalsCents) : 'R$ 0'}
         Icon={FileText}
         tone="info"
-        trend={k.proposalsTrend}
         hint="negócios abertos em proposta"
       />
     </section>

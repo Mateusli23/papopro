@@ -78,11 +78,19 @@ export function FunnelHorizontalChart() {
                       {row.name}
                     </span>
                     <div className="bg-muted/30 relative h-5 flex-1 overflow-hidden rounded-sm">
-                      <div
-                        className={cn('h-full rounded-sm transition-all', row.barClass)}
-                        style={{ width: `${Math.max(2, widthPct)}%` }}
-                        aria-hidden
-                      />
+                      {/* Etapa com 0 deals fica sem barra (só o trilho cinza)
+                          — uma barrinha mínima de 2% confundiria leitura
+                          ("tem algo aí?"). Etapa com 1+ deals ganha barra
+                          com largura proporcional + mínimo de 2% pra
+                          permanecer visível mesmo com count baixo
+                          (review M5p#2 ALTO #9). */}
+                      {row.count > 0 && (
+                        <div
+                          className={cn('h-full rounded-sm transition-all', row.barClass)}
+                          style={{ width: `${Math.max(2, widthPct)}%` }}
+                          aria-hidden
+                        />
+                      )}
                     </div>
                     <span className="text-caption text-foreground w-32 shrink-0 text-right font-medium tabular-nums">
                       <span>{row.count}</span>

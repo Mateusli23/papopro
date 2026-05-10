@@ -12,7 +12,7 @@
  */
 import { NextResponse } from 'next/server';
 
-import { computeRangeBounds, DASHBOARD_NOW } from '@/features/dashboard/range';
+import { computeRangeBounds, DASHBOARD_NOW, parseDashboardRange } from '@/features/dashboard/range';
 import {
   buildHorizontalFunnelData,
   buildOriginData,
@@ -113,6 +113,19 @@ export function GET() {
     const b = computeRangeBounds('custom', DASHBOARD_NOW);
     return b.range === 'today';
   });
+  t('parseDashboardRange aceita válidos e cai em "week" no resto (review M5p#2)', () => {
+    return (
+      parseDashboardRange('today') === 'today' &&
+      parseDashboardRange('week') === 'week' &&
+      parseDashboardRange('month') === 'month' &&
+      parseDashboardRange('all') === 'all' &&
+      parseDashboardRange('custom') === 'custom' &&
+      parseDashboardRange('xxx') === 'week' &&
+      parseDashboardRange(null) === 'week' &&
+      parseDashboardRange(undefined) === 'week' &&
+      parseDashboardRange('') === 'week'
+    );
+  });
 
   // ── Trend ───────────────────────────────────────────────────────────────
   t = run('transforms-trend', results);
@@ -143,6 +156,10 @@ export function GET() {
   t('|pct| <= 1 → flat 0 (variação irrelevante absorvida)', () => {
     const r = computeTrend(101, 100);
     return r.direction === 'flat';
+  });
+  t('boundary: pct === 2 → up (não cai em flat — fixa contrato pra refator)', () => {
+    const r = computeTrend(102, 100);
+    return r.direction === 'up' && r.pct === 2;
   });
 
   // ── KPIs com range + trends ─────────────────────────────────────────────
@@ -231,6 +248,18 @@ export function GET() {
   });
   t('todo bucket tem fill = hsl(var(--token))', () => {
     return origin.every((o) => o.fill.startsWith('hsl(var(--'));
+  });
+  t('lead com origin desconhecida cai em "other" (defesa pra origens novas)', () => {
+    const baseLead = FAKE_LEADS[0]!;
+    // Cast pra `Lead` propositalmente — o objetivo do assert é testar o
+    // comportamento defensivo do transform quando uma origem nova (ex:
+    // `tiktok_ads` em M8+) aparecer antes do mapa `BUCKET_OF_ORIGIN`
+    // ser estendido.
+    const unknownLead = { ...baseLead, id: 'lead_unknown_origin', origin: 'tiktok_ads' as never };
+    const fakeLeads = [...FAKE_LEADS, unknownLead];
+    const result = buildOriginData(fakeLeads, allBounds);
+    const other = result.find((o) => o.bucket === 'other');
+    return !!other && other.count >= 1;
   });
 
   // ── Funil horizontal ───────────────────────────────────────────────────

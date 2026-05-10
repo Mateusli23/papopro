@@ -3,8 +3,10 @@
 import * as React from 'react';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 import { Button, PageHeader } from '@papopro/ui';
+import type { LeadTemperature } from '@papopro/ui';
 import { KanbanSquare, PlusCircle, Upload } from '@papopro/ui/icons';
 
 import { LeadCreateDialog } from '@/features/leads/components/lead-create-dialog';
@@ -17,18 +19,48 @@ import {
 import { LeadImportSheet } from '@/features/leads/components/lead-import-sheet';
 import { LeadsTable } from '@/features/leads/components/leads-table';
 import { applyLeadFilters } from '@/features/leads/queries';
+import { LEAD_ORIGINS } from '@/features/leads/schemas';
 import { useLeads } from '@/features/leads/store';
+import type { LeadOrigin } from '@/features/leads/types';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
 
 /**
- * Container client da rota `/leads` — junta filtros, tabela e modais
- * (Sub-PR B). Mantém o estado de filtros em React state local; em M8,
- * filtros mais complexos podem migrar pra `useSearchParams`/`nuqs` se
- * compartilhar via link virar requisito.
+ * Container client da rota `/leads` — junta filtros, tabela e modais.
+ *
+ * **Deep-link via URL params** (M5p#2): aceita `?origin=meta_ads` e
+ * `?temperature=hot` na inicialização — usado pelos clicks no donut e
+ * banner do dashboard. Lê uma vez na montagem; mudanças subsequentes
+ * ficam em React state local sem sincronizar de volta na URL (pra que
+ * filtros expandidos manualmente não poluam o histórico).
+ *
+ * Em M8, se virar requisito "compartilhar link com filtros", migra pra
+ * `useSearchParams`/`nuqs` com sincronização bidirecional.
  */
+
+const VALID_TEMPERATURES = new Set<LeadTemperature>(['hot', 'warm', 'cold']);
+const VALID_ORIGINS = new Set<LeadOrigin>(LEAD_ORIGINS.map((o) => o.value));
+
+function buildInitialFilters(params: URLSearchParams): LeadFilterState {
+  const next: LeadFilterState = { ...EMPTY_FILTERS };
+  const originParam = params.get('origin');
+  if (originParam && VALID_ORIGINS.has(originParam as LeadOrigin)) {
+    next.origins = [originParam as LeadOrigin];
+  }
+  const tempParam = params.get('temperature');
+  if (tempParam && VALID_TEMPERATURES.has(tempParam as LeadTemperature)) {
+    next.temperatures = [tempParam as LeadTemperature];
+  }
+  return next;
+}
+
 export function LeadsView() {
   const leads = useLeads();
-  const [filters, setFilters] = React.useState<LeadFilterState>(EMPTY_FILTERS);
+  const searchParams = useSearchParams();
+  // Lê URL params APENAS na primeira montagem — mudanças subsequentes
+  // do filtro vivem em state local sem espelhar na URL.
+  const [filters, setFilters] = React.useState<LeadFilterState>(() =>
+    buildInitialFilters(new URLSearchParams(searchParams.toString())),
+  );
   const [createOpen, setCreateOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
 
