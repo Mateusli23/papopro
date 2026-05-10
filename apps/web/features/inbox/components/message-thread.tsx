@@ -3,7 +3,7 @@
 import * as React from 'react';
 
 import { Avatar, AvatarFallback, Button, EmptyState, ScrollArea, Separator } from '@papopro/ui';
-import { ChevronLeft, MessageSquare, MoreVertical, Phone } from '@papopro/ui/icons';
+import { ChevronLeft, MessageSquare, MoreVertical, Phone, User } from '@papopro/ui/icons';
 
 import { getLead } from '@/lib/fixtures/leads';
 import { initialsOf } from '@/lib/utils/format';
@@ -37,9 +37,11 @@ interface MessageThreadProps {
   conversationId: string | undefined;
   /** Mobile: ao clicar em voltar, volta pra lista. Desktop ignora. */
   onBack?: () => void;
+  /** Mobile: abre o drawer com a ficha do lead. Desktop ignora (painel fixo). */
+  onOpenFicha?: () => void;
 }
 
-export function MessageThread({ conversationId, onBack }: MessageThreadProps) {
+export function MessageThread({ conversationId, onBack, onOpenFicha }: MessageThreadProps) {
   const conversation = useConversation(conversationId);
   const messages = useMessages(conversationId);
   const isTyping = useSimulatedTyping(conversationId);
@@ -79,7 +81,7 @@ export function MessageThread({ conversationId, onBack }: MessageThreadProps) {
       aria-label={`Conversa com ${getLead(conversation.leadId)?.name ?? 'lead'}`}
       className="flex h-full flex-col"
     >
-      <ThreadHeader conversation={conversation} onBack={onBack} />
+      <ThreadHeader conversation={conversation} onBack={onBack} onOpenFicha={onOpenFicha} />
       <Separator />
 
       <ScrollArea className="bg-background/50 flex-1">
@@ -121,9 +123,10 @@ export function MessageThread({ conversationId, onBack }: MessageThreadProps) {
 interface ThreadHeaderProps {
   conversation: Conversation;
   onBack?: () => void;
+  onOpenFicha?: () => void;
 }
 
-function ThreadHeader({ conversation, onBack }: ThreadHeaderProps) {
+function ThreadHeader({ conversation, onBack, onOpenFicha }: ThreadHeaderProps) {
   const lead = getLead(conversation.leadId);
   const name = lead?.name ?? 'Lead sem nome';
 
@@ -154,11 +157,26 @@ function ThreadHeader({ conversation, onBack }: ThreadHeaderProps) {
         </span>
       </div>
       <div className="flex items-center gap-1">
+        {/* Botão "Ver lead" — só em <lg, abre o drawer da ficha. Em lg+ o
+         * painel da ficha já está visível à direita.
+         */}
+        {onOpenFicha && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenFicha}
+            className="size-9 p-0 lg:hidden"
+            aria-label="Ver ficha do lead"
+          >
+            <User className="size-4" />
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="size-9 p-0"
+          className="hidden size-9 p-0 sm:inline-flex"
           aria-label="Ligar (em breve)"
           disabled
         >

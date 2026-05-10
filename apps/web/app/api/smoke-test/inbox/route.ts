@@ -18,21 +18,30 @@ import {
   sendTextMessageSchema,
 } from '@/features/inbox/schemas';
 import {
+  applyArchiveConversation,
   applyAttachMedia,
+  applyReassignConversation,
   applySendInternalNote,
   applySendMessage,
+  applyUnarchiveConversation,
+  countActiveFilters,
   countConversations,
   countUnreadConversations,
   daysSinceLastInbound,
+  filterConversations,
   formatMessagePreview,
   getLastInboundMessage,
   getLastOutboundMessage,
   groupMessagesByDay,
+  type InboxFilterContext,
+  type InboxLeadHandle,
   messagesForConversation,
   resolvePlaceholders,
   sortConversations,
 } from '@/features/inbox/transforms';
+import type { InboxFilters } from '@/features/inbox/types';
 import { FAKE_CONVERSATIONS } from '@/lib/fixtures/conversations';
+import { FAKE_LEADS } from '@/lib/fixtures/leads';
 import { FAKE_MESSAGES } from '@/lib/fixtures/messages';
 import { FAKE_QUICK_REPLIES } from '@/lib/fixtures/quick-replies';
 
@@ -457,6 +466,294 @@ export function GET() {
     return (
       !/Required|String must|Invalid|Number must/i.test(messages) || `vazou en-US: ${messages}`
     );
+  });
+
+  // ── Filtros (M5#4c) ────────────────────────────────────────────────────
+  t = run('filters', results);
+
+  const LEAD_HANDLES: ReadonlyMap<string, InboxLeadHandle> = new Map(
+    FAKE_LEADS.map((l) => [
+      l.id,
+      { stageId: l.stageId, name: l.name, company: l.company, phone: l.phone },
+    ]),
+  );
+  const filterCtx: InboxFilterContext = { messages: FAKE_MESSAGES, leadById: LEAD_HANDLES };
+  const FROZEN_NOW_DATE = new Date(FROZEN_NOW);
+
+  t('filterConversations sem filtros oculta arquivadas (default UX)', () => {
+    const out = filterConversations(FAKE_CONVERSATIONS, {}, filterCtx, FROZEN_NOW_DATE);
+    const hasArchived = out.some((c) => c.archivedAt);
+    return !hasArchived || `${out.length} resultados, com arquivada`;
+  });
+  t('filterConversations status=archived retorna apenas arquivadas', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { status: 'archived' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    const allArchived = out.every((c) => c.status === 'archived' && c.archivedAt);
+    return (allArchived && out.length > 0) || `count=${out.length} allArchived=${allArchived}`;
+  });
+  t('filterConversations status=awaiting filtra estritamente', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { status: 'awaiting' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return out.every((c) => c.status === 'awaiting');
+  });
+  t('filterConversations vendorId combina via AND com status', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { status: 'awaiting', vendorId: 'user_mateus' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return out.every((c) => c.vendorId === 'user_mateus' && c.status === 'awaiting');
+  });
+  t('filterConversations stageId resolve via leadById', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { stageId: 'novo' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    if (out.length === 0) return 'esperava ao menos uma conversa em novo';
+    return out.every((c) => {
+      const lead = LEAD_HANDLES.get(c.leadId);
+      return lead?.stageId === 'novo';
+    });
+  });
+  t('filterConversations noReplyDays >= 7 inclui só conversas silentes a 7+ dias', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { noReplyDays: 7 },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    if (out.length === 0) return 'esperava resultados';
+    return out.every((c) => {
+      const msgs = messagesForConversation(FAKE_MESSAGES, c.id);
+      const days = daysSinceLastInbound(msgs, FROZEN_NOW_DATE);
+      const conversationAgeDays = Math.floor(
+        (FROZEN_NOW_DATE.getTime() - new Date(c.createdAt).getTime()) / (1000 * 60 * 60 * 24),
+      );
+      const silent = days ?? conversationAgeDays;
+      return silent >= 7;
+    });
+  });
+  t('filterConversations noReplyDays usa idade da conversa quando lead nunca respondeu', () => {
+    // conv_010 está arquivada (não entra no default), mas tem inbound. Vamos
+    // construir um caso sintético: pegar a primeira conversa não-arquivada
+    // e ver se um threshold maior que a idade exclui (não passa).
+    const active = FAKE_CONVERSATIONS.find((c) => !c.archivedAt);
+    if (!active) return 'sem conversa ativa';
+    const conversationAgeDays = Math.floor(
+      (FROZEN_NOW_DATE.getTime() - new Date(active.createdAt).getTime()) / (1000 * 60 * 60 * 24),
+    );
+    // Filtro com threshold > idade da conversa NUNCA inclui, mesmo se lead silent.
+    const out = filterConversations(
+      [active],
+      { noReplyDays: conversationAgeDays + 999 },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return out.length === 0;
+  });
+  t('filterConversations search bate em nome do lead', () => {
+    // lead_001 = Mariana Costa; conv_001 vincula. Busca "mariana" deve incluir.
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { search: 'mariana' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return out.some((c) => c.id === 'conv_001');
+  });
+  t('filterConversations search é case-insensitive e trimmed', () => {
+    const out = filterConversations(
+      FAKE_CONVERSATIONS,
+      { search: '  MARIANA  ' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return out.some((c) => c.id === 'conv_001');
+  });
+  t('filterConversations search vazia (só espaços) é ignorada', () => {
+    const all = filterConversations(FAKE_CONVERSATIONS, {}, filterCtx, FROZEN_NOW_DATE);
+    const withEmpty = filterConversations(
+      FAKE_CONVERSATIONS,
+      { search: '   ' },
+      filterCtx,
+      FROZEN_NOW_DATE,
+    );
+    return withEmpty.length === all.length;
+  });
+  t('filterConversations stageId com lead órfão exclui (defense in depth)', () => {
+    // Conversa sintética com leadId que não existe no map.
+    const orphan = { ...FAKE_CONVERSATIONS[0]!, id: 'conv_orphan', leadId: 'lead_inexistente' };
+    const out = filterConversations([orphan], { stageId: 'novo' }, filterCtx, FROZEN_NOW_DATE);
+    return out.length === 0;
+  });
+  t('countActiveFilters ignora search', () => {
+    return countActiveFilters({ search: 'mariana' }) === 0;
+  });
+  t('countActiveFilters soma vendor + status + stage + noReply', () => {
+    const filters: InboxFilters = {
+      vendorId: 'user_mateus',
+      status: 'awaiting',
+      stageId: 'novo',
+      noReplyDays: 7,
+    };
+    return countActiveFilters(filters) === 4;
+  });
+  t('countActiveFilters em filtros vazios = 0', () => {
+    return countActiveFilters({}) === 0;
+  });
+
+  // ── Mutações de archive/unarchive (M5#4c) ──────────────────────────────
+  t = run('mutations-archive', results);
+
+  const activeForArchive = FAKE_CONVERSATIONS.find((c) => !c.archivedAt);
+  if (!activeForArchive) {
+    t('fixture: ao menos uma conversa ativa', () => 'sem ativa');
+  } else {
+    const archived = applyArchiveConversation(FAKE_CONVERSATIONS, activeForArchive.id, FROZEN_NOW);
+    t('applyArchiveConversation seta archivedAt', () => {
+      const updated = archived.find((c) => c.id === activeForArchive.id);
+      return updated?.archivedAt === FROZEN_NOW;
+    });
+    t('applyArchiveConversation seta status="archived"', () => {
+      const updated = archived.find((c) => c.id === activeForArchive.id);
+      return updated?.status === 'archived';
+    });
+    t('applyArchiveConversation cria nova referência do array', () => {
+      return archived !== FAKE_CONVERSATIONS;
+    });
+    t('applyArchiveConversation idempotente em conversa já arquivada', () => {
+      const ar = FAKE_CONVERSATIONS.find((c) => c.archivedAt);
+      if (!ar) return 'sem arquivada nas fixtures';
+      const re = applyArchiveConversation(FAKE_CONVERSATIONS, ar.id);
+      return re === FAKE_CONVERSATIONS;
+    });
+    t('applyArchiveConversation lança em conversationId desconhecido', () => {
+      try {
+        applyArchiveConversation(FAKE_CONVERSATIONS, 'conv_inexistente');
+        return 'esperava throw';
+      } catch {
+        return true;
+      }
+    });
+    t('arquivar exclui conversa do countUnread se tinha unread', () => {
+      // Pegamos uma conversa com unread > 0 pra checar o efeito.
+      const unreadConv = FAKE_CONVERSATIONS.find((c) => c.unreadCount > 0 && !c.archivedAt);
+      if (!unreadConv) return 'sem conversa unread ativa';
+      const before = countUnreadConversations(FAKE_CONVERSATIONS);
+      const after = countUnreadConversations(
+        applyArchiveConversation(FAKE_CONVERSATIONS, unreadConv.id),
+      );
+      return after === before - unreadConv.unreadCount;
+    });
+  }
+
+  // Unarchive
+  const archivedForUnarchive = FAKE_CONVERSATIONS.find((c) => c.archivedAt);
+  if (!archivedForUnarchive) {
+    t('fixture: ao menos uma arquivada', () => 'sem arquivada');
+  } else {
+    const unarchived = applyUnarchiveConversation(
+      FAKE_CONVERSATIONS,
+      FAKE_MESSAGES,
+      archivedForUnarchive.id,
+    );
+    t('applyUnarchiveConversation limpa archivedAt', () => {
+      const updated = unarchived.find((c) => c.id === archivedForUnarchive.id);
+      return updated?.archivedAt === undefined;
+    });
+    t('applyUnarchiveConversation recalcula status pra awaiting/responded', () => {
+      const updated = unarchived.find((c) => c.id === archivedForUnarchive.id);
+      return updated?.status === 'awaiting' || updated?.status === 'responded';
+    });
+    t('applyUnarchiveConversation idempotente em conversa ativa', () => {
+      const active = FAKE_CONVERSATIONS.find((c) => !c.archivedAt)!;
+      const re = applyUnarchiveConversation(FAKE_CONVERSATIONS, FAKE_MESSAGES, active.id);
+      return re === FAKE_CONVERSATIONS;
+    });
+  }
+
+  // ── Mutação reassign (M5#4c) ───────────────────────────────────────────
+  t = run('mutations-reassign', results);
+
+  const reassignTarget = FAKE_CONVERSATIONS[0]!;
+  const newVendor = reassignTarget.vendorId === 'user_juliana' ? 'user_renato' : 'user_juliana';
+  const reassigned = applyReassignConversation(FAKE_CONVERSATIONS, reassignTarget.id, newVendor);
+
+  t('applyReassignConversation atualiza vendorId', () => {
+    const updated = reassigned.find((c) => c.id === reassignTarget.id);
+    return updated?.vendorId === newVendor;
+  });
+  t('applyReassignConversation não muda status', () => {
+    const updated = reassigned.find((c) => c.id === reassignTarget.id);
+    return updated?.status === reassignTarget.status;
+  });
+  t('applyReassignConversation não muda lastMessageAt', () => {
+    const updated = reassigned.find((c) => c.id === reassignTarget.id);
+    return updated?.lastMessageAt === reassignTarget.lastMessageAt;
+  });
+  t('applyReassignConversation idempotente em mesmo vendor', () => {
+    const re = applyReassignConversation(
+      FAKE_CONVERSATIONS,
+      reassignTarget.id,
+      reassignTarget.vendorId,
+    );
+    return re === FAKE_CONVERSATIONS;
+  });
+  t('applyReassignConversation rejeita vendorId vazio', () => {
+    try {
+      applyReassignConversation(FAKE_CONVERSATIONS, reassignTarget.id, '');
+      return 'esperava throw';
+    } catch {
+      return true;
+    }
+  });
+  t('applyReassignConversation lança em conversationId desconhecido', () => {
+    try {
+      applyReassignConversation(FAKE_CONVERSATIONS, 'conv_inexistente', newVendor);
+      return 'esperava throw';
+    } catch {
+      return true;
+    }
+  });
+
+  // ── Helpers do listbox keyboard nav (M5#4c) ────────────────────────────
+  t = run('keyboard-nav-helpers', results);
+
+  // Validamos a lógica pura do "next/previous index" — o hook em si testa
+  // via UAT, mas a aritmética de wrap-around vale assert pra não regressar.
+  function nextIndex(len: number, current: number, dir: 1 | -1): number {
+    if (current < 0) return dir === 1 ? 0 : len - 1;
+    return (current + dir + len) % len;
+  }
+
+  t('next em lista de 5 com selecionado=2 → 3', () => {
+    return nextIndex(5, 2, 1) === 3;
+  });
+  t('next em fim da lista wrappa pro início', () => {
+    return nextIndex(5, 4, 1) === 0;
+  });
+  t('previous em início wrappa pro fim', () => {
+    return nextIndex(5, 0, -1) === 4;
+  });
+  t('next sem seleção (current=-1) começa em 0', () => {
+    return nextIndex(5, -1, 1) === 0;
+  });
+  t('previous sem seleção (current=-1) vai pro último', () => {
+    return nextIndex(5, -1, -1) === 4;
+  });
+  t('next em lista de 1 retorna 0 (idempotente)', () => {
+    return nextIndex(1, 0, 1) === 0 && nextIndex(1, 0, -1) === 0;
   });
 
   // ── Regressões do code review M5#4b ────────────────────────────────────

@@ -52,71 +52,86 @@ function ConversationListItemImpl({ conversation, selected, onSelect }: Conversa
   const time = useRelativeListTime(conversation.lastMessageAt);
 
   return (
-    <button
-      type="button"
-      aria-current={selected ? 'true' : undefined}
-      aria-pressed={selected}
-      onClick={() => onSelect(conversation.id)}
-      className={cn(
-        'group relative flex w-full items-start gap-3 px-3 py-3 text-left transition-colors',
-        'hover:bg-muted/40 focus-visible:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
-        selected && 'bg-muted',
-      )}
+    <li
+      // ARIA Listbox 1.2 (M5#4c): cada item é `option`. O foco visível é
+      // governado pelo `aria-activedescendant` do `<ul>` — itens NÃO
+      // recebem `tabindex` próprio. Click ainda funciona via `<button>`
+      // interno, e a navegação por mouse/teclado convergem no `onSelect`.
+      id={`conv-${conversation.id}`}
+      role="option"
+      aria-selected={selected}
+      className="contents"
     >
-      {/* Stripe lateral 3px na cor do status — alinha com a spec do PR. */}
-      <span
-        aria-hidden
-        className={cn('absolute inset-y-2 left-0 w-[3px] rounded-r-full', stripe)}
-      />
+      <button
+        type="button"
+        // Botão interno — `tabIndex={-1}` mantém foco sob o listbox pai,
+        // mas continua clicável (mouse/touch) e acessível semanticamente.
+        tabIndex={-1}
+        aria-current={selected ? 'true' : undefined}
+        onClick={() => onSelect(conversation.id)}
+        className={cn(
+          'group relative flex w-full items-start gap-3 px-3 py-3 text-left transition-colors',
+          'hover:bg-muted/40',
+          selected && 'bg-muted',
+        )}
+      >
+        {/* Stripe lateral 3px na cor do status — alinha com a spec do PR. */}
+        <span
+          aria-hidden
+          className={cn('absolute inset-y-2 left-0 w-[3px] rounded-r-full', stripe)}
+        />
 
-      <Avatar className="size-10 shrink-0">
-        <AvatarFallback className="bg-primary/15 text-primary text-caption font-semibold">
-          {initialsOf(name)}
-        </AvatarFallback>
-      </Avatar>
+        <Avatar className="size-10 shrink-0">
+          <AvatarFallback className="bg-primary/15 text-primary text-caption font-semibold">
+            {initialsOf(name)}
+          </AvatarFallback>
+        </Avatar>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-baseline gap-2">
-          <span className="text-body text-foreground flex-1 truncate font-medium">{name}</span>
-          <time
-            className="text-caption text-muted-foreground shrink-0 tabular-nums"
-            dateTime={conversation.lastMessageAt}
-            title={formatDateTime(conversation.lastMessageAt)}
-          >
-            {time}
-          </time>
-        </div>
-
-        {company && <span className="text-caption text-muted-foreground truncate">{company}</span>}
-
-        <div className="flex items-end gap-2">
-          <p
-            className={cn(
-              'text-caption flex-1 truncate',
-              conversation.unreadCount > 0
-                ? 'text-foreground font-medium'
-                : 'text-muted-foreground',
-            )}
-          >
-            {conversation.lastMessageDirection === 'out' && conversation.lastMessagePreview && (
-              <span className="text-muted-foreground/80 mr-1">Você:</span>
-            )}
-            {conversation.lastMessagePreview || 'sem conteúdo'}
-          </p>
-          {conversation.unreadCount > 0 ? (
-            <Badge
-              variant="default"
-              className="shrink-0 px-1.5 text-[10px] tabular-nums"
-              aria-label={`${conversation.unreadCount} não lida${conversation.unreadCount > 1 ? 's' : ''}`}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-baseline gap-2">
+            <span className="text-body text-foreground flex-1 truncate font-medium">{name}</span>
+            <time
+              className="text-caption text-muted-foreground shrink-0 tabular-nums"
+              dateTime={conversation.lastMessageAt}
+              title={formatDateTime(conversation.lastMessageAt)}
             >
-              {conversation.unreadCount}
-            </Badge>
-          ) : (
-            <RepAvatar repId={conversation.vendorId} size="sm" className="shrink-0" />
+              {time}
+            </time>
+          </div>
+
+          {company && (
+            <span className="text-caption text-muted-foreground truncate">{company}</span>
           )}
+
+          <div className="flex items-end gap-2">
+            <p
+              className={cn(
+                'text-caption flex-1 truncate',
+                conversation.unreadCount > 0
+                  ? 'text-foreground font-medium'
+                  : 'text-muted-foreground',
+              )}
+            >
+              {conversation.lastMessageDirection === 'out' && conversation.lastMessagePreview && (
+                <span className="text-muted-foreground/80 mr-1">Você:</span>
+              )}
+              {conversation.lastMessagePreview || 'sem conteúdo'}
+            </p>
+            {conversation.unreadCount > 0 ? (
+              <Badge
+                variant="default"
+                className="shrink-0 px-1.5 text-[10px] tabular-nums"
+                aria-label={`${conversation.unreadCount} não lida${conversation.unreadCount > 1 ? 's' : ''}`}
+              >
+                {conversation.unreadCount}
+              </Badge>
+            ) : (
+              <RepAvatar repId={conversation.vendorId} size="sm" className="shrink-0" />
+            )}
+          </div>
         </div>
-      </div>
-    </button>
+      </button>
+    </li>
   );
 }
 

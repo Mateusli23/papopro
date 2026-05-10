@@ -266,7 +266,7 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 
 **Objetivo:** UI das demais features de domínio. Maior marco de UI do plano — finaliza o produto navegável de ponta a ponta com fixtures.
 
-**📊 Status (10-mai-26):** 3,67 / 6 sub-PRs entregues — Inbox em andamento, partido em 3 fatias (4a/4b entregues, 4c próximo).
+**📊 Status (10-mai-26):** 4,67 / 6 sub-PRs entregues — Inbox **completa** (4a + 4b + 4c). Restam Agentes IA (M5#5) e Configurações (M5#6).
 
 | Sub-PR | Escopo                                                        | Status      | PR                                                   |
 | ------ | ------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
@@ -275,11 +275,11 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 | M5#3   | Cadências `/cadences`                                         | ✅ entregue | [#15](https://github.com/Mateusli23/papopro/pull/15) |
 | M5#4a  | Inbox `/inbox` — layout 3 painéis + fixtures + store readonly | ✅ entregue | [#17](https://github.com/Mateusli23/papopro/pull/17) |
 | M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | [#18](https://github.com/Mateusli23/papopro/pull/18) |
-| M5#4c  | Inbox filtros + mobile single-pane + smoke + sidebar live     | ⏳ pendente | —                                                    |
+| M5#4c  | Inbox filtros + ↑↓ nav + mobile drawer + sidebar badge live   | ✅ entregue | _(em PR)_                                            |
 | M5#5   | Agentes IA `/agents`                                          | ⏳ pendente | —                                                    |
 | M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
 
-**Próximo na fila:** M5#4c (filtros da Inbox + mobile) ou M5#5 (Agentes IA) — depende de prioridade. Composer já destrava a história "lead novo → primeira mensagem → cadência → resposta" para a demo.
+**Próximo na fila:** M5#5 (Agentes IA) — Inbox saiu de ponta a ponta navegável. A história "lead novo → primeira mensagem → filtro por vendedor → quick action 'mover etapa' → desfazer" está demonstrável.
 
 **Entregas — Inbox WhatsApp (parte 4a — entregue):**
 
@@ -300,13 +300,14 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - [x] Smoke test endpoint `/api/smoke-test/inbox` — **56 asserts** em 8 grupos (fixtures, transforms-read, placeholders, mutations-send-message, mutations-internal-note, mutations-attach-media, edge-cases, schema)
 - [x] AutoResizeTextarea custom (1–6 linhas, depois scrolla) — local em `features/inbox/`, promovido pra `@papopro/ui` quando outro feature precisar
 
-**Entregas — Inbox WhatsApp (parte 4c — pendente):**
+**Entregas — Inbox WhatsApp (parte 4c — entregue):**
 
-- [ ] Filtros: vendedor, status (aguardando/respondido/arquivado), etapa, sem resposta há X dias
-- [ ] Atalhos `↑↓` para navegar conversas na lista
-- [ ] Mobile single-pane com Drawer pra ficha do lead
-- [ ] Sidebar badge ao vivo via `useUnreadCount()` (hoje fixo em 3)
-- [ ] Quick actions na ficha do lead (mover etapa / atribuir vendedor / arquivar)
+- [x] Filtros: vendedor (Select), status (chips aguardando/respondido/arquivado), etapa (Select), sem resposta há 1d/3d/7d/14d (chips). Popover com badge contador, default oculta arquivadas (paridade com WhatsApp Web).
+- [x] Atalhos `↑↓` para navegar conversas na lista — `<ul role="listbox">` com `aria-activedescendant`, wrap-around, scroll-into-view, `Home`/`End`/`Enter`/`Space` também suportados. Hook escopado `useConversationListKeyboardNav` reusa o guard `isEditableTarget` extraído de `use-global-shortcuts.ts`.
+- [x] Mobile single-pane com Drawer (vaul) pra ficha do lead — botão "Ver lead" no header da thread em `lg:hidden`, fecha por gesto/overlay/Esc.
+- [x] Sidebar badge ao vivo via `useUnreadCount()` — `<SidebarNav>` mescla o counter no item `/inbox`. Cai pra 0 (some) quando todas conversas estão lidas. MobileNav herda automaticamente.
+- [x] Quick actions na ficha do lead: **Mover etapa** (toca `moveLeadToStage`, mesmo path do Kanban) · **Atribuir vendedor** (toca só `conversation.vendorId`, deixa `lead.assignedRepId` intacto) · **Arquivar/Desarquivar** (botão único). Toast com botão "Desfazer" 5s pra reverter.
+- [x] Smoke test endpoint atualizado — **97 asserts** em 12 grupos (8 originais + 4 novos: `filters` 14, `mutations-archive` 9, `mutations-reassign` 6, `keyboard-nav-helpers` 6).
 
 **Entregas — Agentes IA:**
 

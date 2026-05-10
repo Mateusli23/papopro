@@ -41,10 +41,11 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Leads', href: '/leads', icon: Users },
       { label: 'Kanban', href: '/kanban', icon: KanbanSquare },
-      // Badge fixo em 3 (= unreadCount inicial das fixtures: conv_003 + conv_006
-      // + conv_007). Em M5#4c o `<SidebarNav>` consome `useUnreadCount()` e
-      // atualiza ao vivo conforme o vendedor abre conversas.
-      { label: 'Inbox', href: '/inbox', icon: Inbox, badge: 3 },
+      // Badge **dinâmico**: o `<SidebarNav>` mescla `useUnreadCount()` neste
+      // item antes de renderizar (M5#4c). `badge` fica `undefined` aqui pra
+      // que sem mensagens não-lidas o número simplesmente some — o componente
+      // só pinta o `<Badge>` quando `item.badge !== undefined`.
+      { label: 'Inbox', href: '/inbox', icon: Inbox },
       { label: 'Agentes', href: '/agents', icon: Sparkles, soon: true },
       { label: 'Cadências', href: '/cadences', icon: Repeat },
       { label: 'Tarefas', href: '/tasks', icon: ListChecks },

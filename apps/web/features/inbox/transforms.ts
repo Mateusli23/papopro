@@ -8,15 +8,17 @@
  * Em M9 cada uma vira input pra Server Actions / queries Prisma; o motor
  * uazapi consome `applySendMessage` antes de tocar o adapter.
  *
- * **M5#4a entregou leitura** (sort/group/filter/preview). **M5#4b adiciona
+ * **M5#4a entregou leitura** (sort/group/filter/preview). **M5#4b adicionou
  * mutações** (`applySendMessage`, `applySendInternalNote`, `applyAttachMedia`,
- * `resolvePlaceholders`). `applyArchiveConversation` entra em M5#4c.
+ * `resolvePlaceholders`). **M5#4c adiciona** `filterConversations`,
+ * `applyArchiveConversation`, `applyUnarchiveConversation`,
+ * `applyReassignConversation`, `countActiveFilters`.
  */
 import { differenceInDays, parseISO } from 'date-fns';
 
 import { dayKeyBrt, dayLabelBrt } from './hooks/inbox-tz';
 import type { AttachMediaInput, SendInternalNoteInput, SendTextMessageInput } from './schemas';
-import type { Conversation, Message, MessageKind } from './types';
+import type { Conversation, InboxFilters, Message, MessageKind } from './types';
 
 // ─── Sort / busca por entidade ────────────────────────────────────────────
 
@@ -412,4 +414,208 @@ export function applyAttachMedia(
     messages: [...messages, message],
     message,
   };
+}
+
+// ─── Filtros (M5#4c) ──────────────────────────────────────────────────────
+
+/**
+ * Snapshot mínimo do lead que `filterConversations` precisa pra resolver
+ * busca textual e filtro por etapa. Definido aqui (não importado de
+ * `features/leads/types`) pra manter o transform 100% pure / testável sem
+ * depender do shape completo de `Lead`. Caller monta o map a partir das
+ * fixtures (M5) ou da query Prisma (M9).
+ */
+export interface InboxLeadHandle {
+  stageId: string;
+  name?: string;
+  company?: string;
+  phone?: string;
+}
+
+/** Contexto pra resolver filtros que dependem de dados fora da `Conversation`. */
+export interface InboxFilterContext {
+  /** Snapshot global de mensagens — usado pra calcular `noReplyDays`. */
+  messages: Message[];
+  /** Lookup `leadId → handle` pra resolver `stageId` e search por nome/empresa. */
+  leadById: ReadonlyMap<string, InboxLeadHandle>;
+}
+
+/**
+ * Aplica todos os filtros sobre uma lista de conversas, combinados via AND.
+ *
+ * **Default oculta arquivadas** quando `filters.status` é `undefined`. Pra
+ * ver arquivadas, o caller precisa passar `filters.status === 'archived'`
+ * explicitamente. Decisão UX: paridade com WhatsApp Web — arquivada some.
+ *
+ * **Search**: case-insensitive, casa em `nome do lead | empresa | telefone |
+ * preview da última mensagem`. Trim aplicado; string vazia ignora o filtro.
+ *
+ * **Sem resposta há ≥ N dias**: usa `daysSinceLastInbound`; se `undefined`
+ * (lead nunca respondeu), cai pra **idade da conversa** — assim conversas
+ * onde o lead nunca escreveu também aparecem em "≥ 7 dias" depois de 7+
+ * dias da abertura. Documentado na decisão de design da PLAN.md.
+ *
+ * **Etapa**: requer match em `leadById` — conversa com `leadId` órfão
+ * (lead deletado / fixture inconsistente) é **excluída** quando o filtro
+ * está ativo, pra evitar surpresas visuais.
+ */
+export function filterConversations(
+  conversations: Conversation[],
+  filters: InboxFilters,
+  ctx: InboxFilterContext,
+  now: Date = new Date(),
+): Conversation[] {
+  const search = filters.search?.trim().toLowerCase() ?? '';
+  const hasSearch = search.length > 0;
+
+  // Pré-agrupa mensagens por conversa pra evitar O(N²) em listas grandes
+  // — O(M) onde M = total de mensagens, com `noReplyDays` ativo.
+  const messagesByConversation =
+    filters.noReplyDays !== undefined ? groupMessagesByConversation(ctx.messages) : undefined;
+
+  return conversations.filter((c) => {
+    // Status: undefined = oculta arquivadas; valor explícito = match exato.
+    if (filters.status === undefined) {
+      if (c.archivedAt) return false;
+    } else if (filters.status !== c.status) {
+      return false;
+    }
+
+    // Vendedor
+    if (filters.vendorId && c.vendorId !== filters.vendorId) return false;
+
+    // Etapa do lead
+    const lead = ctx.leadById.get(c.leadId);
+    if (filters.stageId) {
+      if (!lead || lead.stageId !== filters.stageId) return false;
+    }
+
+    // Sem resposta há ≥ N dias
+    if (filters.noReplyDays !== undefined && messagesByConversation) {
+      const convMessages = messagesByConversation.get(c.id) ?? [];
+      const days = daysSinceLastInbound(convMessages, now);
+      const silentDays = days ?? differenceInDays(now, parseISO(c.createdAt));
+      if (silentDays < filters.noReplyDays) return false;
+    }
+
+    // Busca textual
+    if (hasSearch) {
+      const haystack = [lead?.name, lead?.company, c.contactPhone, c.lastMessagePreview]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+
+    return true;
+  });
+}
+
+/** Agrupa mensagens por `conversationId` num único pass — helper de filterConversations. */
+function groupMessagesByConversation(messages: Message[]): Map<string, Message[]> {
+  const map = new Map<string, Message[]>();
+  for (const m of messages) {
+    const arr = map.get(m.conversationId);
+    if (arr) arr.push(m);
+    else map.set(m.conversationId, [m]);
+  }
+  return map;
+}
+
+/**
+ * Quantos filtros estão ativos pra exibir no badge do botão "Filtros".
+ *
+ * **Não conta `search`** — a busca já tem feedback visual no próprio input
+ * (clear button + foco) e mora num campo separado do popover. Misturar
+ * confunde: um usuário com busca digitada e nenhum filtro veria "Filtros · 1"
+ * sem entender o porquê.
+ */
+export function countActiveFilters(filters: InboxFilters): number {
+  let count = 0;
+  if (filters.vendorId) count += 1;
+  if (filters.status) count += 1;
+  if (filters.stageId) count += 1;
+  if (filters.noReplyDays !== undefined) count += 1;
+  return count;
+}
+
+// ─── Mutações: archive / unarchive / reassign (M5#4c) ─────────────────────
+
+/**
+ * Marca conversa como arquivada — seta `archivedAt` (ISO) e `status='archived'`.
+ *
+ * Idempotente: se já arquivada, retorna o mesmo array (referência preservada,
+ * sem emitir listeners desnecessariamente no store). Mensagens não mudam.
+ *
+ * Em M9 vira UPDATE em `conversations` + soft-delete via `archived_at`,
+ * com índice parcial pra acelerar `WHERE archived_at IS NULL`.
+ */
+export function applyArchiveConversation(
+  conversations: Conversation[],
+  conversationId: string,
+  now: string = new Date().toISOString(),
+): Conversation[] {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  if (target.archivedAt) return conversations;
+  return conversations.map((c) =>
+    c.id === conversationId ? { ...c, archivedAt: now, status: 'archived' as const } : c,
+  );
+}
+
+/**
+ * Desarquiva conversa — limpa `archivedAt` e recalcula `status` baseado na
+ * última mensagem não-nota: outbound → `awaiting`, inbound → `responded`.
+ *
+ * `messages` é necessário pra recalcular o status; sem ele cairíamos em
+ * `awaiting` por default e potencialmente esconderíamos uma resposta do
+ * lead que ficou pendurada quando a conversa foi arquivada.
+ *
+ * Idempotente: conversa já ativa retorna o array original.
+ */
+export function applyUnarchiveConversation(
+  conversations: Conversation[],
+  messages: Message[],
+  conversationId: string,
+): Conversation[] {
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  if (!target.archivedAt) return conversations;
+
+  const convMessages = messagesForConversation(messages, conversationId);
+  const lastNonNote = [...convMessages].reverse().find((m) => m.kind !== 'internal_note');
+  const nextStatus: Conversation['status'] =
+    lastNonNote && lastNonNote.direction === 'in' ? 'responded' : 'awaiting';
+
+  return conversations.map((c) =>
+    c.id === conversationId ? { ...c, archivedAt: undefined, status: nextStatus } : c,
+  );
+}
+
+/**
+ * Atribui a conversa a outro vendedor. **Não toca `lead.assignedRepId`** —
+ * decisão de design (confirmada com o usuário): "esta conversa específica
+ * vai com outra pessoa", sem efeito no Kanban / dashboard. Em M9 a Server
+ * Action escreve só em `conversations.vendor_id`.
+ *
+ * Idempotente em vendor igual; rejeita string vazia.
+ */
+export function applyReassignConversation(
+  conversations: Conversation[],
+  conversationId: string,
+  vendorId: string,
+): Conversation[] {
+  if (!vendorId) {
+    throw new Error('vendorId obrigatório pra reatribuir conversa');
+  }
+  const target = conversations.find((c) => c.id === conversationId);
+  if (!target) {
+    throw new Error(`Conversa não encontrada: ${conversationId}`);
+  }
+  if (target.vendorId === vendorId) return conversations;
+  return conversations.map((c) => (c.id === conversationId ? { ...c, vendorId } : c));
 }
