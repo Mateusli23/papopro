@@ -14,6 +14,12 @@ export { cn } from './utils/cn';
 
 // Primitivos
 export {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from './components/accordion';
+export {
   AutoResizeTextarea,
   type AutoResizeTextareaProps,
 } from './components/auto-resize-textarea';

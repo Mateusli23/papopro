@@ -1,17 +1,26 @@
+import { FeaturesSection } from '@/components/features-section';
+import { Header } from '@/components/header';
+import { HeroSection } from '@/components/hero-section';
+import { ProblemSection } from '@/components/problem-section';
+
 /**
- * Landing — placeholder de M1.
- * M6 entrega as 8 seções (hero, problema, features, demo, ROI, planos, FAQ, CTA).
+ * Landing pública — `pipeflow.com.br`.
+ *
+ * Composição declarativa por seção. Cada section é colocated em
+ * `components/<section>-section.tsx` (Server Component por default). M6#1
+ * entrega Header + Hero + Problema + Features. M6#2 adiciona Demo + ROI +
+ * Planos + FAQ + CTA + WhatsApp FAB. M6#3 cuida de SEO, OG e analytics.
  */
 export default function HomePage() {
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-start justify-center gap-6 px-6 py-16">
-      <span className="bg-primary/10 text-caption text-primary rounded-full px-3 py-1">
-        M1 — Setup do monorepo
-      </span>
-      <h1 className="text-title-lg">PapoPro · landing</h1>
-      <p className="text-body-lg text-muted-foreground">
-        Esqueleto pronto. A landing completa com hero, calculadora de ROI, planos e FAQ chega em M6.
-      </p>
-    </main>
+    <>
+      <Header />
+      <main>
+        <HeroSection />
+        <ProblemSection />
+        <FeaturesSection />
+        {/* M6#2 — Demo, ROI, Planos, FAQ, CTA, WhatsApp FAB e Footer. */}
+      </main>
+    </>
   );
 }
