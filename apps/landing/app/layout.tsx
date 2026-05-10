@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 
 import { ThemeProvider } from '@papopro/ui';
 
+import { AnalyticsScripts } from '@/components/analytics-scripts';
 import { Toaster } from '@/components/toaster';
 
 import './globals.css';
@@ -17,7 +18,22 @@ import './globals.css';
  * preset Tailwind em `font-sans`.
  */
 
+const LANDING_URL = process.env.NEXT_PUBLIC_LANDING_URL ?? 'https://pipeflow.com.br';
+
+/*
+ * Metadata expandido pra SEO (M6#3). Next 14 cuida sozinho da geração de:
+ *  - `<title>` e `<meta name="description">` no <head>
+ *  - Open Graph tags (apontando pra `opengraph-image.tsx`)
+ *  - Twitter Card tags
+ *  - `<link rel="icon">` apontando pra `icon.tsx`
+ *  - `<link rel="apple-touch-icon">` apontando pra `apple-icon.tsx`
+ *  - `<link rel="canonical">` via `metadataBase` + `alternates`
+ *
+ * `verification` está com placeholders — preencher antes do go-live em M13
+ * com os tokens dos painéis Google Search Console / Bing Webmaster.
+ */
 export const metadata: Metadata = {
+  metadataBase: new URL(LANDING_URL),
   title: {
     default: 'PapoPro — CRM com WhatsApp, cadência automática e IA',
     template: '%s · PapoPro',
@@ -25,6 +41,58 @@ export const metadata: Metadata = {
   description:
     'CRM brasileiro pra times de vendas consultivas que vivem no WhatsApp. Motor de cadência, alertas de lead frio, agentes IA e caixa unificada com camada anti-bloqueio.',
   applicationName: 'PapoPro',
+  keywords: [
+    'CRM',
+    'WhatsApp Business',
+    'cadência de vendas',
+    'agentes IA',
+    'pipeline de vendas',
+    'kanban de vendas',
+    'CRM brasileiro',
+    'CRM WhatsApp',
+    'CRM SMB',
+    'vendas consultivas',
+  ],
+  authors: [{ name: 'PapoPro' }],
+  creator: 'PapoPro',
+  publisher: 'PapoPro',
+  category: 'business software',
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'pt_BR',
+    url: LANDING_URL,
+    siteName: 'PapoPro',
+    title: 'PapoPro — CRM com WhatsApp, cadência automática e IA',
+    description:
+      'O CRM brasileiro pra times que vivem no WhatsApp. Pare de perder lead por esquecer de dar follow-up.',
+    // OG image vem de `opengraph-image.tsx` automaticamente.
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'PapoPro — CRM com WhatsApp, cadência automática e IA',
+    description:
+      'O CRM brasileiro pra times que vivem no WhatsApp. Pare de perder lead por esquecer de dar follow-up.',
+    // Twitter image vem de `opengraph-image.tsx` (compartilhado com OG).
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+      'max-video-preview': -1,
+    },
+  },
+  verification: {
+    // Preencher em M13 antes do go-live público:
+    // google: 'token-do-google-search-console',
+    // other: { 'msvalidate.01': 'token-do-bing' },
+  },
 };
 
 /*
@@ -49,6 +117,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {children}
           <Toaster />
         </ThemeProvider>
+        {/*
+         * AnalyticsScripts no fim do body: cada provider é condicionado a
+         * env, então em dev sem chaves nada é renderizado. Strategy
+         * `afterInteractive` em todos: carregam depois do primeiro paint,
+         * sem bloquear LCP.
+         */}
+        <AnalyticsScripts />
       </body>
     </html>
   );
