@@ -17,16 +17,18 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos |
-| -------- | ------- | --------------- |
-| Sprint 1 | 1–15    | M1, M2          |
-| Sprint 2 | 16–30   | M3              |
-| Sprint 3 | 31–45   | M4              |
-| Sprint 4 | 46–60   | M5              |
-| Sprint 5 | 61–75   | M6, M7          |
-| Sprint 6 | 76–90   | M8              |
-| Sprint 7 | 91–105  | M9, M10         |
-| Sprint 8 | 106–120 | M11, M12, M13   |
+| Sprint   | Dias    | Marcos cobertos | Status                          |
+| -------- | ------- | --------------- | ------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                    |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                    |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                    |
+| Sprint 4 | 46–60   | M5              | ⚠️ em andamento — 3 / 6 sub-PRs |
+| Sprint 5 | 61–75   | M6, M7          | ⏳ pendente                     |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                     |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                     |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                     |
+
+**Posição atual (09-mai-26):** Bloco A (UI mockada) ~70% completo. M1–M4 entregues; M5 em andamento (Cadências, Tarefas e Relatórios prontos; faltam Inbox, Agentes IA e Configurações). M6 (landing) ainda não iniciado.
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 
@@ -221,30 +223,61 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [x] Top bar com switch de visualização (Kanban / Lista) — botão "Ver no Kanban"/"Ver em lista" no header de cada rota
 - [x] Atalhos: `n` adiciona lead, `/` foca busca + `g+l` (Leads), `g+k` (Kanban). `Esc` fecha modal/detalhe é nativo do Radix Dialog/Sheet.
 - [x] Empty states tratados (sem leads, sem resultados de filtro, sem etapas)
-- [x] Mobile: Kanban vira lista colapsável por etapa; detalhe vira tabs
+- [x] Mobile: Kanban com **6 colunas horizontais lado a lado** (mesmo layout do desktop), swipe nativo pra navegar entre etapas e **long-press de 250ms** ativa drag — `TouchSensor` + `touch-action` por camada. Detalhe vira tabs.
 
 **Bônus entregue (não estava no plano):**
 
-- [x] Endpoint `/api/smoke-test/leads` — 31 asserts contra funções puras (filtro, Zod, deal rotting). Pode ser invocado em CI; entrega visibilidade antes de Vitest entrar em M7+.
+- [x] Endpoint `/api/smoke-test/leads` — **62 asserts** contra funções puras (filtro, Zod, deal rotting, transformações de deal, agregações, criação). Pode ser invocado em CI; entrega visibilidade antes de Vitest entrar em M7+.
 - [x] Fixtures de pipeline ([pipelines.ts](apps/web/lib/fixtures/pipelines.ts)) e vendedores ([sales-reps.ts](apps/web/lib/fixtures/sales-reps.ts)) separadas — ficam reaproveitáveis pelo Inbox/Cadências (M5).
 - [x] Helpers de formatação pt-BR ([lib/utils/format.ts](apps/web/lib/utils/format.ts)) — BRL, datas relativas, telefone, iniciais.
-- [x] Store in-memory client-side ([features/leads/store.ts](apps/web/features/leads/store.ts)) com mesma assinatura que vai virar Server Action em M8.
+- [x] Stores in-memory client-side ([features/leads/store.ts](apps/web/features/leads/store.ts) e [features/deals/store.ts](apps/web/features/deals/store.ts)) com mesma assinatura que vai virar Server Action em M8.
 - [x] `useGlobalShortcuts` ampliado pra suportar múltiplos hooks coexistindo sem conflito de evento.
+
+**Refinamento pós-merge: Pipeline Deals (PR #8)**
+
+A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusão herdada de não respeitar o glossário (CLAUDE.md §9). PR #8 fechou essa lacuna:
+
+- [x] Entidade `Deal` separada ([features/deals/types.ts](apps/web/features/deals/types.ts)) — `{ title, leadId, stageId, valueCents, ownerId, dueAt, status, probability, ... }`. Um lead pode ter 0..N deals.
+- [x] [features/deals/transforms.ts](apps/web/features/deals/transforms.ts) — funções puras (`applyMoveDeal`, `applyCreateDeal`, `aggregateByStage`, `sumOpenPipelineCents`, `statusForStage`, `defaultProbabilityFor`) usadas tanto pelo store quanto pelo smoke test. Preparam o terreno pras Server Actions de M8.
+- [x] [features/deals/stage-style.ts](apps/web/features/deals/stage-style.ts) — mapa central de estilos por etapa (stripe/headerBg/cardStripe/columnTint).
+- [x] 56 deals fixture ([deals.ts](apps/web/lib/fixtures/deals.ts)) — derivados dos 50 leads + 6 "ricos" (clientes recorrentes), com seed determinístico (LCG por leadId — sem hydration mismatch).
+- [x] `/kanban` agora mostra **6 colunas** (incluindo Ganho/Perdido), header com nome + count + soma R$, scroll horizontal com `snap-x`.
+- [x] `DealCard` redesenhado: stripe lateral (3px) na cor da etapa, título 14px/600, lead vinculado com ícone, valor 16px tabular-nums, footer com `RepAvatar` + `DueDatePill`. Trophy/X discreto pra won/lost. Hover lift + drag rotate 1deg + scale 1.02 + ring primary.
+- [x] `DueDatePill` ([due-date-pill.tsx](apps/web/features/deals/components/due-date-pill.tsx)) — 4 estados (overdue destructive+pulse, today warning, ≤3d info, futuro muted, sem prazo "—").
+- [x] `PipelineStats` ([pipeline-stats.tsx](apps/web/features/deals/components/pipeline-stats.tsx)) — 4 KPIs reativos no topo (Pipeline ativo info, Em negociação warning, Ganho 30d success, Atrasados destructive). Atualizam em tempo real conforme você arrasta deals.
+- [x] `DealCreateDialog` — RHF + Zod, `Combobox` para vincular a lead existente, defaults inteligentes (etapa do "+" da coluna, dueAt +30d).
+- [x] `moveDealToStage` aplica side-effects corretos: terminal → status `won`/`lost` + `closedAt`; ativa → status `open` + clear de `closedAt`. Toast contextual por destino (🏆 Ganho / ✖️ Perdido / "movido para X").
+- [x] Limpeza: `features/kanban/` removido (era a versão lead-based); `features/kanban/rotting.ts` movido pra `features/leads/rotting.ts` (rotting é semântica de Lead).
 
 **Commits finais:**
 
 - `feat(leads): list, filters and CSV import (mocked)` (Sub-PR A)
 - `feat(leads): detail page with timeline and inline edit (mocked)` (Sub-PR B)
 - `feat(kanban): drag-and-drop board, deal rotting and global shortcuts` (Sub-PR C)
-- `chore(leads): smoke test endpoint for filters, zod and rotting` (revisão)
+- `chore(leads): smoke test endpoint for filters, zod and rotting` (revisão de M4)
+- `feat(deals): pipeline kanban with deal entity, 6 columns and KPIs` (PR #8 — refinamento pós-merge)
+- `chore(deals): pure transforms + extended smoke for drag-drop, totals and create-deal` (revisão do Pipeline)
 
 ---
 
-## M5 — Inbox, Agentes, Cadências, Tarefas e Configurações (UI mockada)
+## M5 — Inbox, Agentes, Cadências, Tarefas e Configurações (UI mockada) ⚠️ em andamento
 
-**Branch:** `m5-features-ui`
+**Branch:** `m5-features-ui` (sub-PRs entregues independentemente; ver lista abaixo)
 
 **Objetivo:** UI das demais features de domínio. Maior marco de UI do plano — finaliza o produto navegável de ponta a ponta com fixtures.
+
+**📊 Status (09-mai-26):** 3 / 6 sub-PRs entregues.
+
+| Sub-PR | Escopo                  | Status      | PR                                                   |
+| ------ | ----------------------- | ----------- | ---------------------------------------------------- |
+| M5#1   | Relatórios `/reports`   | ✅ entregue | [#12](https://github.com/Mateusli23/papopro/pull/12) |
+| M5#2   | Tarefas `/tasks`        | ✅ entregue | [#14](https://github.com/Mateusli23/papopro/pull/14) |
+| M5#3   | Cadências `/cadences`   | ✅ entregue | [#15](https://github.com/Mateusli23/papopro/pull/15) |
+| M5#4   | Inbox WhatsApp `/inbox` | ⏳ pendente | —                                                    |
+| M5#5   | Agentes IA `/agents`    | ⏳ pendente | —                                                    |
+| M5#6   | Configurações           | ⏳ pendente | —                                                    |
+
+**Próximo na fila:** Inbox WhatsApp (M5#4) — diferencial nº 3 do produto e o que fecha a história "lead novo → primeira mensagem → cadência → resposta" na demo.
 
 **Entregas — Inbox WhatsApp:**
 
@@ -267,17 +300,35 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [ ] Upload de arquivos para base de conhecimento (UI + lista, sem processar)
 - [ ] Versionamento e rollback (UI mockada)
 
-**Entregas — Cadências:**
+**Entregas — Cadências** ✅ _(entregue separadamente, ver "Sub-PR M5#3" abaixo)_:
 
-- [ ] `/cadences/page.tsx` — lista de cadências por etapa
-- [ ] Editor visual de passos: D+0, D+1, D+3, D+7, D+14, D+30 com canal (WhatsApp/email) e template
-- [ ] Templates pré-configurados (imobiliário, B2B, alto ticket) selecionáveis
+- [x] `/cadences/page.tsx` — lista de cadências agrupada por etapa do funil (4 etapas ativas; terminais excluídas)
+- [x] Editor visual em página dedicada `/cadences/[id]` — timeline vertical com passos D+0/D+1/D+3/D+7/D+14/D+30, canal WhatsApp/email e corpo com placeholders `{nome}`/`{empresa}`/`{produto}`
+- [x] Templates pré-configurados (Imobiliário, B2B Consultivo, Alto Ticket) com texto realista pt-BR + opção "Em branco"
 
-**Entregas — Tarefas e Calendário:**
+**Entregas — Tarefas e Calendário** ✅ _(entregue separadamente, ver "Sub-PR M5#2" abaixo)_:
 
-- [ ] `/tasks/page.tsx` com abas "Minhas tarefas", "Atribuídas a mim", "Calendário"
-- [ ] Calendário views mês/semana/dia (`react-day-picker` customizado)
-- [ ] Modal de criação com tipo, status, prazo, lembrete, recorrência, atribuição
+- [x] `/tasks/page.tsx` com abas "Minhas tarefas", "Time" e "Calendário" _(decisão: "Atribuídas a mim" virou "Minhas" — todo task atribuída ao usuário logado já satisfaz o caso de uso)_
+- [x] Calendário views mês/semana/dia (grid customizado com helpers do `date-fns`; `react-day-picker` instalado mas não usado nas views — tratamos task-rich days melhor com grid próprio)
+- [x] Modal de criação com tipo, status (auto-pending), prazo e atribuição. _Lembrete e recorrência ficaram pra iteração futura — adiciam complexidade sem valor pra demo mockada._
+
+**Sub-PR M5#2 — Tarefas + Calendário `/tasks`** (entregue antes do resto do M5):
+
+- 3 abas Tabs Radix: **Minhas** (filtro por usuário logado) · **Time** (todas) · **Calendário** (Mês/Semana/Dia toggle)
+- Lista usa `<TaskRow>` (checkbox + ícone tipo + título + lead linkado + DueDatePill + RepAvatar). Pendentes em cima, concluídas embaixo com line-through + opacity.
+- Calendário com 3 vistas em [features/tasks/components/](apps/web/features/tasks/components/):
+  - **Mês**: grid 7×6 com chips coloridos (max 3 visíveis + "+N mais"), click → vista Dia
+  - **Semana**: 7 colunas verticais com TaskRow por dia, click no header → vista Dia
+  - **Dia**: lista vertical pra um dia específico, com EmptyState orientador
+- Toggle Mês/Semana/Dia no header + navegação ←→ + botão "Hoje"
+- Modal `TaskCreateDialog` (RHF + Zod) com Combobox de leads, Select de tipo/vendedor, input date pra prazo. `dueAt` default "amanhã 09:00". Pode ser disparado com `defaultDueDate` (quando criar a partir de uma célula do calendário).
+- 6 tipos de task com cores semânticas: `call` (info) · `whatsapp` (success) · `email` (warning) · `meeting` (destructive) · `follow_up`/`other` (muted). Mapa central em `task-kind-icon.tsx`.
+- Store [features/tasks/store.ts](apps/web/features/tasks/store.ts) com `useSyncExternalStore` (mesmo padrão de leads/deals). Mutações: `createTask`, `updateTask`, `toggleTaskDone`.
+- Transforms puras [features/tasks/transforms.ts](apps/web/features/tasks/transforms.ts): `filterTasks`, `getOverdueTasks`, `getTasksOnDay`, `getTasksInRange`, `groupTasksByDay`, `getNextWeekTasks`, `countTasks`. Reusam fixtures de leads + sales-reps.
+- Smoke endpoint [/api/smoke-test/tasks](apps/web/app/api/smoke-test/tasks/route.ts) com **34 asserts** em 7 grupos (fixtures, filters, aggregations, calendar, overdue, mutations, schema)
+- `react-day-picker` adicionado como dependência (planejado pra usar em formulários de seleção de data futuros, mas o calendário usa grid próprio)
+- Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` de Tarefas
+- Commit: `feat(tasks): list, calendar 3-view (mês/semana/dia) and creation modal (mocked)`
 
 **Entregas — Configurações:**
 
@@ -286,10 +337,40 @@ Tarefas externas, sem código, mas bloqueantes para o resto do plano.
 - [ ] Preferências de notificação por evento × canal (matriz PRD §3.2)
 - [ ] Convite de membros (lista + form de convite com papel RBAC)
 
-**Entregas — Relatórios:**
+**Entregas — Relatórios** ✅ _(entregue separadamente, ver "Sub-PR M5#1" abaixo)_:
 
-- [ ] `/reports/page.tsx` com cards: total de leads, pipeline aberto, conversão por etapa, tempo médio por etapa, leads esfriando, performance por vendedor
-- [ ] Gráfico de funil (Recharts) com volume e valor por etapa
+- [x] `/reports/page.tsx` com cards: total de leads, pipeline aberto, conversão por etapa, tempo médio por etapa, leads esfriando, performance por vendedor
+- [x] Gráfico de funil (Recharts) com volume e valor por etapa
+
+**Sub-PR M5#1 — Relatórios `/reports`** (entregue antes do resto do M5):
+
+- 5 famílias de visualização: 4 KPIs (Total leads · Pipeline aberto · Conversão 30d · Ciclo médio) + ConversionFunnel BarChart Recharts (6 etapas com taxas de avanço) + RepPerformanceTable (5 reps ordenados por valor ganho) + StageTimeCard (4 mini-cards com semáforo) + CoolingLeadsCard (top 6 leads em risco)
+- Funções puras em [features/reports/transforms.ts](apps/web/features/reports/transforms.ts) reusam `aggregateByStage`, `sumOpenPipelineCents` (deals), `calcRotState` (leads/rotting) — fontes canônicas
+- Funil acumulado (cumulative) diferente do FunnelChart trapezoidal do dashboard (que mostra só abertos por etapa) — Reports é analytics, não snapshot
+- Smoke endpoint [/api/smoke-test/reports](apps/web/app/api/smoke-test/reports/route.ts) com 36 asserts cobrindo as 5 famílias + edge cases (workspaces vazios não geram NaN)
+- Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` do item Relatórios
+- Filtros (período, vendedor) ficaram fora desta versão pra manter escopo curto — entram em iteração futura ou direto em M8 quando virar Server Action
+- Commit: `feat(reports): KPIs, funil de conversão, performance e leads esfriando (mocked)`
+
+**Sub-PR M5#3 — Cadências `/cadences`** (entregue 09-mai-26 via PR #15):
+
+- Lista agrupada por etapa do funil (Novo · Em contato · Proposta · Negociação) — etapas terminais (`ganho`/`perdido`) propositadamente excluídas em [features/cadences/transforms.ts](apps/web/features/cadences/transforms.ts) e rejeitadas pelo `cadenceCreateSchema` via `refine`. Cada grupo tem CTA "+ Criar para esta etapa".
+- `CadenceCard` com badge de template (Imobiliário/B2B/Alto Ticket/Personalizada), contagem de passos, canais (WhatsApp/Email), enrollments ativos, taxa de resposta inline + Switch otimista Ativa/Pausada (usa `onCheckedChange` do Radix pra suportar Space/Enter no teclado).
+- Modal `CadenceCreateDialog` em 2 passos: TemplatePicker (4 cards com `aria-pressed`) → nome + descrição + etapa (default sugerido pelo template). Submit cria via store e navega pra `/cadences/[id]`.
+- 3 templates pré-configurados com texto realista pt-BR em [lib/fixtures/cadence-templates.ts](apps/web/lib/fixtures/cadence-templates.ts) — Imobiliário (6 passos), B2B Consultivo (5 passos), Alto Ticket (6 passos). Copywriting consultivo usando placeholders `{nome}`/`{empresa}`/`{produto}`. Pronto pra ser seedado em M10 sem retrabalho.
+- Editor `/cadences/[id]` em 2 colunas (lg+): timeline vertical (col 2/3) + painel de métricas (col 1/3). Header com badge de status, switch, dropdown (duplicar / pausar-ativar / excluir).
+- `StepCard` com bullet `D+N` colorido por intensidade (D+0/D+1 primary, D+3/D+7 info, D+14 warning, D+30 muted), badge de canal, preview de 4 linhas com placeholders destacados, dropdown editar/remover (responde a `focus-visible` pra a11y de teclado).
+- `StepEditDialog` (RHF + Zod) com Select de `dayOffset` (apenas 0/1/3/7/14/30 — fechado por design conforme PRD §2.2), Select de canal, Textarea + chips clicáveis `{nome}` `{empresa}` `{produto}` que inserem token na posição do cursor.
+- `CadenceMetricsPanel` mostra 4 KPIs (leads ativos, total disparado, taxa resposta, avanço de etapa) em fixture — mesma shape que vai virar VIEW Postgres em M10. Timestamps relativos calculados em `useEffect` pós-hydration pra evitar mismatch SSR/client.
+- Store [features/cadences/store.ts](apps/web/features/cadences/store.ts) com `useSyncExternalStore` (mesmo padrão de leads/deals/tasks). Mutações: `createCadence`, `updateCadence`, `toggleCadenceStatus`, `duplicateCadence`, `deleteCadence`, `addStep`, `updateStep`, `deleteStep`.
+- Transforms puras [features/cadences/transforms.ts](apps/web/features/cadences/transforms.ts) — `apply*` cobrindo todas as mutações, `filterCadences`, `groupCadencesByStage`, `countCadences`, `sumActiveEnrollments`. Steps ordenados por `(dayOffset asc, order asc)` em toda mutação. `applyUpdateStep` recalcula `order` ao trocar `dayOffset` pra evitar colisão silenciosa entre buckets.
+- Schemas Zod [features/cadences/schemas.ts](apps/web/features/cadences/schemas.ts) — `cadenceCreateSchema` (rejeita stages terminais via `refine`), `stepCreateSchema` (mín 10 chars no body, dayOffset restrito ao enum). Mensagens em pt-BR direto, validadas no smoke contra vazamento de `Required`/`String must`.
+- Smoke endpoint [/api/smoke-test/cadences](apps/web/app/api/smoke-test/cadences/route.ts) com **71 asserts** em 7 grupos (fixtures, templates, filters, aggregations, mutations, schema, edge-cases). Inclui regression tests pros bugs encontrados no review (move de dayOffset recalcula order, duplicate zera métricas, add múltiplo no mesmo dia incrementa order).
+- Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` de Cadências.
+- Atalho global novo: `g + c` navega para `/cadences`. Incluído também na palette Cmd+K via [cmdk-palette.tsx](apps/web/components/app-shell/cmdk-palette.tsx).
+- Ícones adicionados ao re-export central [packages/ui/src/icons.ts](packages/ui/src/icons.ts): `Briefcase`, `Gem`, `SquarePen`, `Pause`, `Play`.
+- Code review do `code-reviewer` agent antes do PR pegou 5 críticos (todos consertados antes do merge): hydration mismatch nos timestamps relativos, foco invisível ao teclado no menu do step, bug em `applyUpdateStep` quando trocava dayOffset sem recalcular order, dois `StepEditDialog` montados simultaneamente, Switch com `onClick` em vez de `onCheckedChange`.
+- Commit: `feat(cadences): list grouped by stage, step editor and 3 templates (mocked)`
 
 **Commit final:** `feat(web): inbox, agents, cadences, tasks, reports and settings UI (mocked)`
 
