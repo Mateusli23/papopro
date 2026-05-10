@@ -12,6 +12,7 @@ import { isEditableTarget } from '@/lib/utils/is-editable-target';
  *  - `g + k` → navega pra `/kanban` (`onGoKanban`)
  *  - `g + c` → navega pra `/cadences` (`onGoCadences`)
  *  - `g + i` → navega pra `/inbox` (`onGoInbox`)
+ *  - `g + a` → navega pra `/agents` (`onGoAgents`)
  *  - `n` → abre modal "Adicionar lead" (`onCreateLead`) — só na rota Leads/Kanban
  *  - `/` → foca elemento com `data-shortcut-search` (`onFocusSearch`) — atualmente
  *    o input de busca da `LeadFilters`; nenhum efeito noutras rotas
@@ -21,7 +22,8 @@ import { isEditableTarget } from '@/lib/utils/is-editable-target';
  *  - Ignora quando o foco está em `<input>`/`<textarea>`/`[contenteditable]` —
  *    caso contrário "n" virava texto no campo.
  *  - `data-shortcut-ignore` em containers customizados opta por ignorar
- *    (ex: o próprio Cmd+K palette quando aberto).
+ *    (ex: o próprio Cmd+K palette quando aberto, ou o chat de simulação
+ *    do editor de agentes IA).
  *  - Callbacks são opcionais — passe só os que importam pra rota atual.
  */
 
@@ -31,6 +33,7 @@ interface UseGlobalShortcutsOptions {
   onGoKanban?: () => void;
   onGoCadences?: () => void;
   onGoInbox?: () => void;
+  onGoAgents?: () => void;
   onCreateLead?: () => void;
   onFocusSearch?: () => void;
 }
@@ -136,6 +139,12 @@ export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
           event.preventDefault();
           lastGRef.current = null;
           optsRef.current.onGoInbox();
+          return;
+        }
+        if (event.key === 'a' && optsRef.current.onGoAgents) {
+          event.preventDefault();
+          lastGRef.current = null;
+          optsRef.current.onGoAgents();
           return;
         }
       }

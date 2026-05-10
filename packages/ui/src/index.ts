@@ -13,6 +13,10 @@
 export { cn } from './utils/cn';
 
 // Primitivos
+export {
+  AutoResizeTextarea,
+  type AutoResizeTextareaProps,
+} from './components/auto-resize-textarea';
 export { Avatar, AvatarFallback, AvatarImage } from './components/avatar';
 export { Badge, badgeVariants, type BadgeProps } from './components/badge';
 export { Button, buttonVariants, type ButtonProps } from './components/button';

@@ -266,7 +266,7 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 
 **Objetivo:** UI das demais features de domínio. Maior marco de UI do plano — finaliza o produto navegável de ponta a ponta com fixtures.
 
-**📊 Status (10-mai-26):** 4,67 / 6 sub-PRs entregues — Inbox **completa** (4a + 4b + 4c). Restam Agentes IA (M5#5) e Configurações (M5#6).
+**📊 Status (10-mai-26):** 5,67 / 6 sub-PRs entregues — Inbox **completa** + Agentes IA **completos**. Resta Configurações (M5#6).
 
 | Sub-PR | Escopo                                                        | Status      | PR                                                   |
 | ------ | ------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
@@ -276,10 +276,10 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 | M5#4a  | Inbox `/inbox` — layout 3 painéis + fixtures + store readonly | ✅ entregue | [#17](https://github.com/Mateusli23/papopro/pull/17) |
 | M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | [#18](https://github.com/Mateusli23/papopro/pull/18) |
 | M5#4c  | Inbox filtros + ↑↓ nav + mobile drawer + sidebar badge live   | ✅ entregue | [#20](https://github.com/Mateusli23/papopro/pull/20) |
-| M5#5   | Agentes IA `/agents`                                          | ⏳ pendente | —                                                    |
+| M5#5   | Agentes IA `/agents` + Cérebro da Empresa                     | ✅ entregue | _PR pendente abrir_                                  |
 | M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
 
-**Próximo na fila:** M5#5 (Agentes IA) — Inbox saiu de ponta a ponta navegável. A história "lead novo → primeira mensagem → filtro por vendedor → quick action 'mover etapa' → desfazer" está demonstrável.
+**Próximo na fila:** M5#6 (Configurações) — fecha o Bloco A inteiro. M5#5 entregou agentes com prompt/persona/tom, roteamento por 4 critérios, 6 gatilhos de handoff, chat de simulação canned, versionamento mock leve com restaurar e o Cérebro da Empresa (5 seções + upload).
 
 **Entregas — Inbox WhatsApp (parte 4a — entregue):**
 
@@ -309,16 +309,19 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - [x] Quick actions na ficha do lead: **Mover etapa** (toca `moveLeadToStage`, mesmo path do Kanban) · **Atribuir vendedor** (toca só `conversation.vendorId`, deixa `lead.assignedRepId` intacto) · **Arquivar/Desarquivar** (botão único). Toast com botão "Desfazer" 5s pra reverter.
 - [x] Smoke test endpoint atualizado — **97 asserts** em 12 grupos (8 originais + 4 novos: `filters` 14, `mutations-archive` 9, `mutations-reassign` 6, `keyboard-nav-helpers` 6).
 
-**Entregas — Agentes IA:**
+**Entregas — Agentes IA (parte M5#5 — entregue):**
 
-- [ ] `/agents/page.tsx` — lista de agentes com status, conversas atendidas, taxa de handoff
-- [ ] `/agents/new` e `/agents/[id]` — editor com prompt, persona, tom, gatilhos de handoff
-- [ ] 4 templates pré-configurados (Qualificação SDR, Atendimento, Recuperação, Em branco)
-- [ ] Configuração de roteamento (etapa, tag, número, palavra-chave)
-- [ ] Chat de simulação dentro do editor (mock de respostas)
-- [ ] Tela "Cérebro da Empresa" com campos editáveis estilo Notion (sobre, produtos, FAQ, scripts, política)
-- [ ] Upload de arquivos para base de conhecimento (UI + lista, sem processar)
-- [ ] Versionamento e rollback (UI mockada)
+- [x] `/agents/page.tsx` — lista de agentes em grid responsivo + KPIs (ativos/3 do limite Pro IA, em teste, pausados, conversas) + busca por nome/persona. Aba "Agentes" + aba "Cérebro da Empresa" via `<Tabs>`.
+- [x] `/agents/[id]` — editor 2-col (prompt + persona + roteamento + handoff + simulação | métricas + status) com botões "Salvar versão", "Histórico" e dropdown duplicar/excluir.
+- [x] 4 templates pré-configurados promovidos pra `lib/fixtures/agent-templates.ts` (Qualificação SDR, Atendimento, Recuperação, Em branco) com prompts realistas pt-BR + scripts de simulação canned + handoff triggers default por template. `onboarding/schemas.ts` re-exporta pra evitar duplicação.
+- [x] Roteamento: 4 critérios combináveis (etapa do funil / tag / número WhatsApp / palavra-chave) com semântica "primeiro hit decide" documentada e testada em smoke. UI inline ("+ Adicionar regra" sem dialog).
+- [x] 6 gatilhos de handoff configuráveis (manual, palavra-chave, intenção comercial, etapa Negociação, fora do horário, agente↔agente) com Switch + input condicional de palavras-chave.
+- [x] Chat de simulação dentro do editor — script canned por template (3-4 turnos), typing indicator 800ms, IME-safe, Limpar reseta, exhausted mostra microcopy explicando.
+- [x] Aba "Cérebro da Empresa" com 5 seções editáveis (Sobre · Produtos · FAQ · Scripts · Política), âncoras laterais sticky em `lg+`, contador de chars por seção. Upload drag-drop **mock leve** (lê só `name`/`size`/`type`, processing 1.5s, status `processed`). Lista de arquivos com remover + Desfazer.
+- [x] Versionamento mock leve: histórico via `<Sheet>` lateral com timeline `v3 (atual) · v2 · v1`, "Restaurar" substitui draft + toast com Desfazer 5s. Botão explícito "Salvar versão" cria snapshot do trio (prompt + persona + tom). Restore não cria versão nova (evita explosão).
+- [x] **Limite de 3 ativos no Pro IA** enforce no transform (`applyToggleStatus`) — toast vermelho com CTA quando atingido. Smoke cobre o caso.
+- [x] Sidebar `Agentes` deixa de ser `soon: true`. Atalho global `g + a` + entry "Agentes IA" no Cmd+K palette. AutoResizeTextarea **promovido pra `@papopro/ui`** (segundo consumer = simulation chat). `showUndoableToast` extraído pra `lib/utils/show-undoable-toast.tsx`. 6 ícones novos em `@papopro/ui/icons`: `Bot`, `Brain`, `Eye`, `EyeOff`, `History`, `RotateCcw`, `Save`.
+- [x] Smoke endpoint `/api/smoke-test/agents` com **71 asserts** em 8 grupos (fixtures, templates, filters, aggregations, mutations-agent, mutations-routing-handoff, mutations-knowledge, schema, edge-cases).
 
 **Entregas — Cadências** ✅ _(entregue separadamente, ver "Sub-PR M5#3" abaixo)_:
 

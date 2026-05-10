@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { AGENT_TEMPLATE_KEYS, AGENT_TEMPLATES } from '@/lib/fixtures/agent-templates';
+
 /**
  * Schemas Zod do welcome wizard (PLAN.md M3 — wizard de 4 passos).
  *
@@ -31,33 +33,25 @@ export const wizardWhatsappSchema = z.object({
 
 export type WizardWhatsappInput = z.infer<typeof wizardWhatsappSchema>;
 
-export const AGENT_TEMPLATES = [
-  {
-    id: 'qualification',
-    label: 'Qualificação SDR',
-    description: 'Faz triagem do lead, coleta interesse e perfil.',
-  },
-  {
-    id: 'attendance',
-    label: 'Atendimento',
-    description: 'Responde dúvidas frequentes e encaminha pro vendedor humano.',
-  },
-  {
-    id: 'recovery',
-    label: 'Recuperação',
-    description: 'Reaquece leads parados há mais de 7 dias.',
-  },
-  {
-    id: 'blank',
-    label: 'Em branco',
-    description: 'Comece do zero com seu próprio prompt.',
-  },
-] as const;
+/**
+ * AGENT_TEMPLATES vive em `lib/fixtures/agent-templates.ts` desde M5#5 — o
+ * wizard usa só o subset `{ id, label, description }` que ele precisa pra
+ * renderizar os cards de seleção. Re-exportar aqui mantém retrocompat dos
+ * imports antigos (`agent-step.tsx` consumia `from '../schemas'`).
+ *
+ * Mantemos o tipo `AgentTemplateId` derivado de `AGENT_TEMPLATE_KEYS` (const
+ * tuple) — single source of truth.
+ */
+export const WIZARD_AGENT_TEMPLATES = AGENT_TEMPLATES.map((t) => ({
+  id: t.key,
+  label: t.label,
+  description: t.description,
+}));
 
-export type AgentTemplateId = (typeof AGENT_TEMPLATES)[number]['id'];
+export type AgentTemplateId = (typeof AGENT_TEMPLATE_KEYS)[number];
 
 export const wizardAgentSchema = z.object({
-  template: z.enum(['qualification', 'attendance', 'recovery', 'blank']),
+  template: z.enum(AGENT_TEMPLATE_KEYS),
   agentName: z
     .string()
     .min(1, 'Dê um nome ao agente')

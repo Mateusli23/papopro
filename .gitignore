@@ -57,3 +57,5 @@ prisma/migrations/dev/
 .pnp
 .pnp.js
 .yarn/install-state.gz
+
+.git-commit-msg-*.txt
