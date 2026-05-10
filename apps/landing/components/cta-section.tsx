@@ -23,6 +23,8 @@ import {
 } from '@papopro/ui';
 import { ArrowRight, CheckCircle2, Loader2 } from '@papopro/ui/icons';
 
+import { trackEvent } from '@/lib/analytics';
+
 /**
  * Seção de CTA final + formulário de trial. O formulário valida com Zod via
  * React Hook Form (mesmo stack do `apps/web`), faz POST mockado pro
@@ -83,6 +85,8 @@ export function CtaSection() {
       }
 
       toast.success('Conta criada! Redirecionando…');
+      // Não enviamos PII (nome/email) como properties — só o fato do submit.
+      trackEvent('signup_submitted', { source: 'landing' });
 
       // Pré-preenche app/signup com nome, email e empresa. Senha NÃO viaja por URL.
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.pipeflow.com.br';
