@@ -274,7 +274,7 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 | M5#2   | Tarefas `/tasks`                                              | ✅ entregue | [#14](https://github.com/Mateusli23/papopro/pull/14) |
 | M5#3   | Cadências `/cadences`                                         | ✅ entregue | [#15](https://github.com/Mateusli23/papopro/pull/15) |
 | M5#4a  | Inbox `/inbox` — layout 3 painéis + fixtures + store readonly | ✅ entregue | [#17](https://github.com/Mateusli23/papopro/pull/17) |
-| M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | _este PR_                                            |
+| M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | [#18](https://github.com/Mateusli23/papopro/pull/18) |
 | M5#4c  | Inbox filtros + mobile single-pane + smoke + sidebar live     | ⏳ pendente | —                                                    |
 | M5#5   | Agentes IA `/agents`                                          | ⏳ pendente | —                                                    |
 | M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
