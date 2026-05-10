@@ -47,6 +47,21 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
     }));
   }, [inboxUnread]);
 
+  // Item mais específico (href mais longo) que casa com o pathname atual.
+  // Sem isso, dois itens com hrefs aninhados (`/settings` e
+  // `/settings/notifications`) ficariam ambos ativos quando o usuário está
+  // dentro do filho — review M5#6 CRITICAL #1.
+  const activeHref = React.useMemo(() => {
+    const allHrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
+    let best = '';
+    for (const href of allHrefs) {
+      if (pathname === href || (href !== '/dashboard' && pathname.startsWith(`${href}/`))) {
+        if (href.length > best.length) best = href;
+      }
+    }
+    return best;
+  }, [pathname]);
+
   return (
     <ScrollArea className="flex-1 px-3 py-4">
       <nav aria-label="Navegação principal" className="flex flex-col gap-6">
@@ -59,9 +74,7 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
             )}
             {group.items.map((item) => {
               const Icon = item.icon;
-              const isActive =
-                pathname === item.href ||
-                (item.href !== '/dashboard' && pathname.startsWith(item.href));
+              const isActive = item.href === activeHref;
               // Itens "soon" levam pro dashboard até M3+ entregar a tela real.
               const href = item.soon ? '/dashboard' : item.href;
               return (

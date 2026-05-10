@@ -260,13 +260,13 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 
 ---
 
-## M5 — Inbox, Agentes, Cadências, Tarefas e Configurações (UI mockada) ⚠️ em andamento
+## M5 — Inbox, Agentes, Cadências, Tarefas e Configurações (UI mockada) ✅
 
 **Branch:** `m5-features-ui` (sub-PRs entregues independentemente; ver lista abaixo)
 
 **Objetivo:** UI das demais features de domínio. Maior marco de UI do plano — finaliza o produto navegável de ponta a ponta com fixtures.
 
-**📊 Status (10-mai-26):** 5,67 / 6 sub-PRs entregues — Inbox **completa** + Agentes IA **completos**. Resta Configurações (M5#6).
+**📊 Status (10-mai-26):** 6 / 6 sub-PRs entregues — Bloco A fechado. Próximo: M6 (Landing).
 
 | Sub-PR | Escopo                                                        | Status      | PR                                                   |
 | ------ | ------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
@@ -277,9 +277,9 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 | M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | [#18](https://github.com/Mateusli23/papopro/pull/18) |
 | M5#4c  | Inbox filtros + ↑↓ nav + mobile drawer + sidebar badge live   | ✅ entregue | [#20](https://github.com/Mateusli23/papopro/pull/20) |
 | M5#5   | Agentes IA `/agents` + Cérebro da Empresa                     | ✅ entregue | [#21](https://github.com/Mateusli23/papopro/pull/21) |
-| M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
+| M5#6   | Configurações `/settings` (6 abas)                            | ✅ entregue | —                                                    |
 
-**Próximo na fila:** M5#6 (Configurações) — fecha o Bloco A inteiro. M5#5 entregou agentes com prompt/persona/tom, roteamento por 4 critérios, 6 gatilhos de handoff, chat de simulação canned, versionamento mock leve com restaurar e o Cérebro da Empresa (5 seções + upload).
+**Próximo na fila:** M6 (Landing) — fecha o Bloco A inteiro. M5#6 entregou as 6 abas de Configurações com sub-nav lateral, Workspace + Time + Cobrança + Notificações + Conexões + Integrações, todas mockadas; QR Code procedural, health score visual, matriz exata de eventos × canais (PRD §3.2), Stripe Customer Portal mock, webhook de leads inbound com URL única e regenerar token. Atalho global `g + s` + smoke test com ≥ 60 asserts.
 
 **Entregas — Inbox WhatsApp (parte 4a — entregue):**
 
@@ -353,12 +353,18 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 - Sidebar [nav-config.ts](apps/web/components/app-shell/nav-config.ts) — removido `soon: true` de Tarefas
 - Commit: `feat(tasks): list, calendar 3-view (mês/semana/dia) and creation modal (mocked)`
 
-**Entregas — Configurações:**
+**Entregas — Configurações (parte M5#6 — entregue):**
 
-- [ ] `/settings/workspace`, `/settings/team`, `/settings/billing`, `/settings/notifications`, `/settings/connections`, `/settings/integrations`
-- [ ] Tela "Conexões" com QR Code mockado, status, health score visual, histórico de desconexões
-- [ ] Preferências de notificação por evento × canal (matriz PRD §3.2)
-- [ ] Convite de membros (lista + form de convite com papel RBAC)
+- [x] `/settings/workspace`, `/settings/team`, `/settings/billing`, `/settings/notifications`, `/settings/connections`, `/settings/integrations` — 6 rotas reais com sub-nav lateral 220px (`<Select>` em mobile)
+- [x] Tela "Conexões" com QR Code mockado (SVG procedural por seed), status (`disconnected → connecting → connected` em 2s), health score visual segmentado (verde/amarelo/vermelho) e histórico de desconexões (5 linhas cobrindo 4 motivos)
+- [x] Preferências de notificação por evento × canal — matriz exata PRD §3.2 (10 eventos × 3 canais), eventos administrativos (Convite + Pagamento) com switch desabilitado + tooltip; bloco de testar push lê `Notification.permission` real
+- [x] Convite de membros — tabela com 5 papéis RBAC + filtros (busca + Select de papel) + Dialog de convite com descrições por papel + ações por linha (Mudar papel · Reenviar · Remover)
+- [x] Workspace: form RHF+Zod com nome/segmento/fuso/idioma + zona de perigo (Transferir propriedade · Excluir workspace com confirmação dupla)
+- [x] Cobrança (Owner-only via banner): plano atual com selo de trial dinâmico, barras de uso (semáforo verde/amarelo/vermelho), método de pagamento, 4 faturas + Dialog "Mudar plano" (3 cards Pro/Pro IA/Enterprise) e cancelamento progressivo
+- [x] Integrações: webhook de leads com URL única + Copiar + Regenerar (32 chars hex), Google Calendar conectado mock, Meta/Google Ads/RD/Hotmart como "Em breve"
+- [x] Atalho global `g + s` registrado em `use-global-shortcuts.ts` + footer Cmd+K + item `Configurações` removido do `soon: true` (palette + sidebar)
+- [x] Smoke endpoint `/api/smoke-test/settings` com ~70 asserts em 6 grupos (fixtures, schemas, transforms-workspace, transforms-members, transforms-notifications, transforms-connections, transforms-integrations)
+- [x] 2 ícones novos em `@papopro/ui/icons`: `CreditCard`, `Plug`
 
 **Entregas — Relatórios** ✅ _(entregue separadamente, ver "Sub-PR M5#1" abaixo)_:
 

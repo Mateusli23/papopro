@@ -57,8 +57,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Sistema',
     items: [
-      { label: 'Notificações', href: '/settings/notifications', icon: Bell, soon: true },
-      { label: 'Configurações', href: '/settings', icon: Settings, soon: true },
+      { label: 'Notificações', href: '/settings/notifications', icon: Bell },
+      { label: 'Configurações', href: '/settings', icon: Settings },
     ],
   },
 ];
