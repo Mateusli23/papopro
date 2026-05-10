@@ -20,6 +20,7 @@ import {
   Inbox,
   KanbanSquare,
   LayoutDashboard,
+  Repeat,
   Settings,
   Users,
 } from '@papopro/ui/icons';
@@ -46,6 +47,7 @@ export function CmdKPalette() {
     // como navegação client-side intra-app sem precisar do `useRouter`.
     onGoLeads: () => window.location.assign('/leads'),
     onGoKanban: () => window.location.assign('/kanban'),
+    onGoCadences: () => window.location.assign('/cadences'),
   });
 
   return (
@@ -79,6 +81,12 @@ export function CmdKPalette() {
                 onClose={() => setOpen(false)}
               />
               <PaletteItem
+                icon={Repeat}
+                label="Cadências"
+                href="/cadences"
+                onClose={() => setOpen(false)}
+              />
+              <PaletteItem
                 icon={Inbox}
                 label="Inbox"
                 href="/dashboard"
@@ -99,6 +107,7 @@ export function CmdKPalette() {
           <span className="flex flex-wrap items-center gap-2">
             <Shortcut keys={['G', 'L']} label="Leads" />
             <Shortcut keys={['G', 'K']} label="Kanban" />
+            <Shortcut keys={['G', 'C']} label="Cadências" />
             <Shortcut keys={['N']} label="Adicionar lead" />
             <Shortcut keys={['/']} label="Buscar" />
           </span>
