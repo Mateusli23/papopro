@@ -52,6 +52,7 @@ export function CmdKPalette() {
     onGoCadences: () => window.location.assign('/cadences'),
     onGoInbox: () => window.location.assign('/inbox'),
     onGoAgents: () => window.location.assign('/agents'),
+    onGoSettings: () => window.location.assign('/settings'),
   });
 
   return (
@@ -105,9 +106,8 @@ export function CmdKPalette() {
               <PaletteItem
                 icon={Settings}
                 label="Configurações"
-                href="/dashboard"
+                href="/settings"
                 onClose={() => setOpen(false)}
-                soon
               />
             </CommandGroup>
           </CommandList>
@@ -119,6 +119,7 @@ export function CmdKPalette() {
             <Shortcut keys={['G', 'C']} label="Cadências" />
             <Shortcut keys={['G', 'I']} label="Inbox" />
             <Shortcut keys={['G', 'A']} label="Agentes" />
+            <Shortcut keys={['G', 'S']} label="Configurações" />
             <Shortcut keys={['N']} label="Adicionar lead" />
             <Shortcut keys={['/']} label="Buscar" />
           </span>

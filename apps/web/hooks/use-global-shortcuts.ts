@@ -13,6 +13,7 @@ import { isEditableTarget } from '@/lib/utils/is-editable-target';
  *  - `g + c` → navega pra `/cadences` (`onGoCadences`)
  *  - `g + i` → navega pra `/inbox` (`onGoInbox`)
  *  - `g + a` → navega pra `/agents` (`onGoAgents`)
+ *  - `g + s` → navega pra `/settings` (`onGoSettings`)
  *  - `n` → abre modal "Adicionar lead" (`onCreateLead`) — só na rota Leads/Kanban
  *  - `/` → foca elemento com `data-shortcut-search` (`onFocusSearch`) — atualmente
  *    o input de busca da `LeadFilters`; nenhum efeito noutras rotas
@@ -34,6 +35,7 @@ interface UseGlobalShortcutsOptions {
   onGoCadences?: () => void;
   onGoInbox?: () => void;
   onGoAgents?: () => void;
+  onGoSettings?: () => void;
   onCreateLead?: () => void;
   onFocusSearch?: () => void;
 }
@@ -145,6 +147,12 @@ export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
           event.preventDefault();
           lastGRef.current = null;
           optsRef.current.onGoAgents();
+          return;
+        }
+        if (event.key === 's' && optsRef.current.onGoSettings) {
+          event.preventDefault();
+          lastGRef.current = null;
+          optsRef.current.onGoSettings();
           return;
         }
       }
