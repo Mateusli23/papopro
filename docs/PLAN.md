@@ -276,7 +276,7 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 | M5#4a  | Inbox `/inbox` — layout 3 painéis + fixtures + store readonly | ✅ entregue | [#17](https://github.com/Mateusli23/papopro/pull/17) |
 | M5#4b  | Inbox composer (texto/emoji/anexo/áudio mock/notas/atalhos)   | ✅ entregue | [#18](https://github.com/Mateusli23/papopro/pull/18) |
 | M5#4c  | Inbox filtros + ↑↓ nav + mobile drawer + sidebar badge live   | ✅ entregue | [#20](https://github.com/Mateusli23/papopro/pull/20) |
-| M5#5   | Agentes IA `/agents` + Cérebro da Empresa                     | ✅ entregue | _PR pendente abrir_                                  |
+| M5#5   | Agentes IA `/agents` + Cérebro da Empresa                     | ✅ entregue | [#21](https://github.com/Mateusli23/papopro/pull/21) |
 | M5#6   | Configurações                                                 | ⏳ pendente | —                                                    |
 
 **Próximo na fila:** M5#6 (Configurações) — fecha o Bloco A inteiro. M5#5 entregou agentes com prompt/persona/tom, roteamento por 4 critérios, 6 gatilhos de handoff, chat de simulação canned, versionamento mock leve com restaurar e o Cérebro da Empresa (5 seções + upload).
