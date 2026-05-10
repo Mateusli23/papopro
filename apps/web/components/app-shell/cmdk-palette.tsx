@@ -42,12 +42,14 @@ export function CmdKPalette() {
 
   useGlobalShortcuts({
     onOpenCmdK: () => setOpen(true),
-    // `g+l` / `g+k` ficam aqui (no shell) pra funcionar de qualquer rota.
-    // Pra navegação simples usamos `window.location.assign` — o Next captura
-    // como navegação client-side intra-app sem precisar do `useRouter`.
+    // `g+l` / `g+k` / `g+c` / `g+i` ficam aqui (no shell) pra funcionar de
+    // qualquer rota. Pra navegação simples usamos `window.location.assign` —
+    // o Next captura como navegação client-side intra-app sem precisar do
+    // `useRouter`.
     onGoLeads: () => window.location.assign('/leads'),
     onGoKanban: () => window.location.assign('/kanban'),
     onGoCadences: () => window.location.assign('/cadences'),
+    onGoInbox: () => window.location.assign('/inbox'),
   });
 
   return (
@@ -89,9 +91,8 @@ export function CmdKPalette() {
               <PaletteItem
                 icon={Inbox}
                 label="Inbox"
-                href="/dashboard"
+                href="/inbox"
                 onClose={() => setOpen(false)}
-                soon
               />
               <PaletteItem
                 icon={Settings}
@@ -108,10 +109,11 @@ export function CmdKPalette() {
             <Shortcut keys={['G', 'L']} label="Leads" />
             <Shortcut keys={['G', 'K']} label="Kanban" />
             <Shortcut keys={['G', 'C']} label="Cadências" />
+            <Shortcut keys={['G', 'I']} label="Inbox" />
             <Shortcut keys={['N']} label="Adicionar lead" />
             <Shortcut keys={['/']} label="Buscar" />
           </span>
-          <span>Versão completa em M5</span>
+          <span className="text-muted-foreground/70">Mais ações em breve</span>
         </footer>
       </DialogContent>
     </Dialog>
