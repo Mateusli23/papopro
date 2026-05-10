@@ -143,7 +143,7 @@ export function DealsKanbanBoard({ onAddDeal }: DealsKanbanBoardProps = {}) {
         className="-mx-4 flex touch-pan-x snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
       >
         {DEFAULT_STAGES.map((stage) => (
-          <div key={stage.id} className="snap-start">
+          <div key={stage.id} data-stage={stage.id} className="snap-start">
             <DealsKanbanColumn
               stage={stage}
               deals={dealsByStage.get(stage.id) ?? []}

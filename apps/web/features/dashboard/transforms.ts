@@ -139,10 +139,12 @@ export function computeDashboardKpis(
   const conversionRatePct =
     closedInRange.length === 0 ? 0 : Math.round((wonInRange / closedInRange.length) * 100);
 
-  // Período anterior (pra trend)
+  // Período anterior (pra trend). Note que `proposals` ficou de fora —
+  // é snapshot puro do pipeline atual, sem histórico de stage em M5,
+  // então comparar com janela anterior é teatro (review M5p#2 CRÍTICO #1).
+  // Em M8+ quando `deal.stageHistory[]` existir, o trend volta.
   let previousNewLeadsCount: number | undefined;
   let previousConversionRatePct: number | undefined;
-  let previousProposalsCents: number | undefined;
   if (bounds.previousStart && bounds.previousEnd) {
     const prevBounds = { start: bounds.previousStart, end: bounds.previousEnd };
     previousNewLeadsCount = leads.filter((l) => isInRange(l.createdAt, prevBounds)).length;
@@ -155,8 +157,6 @@ export function computeDashboardKpis(
     const prevWon = prevClosed.filter((d) => d.status === 'won').length;
     previousConversionRatePct =
       prevClosed.length === 0 ? 0 : Math.round((prevWon / prevClosed.length) * 100);
-    // Propostas é snapshot — não tem "valor anterior". Trend fica flat.
-    previousProposalsCents = proposalsCents;
   }
 
   return {
@@ -174,11 +174,9 @@ export function computeDashboardKpis(
 
     newLeadsTrend: computeTrend(newLeadsCount, previousNewLeadsCount),
     conversionTrend: computeTrend(conversionRatePct, previousConversionRatePct),
-    proposalsTrend: computeTrend(proposalsCents, previousProposalsCents),
 
     previousNewLeadsCount,
     previousConversionRatePct,
-    previousProposalsCents,
   };
 }
 

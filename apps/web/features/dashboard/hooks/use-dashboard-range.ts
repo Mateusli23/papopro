@@ -33,18 +33,42 @@ export function useDashboardRange(): {
   const fromRaw = params.get('from');
   const toRaw = params.get('to');
 
+  const customValid = React.useMemo(() => {
+    if (range !== 'custom') return false;
+    const from = fromRaw ? new Date(fromRaw) : undefined;
+    const to = toRaw ? new Date(toRaw) : undefined;
+    return Boolean(from && to && !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()));
+  }, [range, fromRaw, toRaw]);
+
   const bounds = React.useMemo(() => {
+    if (range === 'custom' && customValid && fromRaw && toRaw) {
+      return computeRangeBounds('custom', DASHBOARD_NOW, {
+        start: new Date(fromRaw),
+        end: new Date(toRaw),
+      });
+    }
     if (range === 'custom') {
-      const from = fromRaw ? new Date(fromRaw) : undefined;
-      const to = toRaw ? new Date(toRaw) : undefined;
-      // Se algum dos lados é inválido, cai pro fallback do helper (today).
-      if (from && to && !Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
-        return computeRangeBounds('custom', DASHBOARD_NOW, { start: from, end: to });
-      }
+      // Fallback enquanto sincroniza a URL — mostra "today" pra não
+      // travar a UI (efeito abaixo limpa `?range=custom` inválido).
       return computeRangeBounds('today', DASHBOARD_NOW);
     }
     return computeRangeBounds(range, DASHBOARD_NOW);
-  }, [range, fromRaw, toRaw]);
+  }, [range, fromRaw, toRaw, customValid]);
+
+  // Sincroniza URL out-of-sync: `?range=custom` sem `from/to` válidos
+  // (deep-link copiado pela metade) é defaultado pra `?range=week` na
+  // próxima paint pra que a UI não fique mostrando "Hoje" enquanto a
+  // URL diz "custom" (review M5p#2 ALTO #7).
+  React.useEffect(() => {
+    if (range === 'custom' && !customValid) {
+      const next = new URLSearchParams(params.toString());
+      next.delete('range');
+      next.delete('from');
+      next.delete('to');
+      const query = next.toString();
+      router.replace(query ? `?${query}` : '?', { scroll: false });
+    }
+  }, [range, customValid, params, router]);
 
   const setRange = React.useCallback(
     (next: DashboardRange, customRange?: { start: Date; end: Date }) => {

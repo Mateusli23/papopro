@@ -93,14 +93,14 @@ export interface DashboardKpis {
   newLeadsTrend: KpiTrend;
   /** Trend pro KPI #4 (conversionRatePct). */
   conversionTrend: KpiTrend;
-  /** Trend pro KPI #5 (proposalsCents). */
-  proposalsTrend: KpiTrend;
+  // Note: `proposalsTrend` foi removido — Propostas é snapshot puro do
+  // pipeline em M5, sem histórico de stage. Em M8+ quando houver
+  // `deal.stageHistory[]`, o trend volta como `proposalsTrend`.
 
   // ─── Período anterior (debug / smoke test) ──────────────────────────────
   /** Para `range='all'` ou inicialização vazia, vira `undefined`. */
   previousNewLeadsCount?: number;
   previousConversionRatePct?: number;
-  previousProposalsCents?: number;
 }
 
 // ─── Origem (donut) ───────────────────────────────────────────────────────

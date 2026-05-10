@@ -3,6 +3,7 @@
 import * as React from 'react';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 import { Button, PageHeader } from '@papopro/ui';
 import { List, PlusCircle } from '@papopro/ui/icons';
@@ -11,6 +12,7 @@ import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog
 import { DealsKanbanBoard } from '@/features/deals/components/deals-kanban-board';
 import { PipelineStats } from '@/features/deals/components/pipeline-stats';
 import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
+import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
 
 /**
  * `/kanban` — Pipeline de Negócios. Layout único responsivo (M4 trazia
@@ -29,9 +31,12 @@ import { useGlobalShortcuts } from '@/hooks/use-global-shortcuts';
  * Em M8 essa view passa a hidratar com dados reais (Server Component que
  * lê `deals` via Prisma + RLS, passa snapshot inicial pro client).
  */
+const VALID_STAGE_IDS = new Set(DEFAULT_STAGES.map((s) => s.id));
+
 export function KanbanView() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [defaultStage, setDefaultStage] = React.useState<string | undefined>();
+  const searchParams = useSearchParams();
 
   function openCreate(stageId?: string) {
     setDefaultStage(stageId);
@@ -39,6 +44,21 @@ export function KanbanView() {
   }
 
   useGlobalShortcuts({ onCreateLead: () => openCreate() });
+
+  // Deep-link `?stage=X` (M5p#2): vendedor clicando numa barra do funil
+  // do dashboard pousa no Kanban com a coluna correspondente já visível
+  // (scroll horizontal). Não filtra colunas — o Kanban sempre mostra
+  // todas; só centraliza visualmente. Roda uma vez na montagem.
+  React.useEffect(() => {
+    const stage = searchParams.get('stage');
+    if (!stage || !VALID_STAGE_IDS.has(stage)) return;
+    // Aguarda o frame seguinte pra garantir que o board renderizou.
+    const timer = window.setTimeout(() => {
+      const target = document.querySelector(`[data-stage="${stage}"]`);
+      target?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+    }, 100);
+    return () => window.clearTimeout(timer);
+  }, [searchParams]);
 
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
