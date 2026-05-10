@@ -11,120 +11,348 @@
  * Em M8, essas funções viram core de uma Server Action `getDashboard()`
  * que persiste workspace_id no scope e usa os mesmos cálculos.
  */
-import { differenceInCalendarDays, format as fmtDate, parseISO, subDays } from 'date-fns';
+import { format as fmtDate, isWithinInterval, parseISO, subDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
-import { aggregateByStage, sumOpenPipelineCents } from '@/features/deals/transforms';
+import { sumOpenPipelineCents } from '@/features/deals/transforms';
 import type { Deal } from '@/features/deals/types';
-import type { Lead } from '@/features/leads/types';
-import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
-import { formatCentsCompact } from '@/lib/utils/format';
+import type { Lead, LeadOrigin, Task } from '@/features/leads/types';
+import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
 
-import type { ActivityItem, DashboardKpis, FunnelDatum, TrendDatum, UpcomingDeal } from './types';
+import { DASHBOARD_NOW } from './range';
+import type {
+  ActivityItem,
+  DashboardKpis,
+  HorizontalFunnelDatum,
+  HotLead,
+  KpiTrend,
+  OriginBucket,
+  OriginDatum,
+  RangeBounds,
+  TrendDatum,
+  UpcomingDeal,
+} from './types';
 
 /**
- * Mapa etapa → cor do trapézio do FunnelChart.
- *
- * Usamos `hsl(var(--token))` em vez de classes Tailwind porque o atributo
- * `fill` do `<Funnel>` (Recharts) aceita só CSS color string, não
- * className. Quando o usuário troca dark/light, a CSS var muda valor e o
- * SVG re-renderiza sem JS — espelha o comportamento das colunas do Kanban
- * que já usam os mesmos tokens via Tailwind classes (`bg-info`,
- * `bg-primary`, `bg-accent`, `bg-warning`).
+ * Tailwind classes por etapa — pro `<FunnelHorizontalChart>` desenhar
+ * barras com `<div>` ao invés de SVG. Tokens semânticos (`bg-info`,
+ * `bg-success`) propagam dark/light automaticamente.
  */
-const STAGE_FILL: Record<string, string> = {
-  novo: 'hsl(var(--info))',
-  em_contato: 'hsl(var(--primary))',
-  proposta: 'hsl(var(--accent))',
-  negociacao: 'hsl(var(--warning))',
+const STAGE_BAR_CLASS: Record<string, string> = {
+  novo: 'bg-info',
+  em_contato: 'bg-primary',
+  proposta: 'bg-accent',
+  negociacao: 'bg-warning',
+  ganho: 'bg-success',
+  perdido: 'bg-destructive',
 };
 
 /**
  * Janela fixa de "agora" usada pra calcular taxa de conversão e KPIs
  * sensíveis a tempo. Mantemos congruente com `pipeline-stats.tsx` —
  * ambos usam a mesma data porque as fixtures foram seedadas em torno
- * desse momento.
+ * desse momento. Re-exporta da `range.ts` pra um único ponto da verdade.
  */
-const NOW = new Date('2026-05-09T14:00:00-03:00');
+const NOW = DASHBOARD_NOW;
+
+// ─── Helper de trend ───────────────────────────────────────────────────────
 
 /**
- * Calcula os 4 KPIs do header do dashboard + os hints derivados.
+ * Calcula variação relativa `current` vs `previous`, mapeando pra `KpiTrend`.
  *
- * **Definição de "Taxa de Conversão"**: dos deals **fechados nos últimos
- * 30 dias** (won + lost), qual fração foi ganha. Reativo — quando o
- * usuário arrasta um card pra Ganho/Perdido o número muda. Comparável mês
- * a mês. Padrão HubSpot/Pipedrive. Caso `closedLast30d === 0`, retorna 0
- * (não NaN — defensivo contra workspaces vazios).
+ * Regras (review M5#6 lessons learned):
+ *  - `previous` undefined → `flat 0` (range='all' ou primeira execução).
+ *  - `previous === 0 && current === 0` → `flat 0`.
+ *  - `previous === 0 && current > 0` → `up 100` (cap em 100 evita Infinity).
+ *  - `|pct| <= 1` → `flat 0` (variação irrelevante).
+ *  - `pct > 1` → `up`, arredondado pra inteiro.
+ *  - `pct < -1` → `down`, arredondado pra inteiro.
  */
-export function computeDashboardKpis(leads: Lead[], deals: Deal[], now: Date = NOW): DashboardKpis {
-  const closedInLast30 = (d: Deal) =>
-    !!d.closedAt && differenceInCalendarDays(now, parseISO(d.closedAt)) <= 30;
+export function computeTrend(current: number, previous: number | undefined): KpiTrend {
+  if (previous === undefined) return { direction: 'flat', pct: 0 };
+  if (previous === 0) {
+    if (current === 0) return { direction: 'flat', pct: 0 };
+    return { direction: 'up', pct: 100 };
+  }
+  const rawPct = ((current - previous) / Math.abs(previous)) * 100;
+  const pct = Math.round(rawPct);
+  if (pct > 1) return { direction: 'up', pct };
+  if (pct < -1) return { direction: 'down', pct };
+  return { direction: 'flat', pct: 0 };
+}
 
-  const wonLast30d = deals.filter((d) => d.status === 'won' && closedInLast30(d)).length;
-  const lostLast30d = deals.filter((d) => d.status === 'lost' && closedInLast30(d)).length;
-  const closedLast30d = wonLast30d + lostLast30d;
+// ─── Predicates de range ──────────────────────────────────────────────────
+
+/**
+ * `true` se o ISO datetime cai dentro do range (start–end inclusive).
+ * Considera `range='all'` quando `previousStart` é undefined E o range
+ * passado tem `start === new Date(0)` — nesse caso aceita tudo.
+ */
+function isInRange(iso: string | undefined, bounds: Pick<RangeBounds, 'start' | 'end'>): boolean {
+  if (!iso) return false;
+  const date = parseISO(iso);
+  return isWithinInterval(date, { start: bounds.start, end: bounds.end });
+}
+
+// ─── KPIs (com filtro de range + trend) ───────────────────────────────────
+
+/**
+ * Calcula os 5 KPIs do header do dashboard + trends + métricas auxiliares.
+ *
+ * **Definição de "Taxa de Conversão"**: dos deals **fechados no range**
+ * (won + lost com `closedAt` dentro de start–end), qual fração foi ganha.
+ * Anteriormente fixa em 30d, agora respeita o filtro do usuário.
+ *
+ * **KPI #1 ("Leads novos")**: leads com `createdAt` no range.
+ * **KPI #2 ("Tarefas pendentes")**: tasks com `status === 'pending'` (snapshot,
+ * sem filtro de range — backlog atual sempre).
+ * **KPI #3 ("Pipeline")**: snapshot atual (sem filtro de range — pipeline é
+ * estado do momento, não acumulado).
+ * **KPI #5 ("Propostas")**: soma de `valueCents` de deals abertos no estágio
+ * `proposta`. Snapshot atual.
+ *
+ * Trends comparam o range corrente com a janela igual imediatamente
+ * anterior (ver `range.ts`).
+ */
+export function computeDashboardKpis(
+  leads: Lead[],
+  deals: Deal[],
+  tasks: Task[],
+  bounds: RangeBounds,
+): DashboardKpis {
+  const inRangeCreated = (iso: string) => isInRange(iso, bounds);
+
+  // KPIs principais
+  const newLeadsCount = leads.filter((l) => inRangeCreated(l.createdAt)).length;
+  const pendingTasksCount = tasks.filter((t) => t.status === 'pending').length;
+  const openPipelineCents = sumOpenPipelineCents(deals);
+  const proposalsCents = deals
+    .filter((d) => d.status === 'open' && d.stageId === 'proposta')
+    .reduce((sum, d) => sum + d.valueCents, 0);
+
+  // Conversão no range
+  const closedInRange = deals.filter(
+    (d) => (d.status === 'won' || d.status === 'lost') && d.closedAt && inRangeCreated(d.closedAt),
+  );
+  const wonInRange = closedInRange.filter((d) => d.status === 'won').length;
+  const lostInRange = closedInRange.filter((d) => d.status === 'lost').length;
+  const conversionRatePct =
+    closedInRange.length === 0 ? 0 : Math.round((wonInRange / closedInRange.length) * 100);
+
+  // Período anterior (pra trend)
+  let previousNewLeadsCount: number | undefined;
+  let previousConversionRatePct: number | undefined;
+  let previousProposalsCents: number | undefined;
+  if (bounds.previousStart && bounds.previousEnd) {
+    const prevBounds = { start: bounds.previousStart, end: bounds.previousEnd };
+    previousNewLeadsCount = leads.filter((l) => isInRange(l.createdAt, prevBounds)).length;
+    const prevClosed = deals.filter(
+      (d) =>
+        (d.status === 'won' || d.status === 'lost') &&
+        d.closedAt &&
+        isInRange(d.closedAt, prevBounds),
+    );
+    const prevWon = prevClosed.filter((d) => d.status === 'won').length;
+    previousConversionRatePct =
+      prevClosed.length === 0 ? 0 : Math.round((prevWon / prevClosed.length) * 100);
+    // Propostas é snapshot — não tem "valor anterior". Trend fica flat.
+    previousProposalsCents = proposalsCents;
+  }
 
   return {
-    totalLeads: leads.length,
-    openDealsCount: deals.filter((d) => d.status === 'open').length,
-    openPipelineCents: sumOpenPipelineCents(deals),
-    conversionRatePct: closedLast30d === 0 ? 0 : Math.round((wonLast30d / closedLast30d) * 100),
+    newLeadsCount,
+    pendingTasksCount,
+    openPipelineCents,
+    conversionRatePct,
+    proposalsCents,
+
     hotLeadsCount: leads.filter((l) => l.temperature === 'hot').length,
-    closedLast30d,
-    wonLast30d,
-    lostLast30d,
+    openDealsCount: deals.filter((d) => d.status === 'open').length,
+    closedInRange: closedInRange.length,
+    wonInRange,
+    lostInRange,
+
+    newLeadsTrend: computeTrend(newLeadsCount, previousNewLeadsCount),
+    conversionTrend: computeTrend(conversionRatePct, previousConversionRatePct),
+    proposalsTrend: computeTrend(proposalsCents, previousProposalsCents),
+
+    previousNewLeadsCount,
+    previousConversionRatePct,
+    previousProposalsCents,
   };
 }
 
+// ─── Origem (donut) ───────────────────────────────────────────────────────
+
 /**
- * Gera os dados do FunnelChart Recharts.
- *
- * Inclui apenas as **4 etapas ativas** (Novo → Negociação) — Ganho e
- * Perdido são *resultados* do funil, não etapas dele. Essa info já vive
- * no KPI #4 ("Taxa de conversão"), repetir aqui polui visualmente.
- *
- * Recharts requer ordem decrescente de `value` — quem tiver mais deals
- * fica no topo (trapézio mais largo). Sortamos defensivamente mesmo
- * sabendo que o pipeline real costuma ter Novo > Em contato > Proposta
- * > Negociação (lei do funil).
+ * Mapa LeadOrigin → bucket visual do donut. Mantido como const-record pra
+ * a UI poder navegar de bucket → origens reais (deep-link `/leads?origin=`).
  */
-export function buildFunnelData(deals: Deal[]): FunnelDatum[] {
-  const stageIds = ACTIVE_STAGES.map((s) => s.id);
-  const aggs = aggregateByStage(
-    deals.filter((d) => d.status === 'open'),
-    stageIds,
-  );
-  return ACTIVE_STAGES.map((stage) => {
-    const agg = aggs.find((a) => a.stageId === stage.id) ?? {
-      stageId: stage.id,
-      count: 0,
-      totalCents: 0,
+const ORIGIN_BUCKETS: Record<OriginBucket, { label: string; fill: string; origins: LeadOrigin[] }> =
+  {
+    paid: {
+      label: 'Patrocinado',
+      fill: 'hsl(var(--accent))',
+      origins: ['meta_ads', 'google_ads'],
+    },
+    whatsapp: {
+      label: 'WhatsApp',
+      fill: 'hsl(var(--success))',
+      origins: ['whatsapp_inbound'],
+    },
+    referral: {
+      label: 'Indicação',
+      fill: 'hsl(var(--info))',
+      origins: ['indicacao'],
+    },
+    site: {
+      label: 'Site',
+      fill: 'hsl(var(--primary))',
+      origins: ['site'],
+    },
+    other: {
+      label: 'Outro',
+      fill: 'hsl(var(--muted-foreground))',
+      origins: ['csv_import', 'manual', 'rd_station', 'hotmart'],
+    },
+  };
+
+const BUCKET_OF_ORIGIN = new Map<LeadOrigin, OriginBucket>();
+for (const [bucket, def] of Object.entries(ORIGIN_BUCKETS) as Array<
+  [OriginBucket, (typeof ORIGIN_BUCKETS)[OriginBucket]]
+>) {
+  for (const origin of def.origins) {
+    BUCKET_OF_ORIGIN.set(origin, bucket);
+  }
+}
+
+/**
+ * Agrupa leads por bucket de origem dentro do range.
+ *
+ * Sempre retorna os 5 buckets — mesmo zerados, pra que a legenda fique
+ * estável (vendedor não vê fatias aparecendo/sumindo). O componente
+ * `<OriginDonut>` esconde fatias com count 0 do gráfico, mas mostra na
+ * legenda em cinza.
+ *
+ * Percentuais somam exatamente 100 (correção de arredondamento aplicada
+ * no maior bucket — paridade com Pipedrive).
+ */
+export function buildOriginData(leads: Lead[], bounds: RangeBounds): OriginDatum[] {
+  const filtered = leads.filter((l) => isInRange(l.createdAt, bounds));
+  const total = filtered.length;
+
+  const counts: Record<OriginBucket, number> = {
+    paid: 0,
+    whatsapp: 0,
+    referral: 0,
+    site: 0,
+    other: 0,
+  };
+  for (const lead of filtered) {
+    const bucket = BUCKET_OF_ORIGIN.get(lead.origin) ?? 'other';
+    counts[bucket] += 1;
+  }
+
+  const data: OriginDatum[] = (Object.keys(ORIGIN_BUCKETS) as OriginBucket[]).map((bucket) => {
+    const def = ORIGIN_BUCKETS[bucket];
+    const count = counts[bucket];
+    const pct = total === 0 ? 0 : Math.round((count / total) * 100);
+    return {
+      bucket,
+      label: def.label,
+      count,
+      pct,
+      fill: def.fill,
+      origins: def.origins,
     };
+  });
+
+  // Correção de arredondamento — joga o resíduo no maior bucket pra somar 100.
+  if (total > 0) {
+    const sumPct = data.reduce((acc, d) => acc + d.pct, 0);
+    const drift = 100 - sumPct;
+    if (drift !== 0) {
+      const maxIdx = data.reduce(
+        (best, d, i) => (d.count > (data[best]?.count ?? 0) ? i : best),
+        0,
+      );
+      const target = data[maxIdx];
+      if (target) target.pct += drift;
+    }
+  }
+
+  return data;
+}
+
+// ─── Funil horizontal ─────────────────────────────────────────────────────
+
+/**
+ * Funil horizontal com TODAS as etapas (incluindo terminais Ganho/Perdido),
+ * em ordem natural do pipeline (Novo → Perdido).
+ *
+ * Diferenças vs `buildFunnelData` (Recharts trapezoidal, legado):
+ *  - **Inclui etapas terminais** — leitura linear do funil exige ver onde
+ *    entrou e onde saiu, em paralelo.
+ *  - **Não ordena por count** — mantém ordem do pipeline. Recharts exigia
+ *    desc, o componente HTML+CSS não.
+ *  - **Conta deals abertos pra ativas, fechados pra terminais** — etapa
+ *    Ganho conta `won`, etapa Perdido conta `lost`, etapas ativas contam
+ *    `open`. Espelha a semântica do PRD: terminais não têm "abertos".
+ */
+export function buildHorizontalFunnelData(deals: Deal[]): HorizontalFunnelDatum[] {
+  return DEFAULT_STAGES.map((stage) => {
+    let count = 0;
+    let totalCents = 0;
+    if (stage.terminal) {
+      const matchingStatus = stage.id === 'ganho' ? 'won' : 'lost';
+      const matching = deals.filter((d) => d.status === matchingStatus);
+      count = matching.length;
+      totalCents = matching.reduce((sum, d) => sum + d.valueCents, 0);
+    } else {
+      const matching = deals.filter((d) => d.status === 'open' && d.stageId === stage.id);
+      count = matching.length;
+      totalCents = matching.reduce((sum, d) => sum + d.valueCents, 0);
+    }
     return {
       stageId: stage.id,
       name: stage.name,
-      value: agg.count,
-      totalCents: agg.totalCents,
-      fill: STAGE_FILL[stage.id] ?? 'hsl(var(--muted-foreground))',
-      labelRight: `${agg.count} · ${formatCentsCompact(agg.totalCents)}`,
-      // Label central só se a fatia for grande o suficiente — etapas com
-      // 0 deals não merecem texto (o trapézio nem aparece).
-      labelCenter: agg.count > 0 ? stage.name : '',
+      count,
+      totalCents,
+      barClass: STAGE_BAR_CLASS[stage.id] ?? 'bg-muted-foreground',
+      terminalTone: stage.tone,
     };
-  }).sort((a, b) => b.value - a.value);
+  });
 }
+
+// ─── Hot leads (alimenta banner) ──────────────────────────────────────────
+
+/**
+ * Lista de leads quentes — `temperature === 'hot'`, ordenados pelo `updatedAt`
+ * mais recente (proxy do "toque" enquanto não temos `lastActivityAt` real
+ * em M5). Usado pelo `<HotLeadsAlert>` — em M5 só `length` importa, mas o
+ * shape já permite virar drawer no futuro.
+ */
+export function getHotLeads(leads: Lead[], limit: number = 10): HotLead[] {
+  return leads
+    .filter((l) => l.temperature === 'hot')
+    .map((l) => ({
+      id: l.id,
+      name: l.name,
+      lastTouchedAt: l.updatedAt ?? l.createdAt,
+    }))
+    .sort((a, b) => b.lastTouchedAt.localeCompare(a.lastTouchedAt))
+    .slice(0, limit);
+}
+
+// ─── Tabela "Próximos do prazo" (sem mudança) ─────────────────────────────
 
 /**
  * Top N deals abertos com prazo, ordenados por `dueAt` ascendente.
  *
- * **Por que sem split entre "atrasados primeiro" e "futuros depois"**:
- * datas ISO ordenam cronologicamente sozinhas — datas no passado
+ * Datas ISO ordenam cronologicamente sozinhas — datas no passado
  * (atrasados) ficam acima das futuras naturalmente. O `<DueDatePill>`
  * comunica visualmente o estado (overdue/today/soon/future) — o vendedor
  * varre a lista de cima pra baixo na ordem natural de urgência.
- *
- * Deals sem `dueAt` são excluídos — sem prazo, não fazem sentido nessa
- * tela ("o que precisa do seu olhar agora").
  */
 export function getUpcomingDeals(deals: Deal[], leads: Lead[], limit: number = 8): UpcomingDeal[] {
   const leadById = new Map(leads.map((l) => [l.id, l]));
@@ -135,24 +363,17 @@ export function getUpcomingDeals(deals: Deal[], leads: Lead[], limit: number = 8
     .map((deal) => ({ deal, lead: leadById.get(deal.leadId) }));
 }
 
+// ─── Trend chart 30 dias (sem mudança) ────────────────────────────────────
+
 /**
  * Série temporal dos últimos N dias (default 30) com count de deals
- * **criados** vs **ganhos** por dia. Alimenta o `<TrendChart>` (Recharts
- * LineChart) — vendedor lê de relance se a entrada e o fechamento estão
- * acompanhando.
+ * **criados** vs **ganhos** por dia. Alimenta o `<TrendChart>` — vendedor
+ * lê de relance se a entrada e o fechamento estão acompanhando.
  *
- * Decisões:
- *  - **Inclui hoje**: janela `[now - (days-1), now]`. 30 pontos pra 30 dias.
- *  - **Dias sem atividade**: aparecem com `created: 0, won: 0` (linha
- *    encosta no eixo X) — não pula buracos, senão a leitura mente.
- *  - **Lost não entra**: o gráfico mostra "saúde positiva" (entrada + ganho).
- *    Lost já está no KPI #4 (Taxa de conversão). Adicionar 3ª linha polui.
- *  - **Chave de agrupamento**: `yyyy-MM-dd` em UTC (consistente com
- *    `format(date, 'yyyy-MM-dd')`). Pra fixtures + Postgres em M8 vai
- *    precisar normalizar pra timezone do workspace.
+ * Mantido com 30d fixos mesmo após a refatoração — é um insight temporal
+ * complementar ao filtro de range, não substituível por ele.
  */
 export function buildTrendData(deals: Deal[], now: Date = NOW, days: number = 30): TrendDatum[] {
-  // Pré-computa contagens por dia em maps (1 pass por created, 1 pass por won)
   const createdByDay = new Map<string, number>();
   const wonByDay = new Map<string, number>();
 
@@ -166,8 +387,6 @@ export function buildTrendData(deals: Deal[], now: Date = NOW, days: number = 30
     }
   }
 
-  // Gera os últimos N dias em ordem cronológica (mais antigo → hoje).
-  // Inclui dias zerados pra linha não pular buracos.
   const out: TrendDatum[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const dt = subDays(now, i);
@@ -182,29 +401,16 @@ export function buildTrendData(deals: Deal[], now: Date = NOW, days: number = 30
   return out;
 }
 
+// ─── Atividade recente (sem mudança) ──────────────────────────────────────
+
 /**
  * Timeline derivada das fixtures de deals — top N eventos mais recentes
- * em ordem decrescente. Tipos suportados:
- *
- *  - `created`: deal entrou no pipeline (`createdAt`)
- *  - `won`: deal fechou como ganho (`closedAt` + status='won')
- *  - `lost`: deal fechou como perdido (`closedAt` + status='lost')
- *
- * **Por que sem `updated` ou `stage_change`**: as fixtures não guardam
- * histórico de mudanças de etapa nem distinguem update significativo
- * de updateAt automático. Inventar esses eventos seria mentir. Em M8
- * a tabela `activities` Postgres terá registro real e adicionamos os
- * tipos faltantes sem mudar a shape externa.
- *
- * **Sem cap de período**: pega os N mais recentes sem filtrar "últimos
- * 30d". Se o pipeline está parado faz mais sentido mostrar o evento mais
- * antigo do que esconder a tela.
+ * em ordem decrescente. Tipos suportados: `created`, `won`, `lost`.
  */
 export function getRecentActivity(deals: Deal[], limit: number = 6): ActivityItem[] {
   const events: ActivityItem[] = [];
 
   for (const d of deals) {
-    // Evento "created" pra todo deal
     events.push({
       timestamp: d.createdAt,
       type: 'created',
@@ -214,7 +420,6 @@ export function getRecentActivity(deals: Deal[], limit: number = 6): ActivityIte
       ownerId: d.ownerId,
     });
 
-    // Evento "won"/"lost" se fechado
     if (d.closedAt && (d.status === 'won' || d.status === 'lost')) {
       events.push({
         timestamp: d.closedAt,
@@ -227,6 +432,5 @@ export function getRecentActivity(deals: Deal[], limit: number = 6): ActivityIte
     }
   }
 
-  // Mais recentes primeiro. ISO localeCompare funciona pra ordem cronológica.
   return events.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit);
 }

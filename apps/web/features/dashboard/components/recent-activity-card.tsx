@@ -97,16 +97,19 @@ function ActivityRow({ item }: { item: ActivityItem }) {
     <li>
       <Link
         href={`/leads/${item.leadId}`}
-        className="hover:bg-muted/40 -mx-2 flex items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors"
+        className="hover:bg-muted/40 -mx-2 flex items-start gap-3 rounded-md px-2 py-2 transition-colors"
       >
+        {/* Avatar maior (size-9) com ring sutil pra destacar do hover do
+            background — espelha o padrão da imagem de referência onde o
+            avatar é o "ponto focal" da linha. */}
         <span
           className={cn(
-            'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full',
+            'ring-background flex size-9 shrink-0 items-center justify-center rounded-full ring-2',
             style.iconBg,
           )}
           aria-hidden
         >
-          <style.Icon className="size-3" />
+          <style.Icon className="size-4" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <p className="text-body text-foreground leading-snug">

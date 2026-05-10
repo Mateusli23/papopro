@@ -84,3 +84,13 @@ export function initialsOf(name: string): string {
     .slice(0, 2)
     .join('');
 }
+
+/**
+ * Primeira letra em maiúscula. date-fns formatos como "EEEE" devolvem
+ * o nome do dia em minúsculas em pt-BR ("domingo, 10 de maio") e a UI
+ * exibe sempre com inicial maiúscula.
+ */
+export function capitalize(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
