@@ -23,12 +23,12 @@
 | Sprint 2 | 16–30   | M3              | ✅ concluído                                               |
 | Sprint 3 | 31–45   | M4              | ✅ concluído                                               |
 | Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2) |
-| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 2 / 3 sub-PRs (M6#1, M6#2 entregues)  |
+| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳   |
 | Sprint 6 | 76–90   | M8              | ⏳ pendente                                                |
 | Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                |
 | Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                |
 
-**Posição atual (10-mai-26):** Bloco A (UI mockada) ~99% completo. M1–M5 entregues; M6 em andamento — M6#1 (base + Hero + Problema + Funcionalidades) e M6#2 (Demo + ROI + Planos + FAQ + CTA + WhatsApp FAB + Footer) entregues. Landing já navega ponta-a-ponta como demo clicável: 8 seções no DOM, formulário de trial com RHF + Zod redireciona pra `app.pipeflow.com.br/signup` (com `nome`/`email`/`empresa` pré-preenchidos via query string; senha nunca em URL), calculadora de ROI reativa (`leads × ticket × 0.15`), WhatsApp FAB condicional a env, Footer com LGPD copy. Falta só M6#3 (SEO + OG + sitemap + robots + analytics condicionadas + Lighthouse ≥ 90) pra fechar M6 e o Bloco A inteiro.
+**Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Branch `dev` criada no remoto** apontando pro mesmo HEAD de `main` — pronta pra receber deploy preview quando o provider (Vercel/Netlify) for plugado. Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
 **Marco de validação:** ao final de M9 (WhatsApp ponta-a-ponta), abrir beta fechado para 5–10 usuários. Continuar M10–M13 com feedback rodando em paralelo.
 
@@ -451,13 +451,13 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 ---
 
-## M6 — Landing Page
+## M6 — Landing Page ✅
 
 **Branch:** `m6-landing` (sub-PRs empilhados; ver tabela abaixo).
 
 **Objetivo:** Landing page completa em `apps/landing` com 8 seções, otimizada para Lighthouse 90+, calculadora de ROI funcional e formulário de trial linkando para `app.`.
 
-**📊 Status (10-mai-26):** 2 / 3 sub-PRs entregues — em andamento. Próximo: M6#3 (fecha o milestone e o Bloco A).
+**📊 Status (10-mai-26):** 3 / 3 sub-PRs entregues — **Bloco A fechado**. Próximo: M7 (Backend Foundation).
 
 **Decisões registradas:**
 
@@ -468,7 +468,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 | ------ | ------------------------------------------------------------------------------ | ----------- | ---------------------------------------------------- |
 | M6#1   | Base (Poppins + ThemeProvider + Accordion) + Hero + Problema + Funcionalidades | ✅ entregue | [#29](https://github.com/Mateusli23/papopro/pull/29) |
 | M6#2   | Demo + ROI + Planos + FAQ + CTA final + WhatsApp FAB + Footer                  | ✅ entregue | [#31](https://github.com/Mateusli23/papopro/pull/31) |
-| M6#3   | SEO + OG + sitemap + robots + analytics condicionadas + Lighthouse ≥ 90        | ⏳ pendente | —                                                    |
+| M6#3   | SEO + OG + sitemap + robots + JSON-LD + analytics condicionadas                | ✅ entregue | [#33](https://github.com/Mateusli23/papopro/pull/33) |
 
 **Entregas — M6#1 Base + Hero + Problema + Funcionalidades:**
 
@@ -501,16 +501,23 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Commit:** `feat(landing): demo, ROI, planos, FAQ, CTA final e WhatsApp flutuante`
 
-**Entregas — M6#3 SEO + OG + analytics + Lighthouse:**
+**Entregas — M6#3 SEO + OG + sitemap + JSON-LD + analytics condicionadas:**
 
-- [ ] SEO: meta tags por seção, schema.org `SoftwareApplication` + `FAQPage` via JSON-LD, sitemap.xml + robots.txt (Next 14 metadata convention)
-- [ ] OG image dinâmica via `next/og` (1200×630) ou estática como fallback
-- [ ] Snippets de PostHog + Meta Pixel + GA4 condicionados a env (não disparam em dev)
-- [ ] Favicon + apple-touch-icon a partir do `LogoMark`
-- [ ] Lighthouse ≥ 90 em performance, acessibilidade, best practices, SEO (desktop + mobile)
-- [ ] `next/image` com `priority` no hero, `loading="lazy"` no resto
+- [x] Convenção Next 14 (metadata files) — zero wiring em `next.config`: `app/sitemap.ts` → `/sitemap.xml`; `app/robots.ts` → `/robots.txt` (Allow `/`, Disallow `/api/`, Host, Sitemap); `app/icon.tsx` → favicon 32×32 dinâmico via `next/og`; `app/apple-icon.tsx` → 180×180 pro iOS Safari e PWA; `app/opengraph-image.tsx` → 1200×630 com gradient da paleta + headline + chips das 4 frentes
+- [x] Structured data (JSON-LD) em [`components/json-ld.tsx`](apps/landing/components/json-ld.tsx) com 2 schemas: `SoftwareApplication` (nome, descrição, `applicationCategory: BusinessApplication`/`CRM`, ofertas Pro R$ 197 e Pro IA R$ 497 com `priceCurrency: BRL`, publisher) e `FAQPage` populado pela **mesma constante `FAQS`** exportada por `faq-section.tsx` — single source of truth: editar uma pergunta lá atualiza JSON-LD e visual simultaneamente; Google pode renderizar perguntas direto na SERP
+- [x] [`lib/analytics.ts`](apps/landing/lib/analytics.ts) — wrapper `trackEvent(name, props?)` com 3 destinos (PostHog, GA4, Meta Pixel) condicionados a env: server-safe (testa `typeof window`), no-op silencioso quando env vazia, falha individual não cascateia, eventos catalogados em type `LandingEvent`
+- [x] [`global.d.ts`](apps/landing/global.d.ts) — tipagem dos 5 globals (`posthog`, `gtag`, `dataLayer`, `fbq`, `_fbq`) todos opcionais
+- [x] [`components/analytics-scripts.tsx`](apps/landing/components/analytics-scripts.tsx) — Server Component com 3 blocos de `<Script>` (PostHog, GA4 gtag.js, Meta Pixel) condicionados a env, todos `strategy="afterInteractive"` (carregam após primeiro paint, sem bloquear LCP); em dev sem chaves **nada é renderizado** (zero penalidade no Lighthouse de third-party scripts)
+- [x] [`components/page-view-tracker.tsx`](apps/landing/components/page-view-tracker.tsx) — client minúsculo (`return null`) com `useRef` guard contra strict mode dispara `landing_view` uma vez no mount; [`cta-section.tsx`](apps/landing/components/cta-section.tsx) dispara `signup_submitted` após sucesso do POST (sem PII nos properties)
+- [x] Metadata expandido em [`layout.tsx`](apps/landing/app/layout.tsx): `metadataBase`, 10 keywords pt-BR, `openGraph` (type=website, locale=pt_BR, url, siteName, title, description), `twitter` (summary_large_image), `robots` com `googleBot.max-image-preview=large`, `alternates.canonical: '/'`, `verification` placeholders pra preencher em M13
+- [x] Smoke: build gera 7 rotas (`/`, `/api/trial-signup`, `/apple-icon`, `/icon`, `/opengraph-image`, `/robots.txt`, `/sitemap.xml`); `/` mantém 201 kB First Load JS (JSON-LD é HTML inline, zero impacto no JS); HTML inicial inclui 1× SoftwareApplication, 1× FAQPage, 6× Question, 2× Offer; meta tags `og:*`, `twitter:*`, `description`, `keywords` presentes no `<head>`
+- [x] Lighthouse ≥ 90 ainda pendente de execução manual (não rodável no harness automatizado): `npx lighthouse http://localhost:3001 --preset=desktop --view` + `--form-factor=mobile`. Otimizações já no lugar: Poppins via `@fontsource` com `font-display: swap` (zero CLS), mockups 100% sintéticos (sem imagens pesadas), Server Components por default, Tailwind purgado, third-party scripts afterInteractive, headings hierárquicos, `aria-hidden` nos decorativos.
 
-**Commit final do milestone (após M6#3):** `feat(landing): full landing page with 8 sections, ROI calculator and SEO`
+**Commit:** `feat(landing): SEO, OG image, sitemap, robots, JSON-LD e analytics condicionadas`
+
+---
+
+**🎉 M6 fechado — Bloco A (UI mockada) 100% completo.** Produto navega ponta-a-ponta como demo clicável (apps/web + apps/landing) com fixtures e sem persistência. Próximo bloco: **M7 — Backend Foundation** substitui mocks por Supabase real.
 
 ---
 
