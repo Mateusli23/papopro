@@ -405,6 +405,37 @@ A primeira versão do `/kanban` tratava `Lead` como proxy de `Deal` — confusã
 
 ---
 
+## Polimentos pós-M5 (entre M5 e M6)
+
+Sub-PRs autônomos de polimento que entram entre marcos quando há valor incremental sem precisar esperar o próximo bloco grande. Não são "marcos" formais — só refinos que melhoram o produto navegável.
+
+| Sub-PR | Escopo                                                                      | Status      | PR  |
+| ------ | --------------------------------------------------------------------------- | ----------- | --- |
+| M5p#1  | Dashboard refresh — filtro de período, trends, donut Origem, banner quentes | ⏳ pendente | —   |
+
+**Entregas — M5p#1 Dashboard refresh:**
+
+- [ ] Header reescrito: saudação `"Olá, {firstName}!"` + segunda linha com data por extenso (`"Domingo, 10 de maio"`) + filtro de período em pills à direita (Hoje · Esta semana · Este mês · Máximo · Personalizado)
+- [ ] Hook `useDashboardRange()` persiste `?range=` na URL (router.replace, sem poluir history); calcula bounds atual + período anterior igual pra trend
+- [ ] `<DashboardRangePills>` com Popover usando `react-day-picker` (dep instalada em M5#2 e finalmente usada) pra range custom
+- [ ] 5 KPIs no topo (era 4): **Leads novos** (com trend) · **Tarefas pendentes** · **Pipeline R$** · **Taxa de conversão** (com trend) · **Propostas R$** (com trend). Trend indicator (↑/↓ %) compara período atual com janela anterior igual
+- [ ] `<KpiCard>` extraído como primitivo reutilizável em `features/dashboard/components/kpi-card.tsx` — futuro reuso em `/reports`
+- [ ] `<FunnelHorizontalChart>` substitui `<DashboardFunnelChart>` (Recharts trapezoidal). Barras horizontais HTML+Tailwind, 6 etapas em ordem natural (4 ativas + Ganho + Perdido), click navega `/kanban?stage=X`
+- [ ] `<OriginDonut>` novo (Recharts PieChart, innerRadius=50). Agrupa as 9 origens em 5 buckets visuais (Patrocinado=meta+google ads · WhatsApp · Indicação · Site · Outro). Legenda lateral, click navega `/leads?origin=X`
+- [ ] `<HotLeadsAlert>` full-width no rodapé com `bg-warning/10` + ícone Flame + CTA "clique para ver detalhes" → `/leads?temperature=hot`. Esconde quando 0 leads quentes
+- [ ] `<DashboardTrendChart>` (LineChart 30d) rebaixado pro rodapé (continua 30d fixos, complementar ao filtro)
+- [ ] `<RecentActivityCard>` polido — avatares maiores (size-9 com ring) + cor por tipo (azul=created, verde=won, vermelho=lost)
+- [ ] Smoke test `/api/smoke-test/dashboard` ampliado: novos grupos `transforms-range` (9 asserts), `transforms-trend` (7), `transforms-kpis` (10), `transforms-origin` (7), `transforms-funnel-h` (7), `transforms-hot-leads` (5). Total ~60 asserts em 8 grupos
+- [ ] Helpers: `capitalize()` em `lib/utils/format.ts`, `computeRangeBounds()` + `formatHeaderDate()` + `parseDashboardRange()` em `features/dashboard/range.ts`
+- [ ] Ícones novos em `@papopro/ui/icons`: `ArrowUp`, `ArrowDown`
+- [ ] Removidos: `funnel-chart.tsx` (Recharts trapezoidal), `buildFunnelData()`, `FunnelDatum` type, `STAGE_FILL` constante (eram 100% legados)
+- [ ] Mobile-first: pills viram scroll horizontal com `snap-x`; KPIs em 2 cols mobile / 5 cols md+; funil + donut empilham; banner mantém-se largo
+- [ ] Dark mode preservado em todos os blocos (tokens semânticos, sem hex)
+
+**Commit:** `feat(dashboard): refresh com filtro de período, trends e donut origem`
+
+---
+
 ## M6 — Landing Page
 
 **Branch:** `m6-landing`

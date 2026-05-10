@@ -1,7 +1,7 @@
 /**
- * Smoke test do Dashboard — valida as 5 famílias de cálculo (KPIs,
- * FunnelData, UpcomingDeals, TrendData, RecentActivity) que alimentam
- * a tela `/dashboard`.
+ * Smoke test do Dashboard — valida as funções puras que alimentam a tela
+ * `/dashboard` (KPIs com filtro de range + trends, donut Origem, funil
+ * horizontal, hot leads, trend chart 30d, atividade recente, tabela).
  *
  * Existe pra dar confiança nas fórmulas antes de Vitest entrar em M7+,
  * e pra fixar contratos que vão virar Server Action em M8 (mesmas funções
@@ -12,17 +12,22 @@
  */
 import { NextResponse } from 'next/server';
 
+import { computeRangeBounds, DASHBOARD_NOW } from '@/features/dashboard/range';
 import {
-  buildFunnelData,
+  buildHorizontalFunnelData,
+  buildOriginData,
   buildTrendData,
   computeDashboardKpis,
+  computeTrend,
+  getHotLeads,
   getRecentActivity,
   getUpcomingDeals,
 } from '@/features/dashboard/transforms';
 import { sumOpenPipelineCents } from '@/features/deals/transforms';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { FAKE_LEADS } from '@/lib/fixtures/leads';
-import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
+import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
+import { FAKE_TASKS } from '@/lib/fixtures/tasks';
 
 interface CheckResult {
   group: string;
@@ -54,98 +59,245 @@ export const dynamic = 'force-dynamic';
 export function GET() {
   const results: CheckResult[] = [];
 
-  // ── KPIs ────────────────────────────────────────────────────────────────
-  const kpis = computeDashboardKpis(FAKE_LEADS, FAKE_DEALS);
-  let t = run('kpis', results);
+  // Range padrão pra cálculos legados — `month` cobre toda a janela das fixtures
+  // sem ficar muito permissivo (`all` zeraria o trend).
+  const monthBounds = computeRangeBounds('month', DASHBOARD_NOW);
 
-  t(
-    'totalLeads === FAKE_LEADS.length',
-    () => kpis.totalLeads === FAKE_LEADS.length || `got ${kpis.totalLeads}`,
-  );
-  t('openDealsCount casa com filter(open)', () => {
-    const expected = FAKE_DEALS.filter((d) => d.status === 'open').length;
-    return kpis.openDealsCount === expected || `got ${kpis.openDealsCount}, esperado ${expected}`;
-  });
-  t('openPipelineCents reusa sumOpenPipelineCents (fonte canônica)', () => {
-    const expected = sumOpenPipelineCents(FAKE_DEALS);
+  // ── Range bounds ────────────────────────────────────────────────────────
+  let t = run('transforms-range', results);
+  t('today: start === end no mesmo dia', () => {
+    const b = computeRangeBounds('today', DASHBOARD_NOW);
     return (
-      kpis.openPipelineCents === expected || `got ${kpis.openPipelineCents}, esperado ${expected}`
+      b.start.toDateString() === DASHBOARD_NOW.toDateString() &&
+      b.end.toDateString() === DASHBOARD_NOW.toDateString()
     );
   });
-  t('openPipelineCents > 0 (sanity — fixture tem deals abertos)', () => kpis.openPipelineCents > 0);
-  t(
-    '0 <= conversionRatePct <= 100 (range válido)',
-    () =>
-      (kpis.conversionRatePct >= 0 && kpis.conversionRatePct <= 100) ||
-      `got ${kpis.conversionRatePct}`,
-  );
-  t('conversionRatePct é inteiro (Math.round aplicado)', () =>
-    Number.isInteger(kpis.conversionRatePct),
-  );
-  t(
-    'wonLast30d + lostLast30d === closedLast30d (identidade aritmética)',
-    () => kpis.wonLast30d + kpis.lostLast30d === kpis.closedLast30d,
-  );
-  t(
-    'hotLeadsCount conta só temperature=hot',
-    () => kpis.hotLeadsCount === FAKE_LEADS.filter((l) => l.temperature === 'hot').length,
-  );
+  t('today tem previousStart/previousEnd em D-1', () => {
+    const b = computeRangeBounds('today', DASHBOARD_NOW);
+    return (
+      !!b.previousStart &&
+      !!b.previousEnd &&
+      b.previousStart.getTime() < b.start.getTime() &&
+      b.previousEnd.getTime() < b.end.getTime()
+    );
+  });
+  t('week começa segunda-feira (weekStartsOn=1, locale pt-BR)', () => {
+    const b = computeRangeBounds('week', DASHBOARD_NOW);
+    return b.start.getDay() === 1 || `start.getDay()=${b.start.getDay()}`;
+  });
+  t('week tem previousStart 7 dias antes', () => {
+    const b = computeRangeBounds('week', DASHBOARD_NOW);
+    if (!b.previousStart) return 'previousStart undefined';
+    const diffDays = Math.round((b.start.getTime() - b.previousStart.getTime()) / 86_400_000);
+    return diffDays === 7 || `diffDays=${diffDays}`;
+  });
+  t('month: start é dia 1', () => {
+    const b = computeRangeBounds('month', DASHBOARD_NOW);
+    return b.start.getDate() === 1;
+  });
+  t('month: previousEnd cai antes de start', () => {
+    const b = computeRangeBounds('month', DASHBOARD_NOW);
+    return !!b.previousEnd && b.previousEnd.getTime() < b.start.getTime();
+  });
+  t('all: previousStart/previousEnd undefined (sem janela anterior)', () => {
+    const b = computeRangeBounds('all', DASHBOARD_NOW);
+    return b.previousStart === undefined && b.previousEnd === undefined;
+  });
+  t('custom com from/to gera range correto + previous simétrico', () => {
+    const from = new Date('2026-05-01T00:00:00-03:00');
+    const to = new Date('2026-05-07T23:59:59-03:00');
+    const b = computeRangeBounds('custom', DASHBOARD_NOW, { start: from, end: to });
+    return !!b.previousStart && !!b.previousEnd && b.label.includes('mai');
+  });
+  t('custom sem from/to cai no fallback "today"', () => {
+    const b = computeRangeBounds('custom', DASHBOARD_NOW);
+    return b.range === 'today';
+  });
 
-  // ── Edge cases dos KPIs ─────────────────────────────────────────────────
-  t = run('kpis-edge', results);
-  t('workspaces vazios não geram NaN (divisão por zero defensiva)', () => {
-    const empty = computeDashboardKpis([], []);
+  // ── Trend ───────────────────────────────────────────────────────────────
+  t = run('transforms-trend', results);
+  t('current > previous → up', () => {
+    const r = computeTrend(100, 80);
+    return r.direction === 'up' && r.pct === 25;
+  });
+  t('current < previous → down', () => {
+    const r = computeTrend(80, 100);
+    return r.direction === 'down' && r.pct === -20;
+  });
+  t('current === previous → flat', () => {
+    const r = computeTrend(50, 50);
+    return r.direction === 'flat' && r.pct === 0;
+  });
+  t('previous === 0 e current > 0 → up 100 (cap, sem Infinity)', () => {
+    const r = computeTrend(50, 0);
+    return r.direction === 'up' && r.pct === 100;
+  });
+  t('previous === 0 e current === 0 → flat 0', () => {
+    const r = computeTrend(0, 0);
+    return r.direction === 'flat' && r.pct === 0;
+  });
+  t('previous undefined → flat 0', () => {
+    const r = computeTrend(50, undefined);
+    return r.direction === 'flat' && r.pct === 0;
+  });
+  t('|pct| <= 1 → flat 0 (variação irrelevante absorvida)', () => {
+    const r = computeTrend(101, 100);
+    return r.direction === 'flat';
+  });
+
+  // ── KPIs com range + trends ─────────────────────────────────────────────
+  const kpis = computeDashboardKpis(FAKE_LEADS, FAKE_DEALS, FAKE_TASKS, monthBounds);
+  t = run('transforms-kpis', results);
+
+  t('newLeadsCount conta leads com createdAt no range', () => {
+    const expected = FAKE_LEADS.filter((l) => {
+      const d = new Date(l.createdAt);
+      return d >= monthBounds.start && d <= monthBounds.end;
+    }).length;
+    return kpis.newLeadsCount === expected || `got ${kpis.newLeadsCount}, esperado ${expected}`;
+  });
+  t('pendingTasksCount conta só status=pending', () => {
+    const expected = FAKE_TASKS.filter((task) => task.status === 'pending').length;
+    return kpis.pendingTasksCount === expected;
+  });
+  t('openPipelineCents reusa sumOpenPipelineCents (fonte canônica)', () => {
+    return kpis.openPipelineCents === sumOpenPipelineCents(FAKE_DEALS);
+  });
+  t('proposalsCents soma só deals abertos em proposta', () => {
+    const expected = FAKE_DEALS.filter(
+      (d) => d.status === 'open' && d.stageId === 'proposta',
+    ).reduce((sum, d) => sum + d.valueCents, 0);
+    return kpis.proposalsCents === expected;
+  });
+  t('conversionRatePct é inteiro em [0,100]', () => {
+    return (
+      Number.isInteger(kpis.conversionRatePct) &&
+      kpis.conversionRatePct >= 0 &&
+      kpis.conversionRatePct <= 100
+    );
+  });
+  t('wonInRange + lostInRange === closedInRange (identidade)', () => {
+    return kpis.wonInRange + kpis.lostInRange === kpis.closedInRange;
+  });
+  t('hotLeadsCount conta só temperature=hot', () => {
+    return kpis.hotLeadsCount === FAKE_LEADS.filter((l) => l.temperature === 'hot').length;
+  });
+  t('newLeadsTrend tem shape válido', () => {
+    return (
+      ['up', 'down', 'flat'].includes(kpis.newLeadsTrend.direction) &&
+      Number.isInteger(kpis.newLeadsTrend.pct)
+    );
+  });
+  t('range=all → previousNewLeadsCount undefined', () => {
+    const allBounds = computeRangeBounds('all', DASHBOARD_NOW);
+    const k = computeDashboardKpis(FAKE_LEADS, FAKE_DEALS, FAKE_TASKS, allBounds);
+    return k.previousNewLeadsCount === undefined && k.newLeadsTrend.direction === 'flat';
+  });
+  t('workspaces vazios não geram NaN', () => {
+    const empty = computeDashboardKpis([], [], [], monthBounds);
     return empty.conversionRatePct === 0 && empty.openPipelineCents === 0;
   });
-  t('só leads, sem deals → openDealsCount = 0', () => {
-    const k = computeDashboardKpis(FAKE_LEADS, []);
-    return k.openDealsCount === 0 && k.openPipelineCents === 0;
+
+  // ── Origem (donut) ──────────────────────────────────────────────────────
+  const allBounds = computeRangeBounds('all', DASHBOARD_NOW);
+  const origin = buildOriginData(FAKE_LEADS, allBounds);
+  t = run('transforms-origin', results);
+
+  t('retorna 5 buckets (paid, whatsapp, referral, site, other)', () => {
+    const buckets = origin.map((o) => o.bucket).sort();
+    return (
+      JSON.stringify(buckets) === JSON.stringify(['other', 'paid', 'referral', 'site', 'whatsapp'])
+    );
+  });
+  t('soma de pcts === 100 (correção de arredondamento aplicada)', () => {
+    const sum = origin.reduce((acc, o) => acc + o.pct, 0);
+    return sum === 100 || `sum=${sum}`;
+  });
+  t('paid agrupa meta_ads + google_ads', () => {
+    const paid = origin.find((o) => o.bucket === 'paid');
+    return !!paid && paid.origins.includes('meta_ads') && paid.origins.includes('google_ads');
+  });
+  t('whatsapp tem só whatsapp_inbound', () => {
+    const wa = origin.find((o) => o.bucket === 'whatsapp');
+    return !!wa && wa.origins.length === 1 && wa.origins[0] === 'whatsapp_inbound';
+  });
+  t('counts somam total de leads no range', () => {
+    const sum = origin.reduce((acc, o) => acc + o.count, 0);
+    return sum === FAKE_LEADS.length;
+  });
+  t('com leads vazios, todos buckets ficam 0', () => {
+    const empty = buildOriginData([], allBounds);
+    return empty.every((o) => o.count === 0 && o.pct === 0);
+  });
+  t('todo bucket tem fill = hsl(var(--token))', () => {
+    return origin.every((o) => o.fill.startsWith('hsl(var(--'));
   });
 
-  // ── Funnel data ─────────────────────────────────────────────────────────
-  const funnel = buildFunnelData(FAKE_DEALS);
-  t = run('funnel', results);
+  // ── Funil horizontal ───────────────────────────────────────────────────
+  const funnelH = buildHorizontalFunnelData(FAKE_DEALS);
+  t = run('transforms-funnel-h', results);
 
-  t(
-    'data.length === 4 (só etapas ativas — Novo, Em contato, Proposta, Negociação)',
-    () => funnel.length === 4 || `got ${funnel.length}`,
-  );
-  t('só inclui ACTIVE_STAGES (sem Ganho/Perdido)', () => {
-    const activeIds = ACTIVE_STAGES.map((s) => s.id);
-    return funnel.every((f) => activeIds.includes(f.stageId));
+  t('inclui TODAS as 6 etapas (4 ativas + ganho + perdido)', () => {
+    return funnelH.length === DEFAULT_STAGES.length || `got ${funnelH.length}`;
   });
-  t('soma dos counts === total de deals abertos nas etapas ativas (invariante crítico)', () => {
-    const expected = FAKE_DEALS.filter(
-      (d) => d.status === 'open' && ACTIVE_STAGES.some((s) => s.id === d.stageId),
-    ).length;
-    const actual = funnel.reduce((acc, f) => acc + f.value, 0);
-    return actual === expected || `got ${actual}, esperado ${expected}`;
+  t('mantém ordem natural do pipeline (não sort por count)', () => {
+    const stageOrder = DEFAULT_STAGES.map((s) => s.id);
+    const funnelOrder = funnelH.map((f) => f.stageId);
+    return JSON.stringify(funnelOrder) === JSON.stringify(stageOrder);
   });
-  t('ordenado em ordem decrescente por value (Recharts requer)', () => {
-    for (let i = 1; i < funnel.length; i++) {
-      const prev = funnel[i - 1];
-      const curr = funnel[i];
-      if (!prev || !curr) continue;
-      if (prev.value < curr.value) return `inversão em [${i - 1},${i}]`;
+  t('etapa "ganho" conta deals com status=won', () => {
+    const ganho = funnelH.find((f) => f.stageId === 'ganho');
+    const expected = FAKE_DEALS.filter((d) => d.status === 'won').length;
+    return !!ganho && ganho.count === expected;
+  });
+  t('etapa "perdido" conta deals com status=lost', () => {
+    const perdido = funnelH.find((f) => f.stageId === 'perdido');
+    const expected = FAKE_DEALS.filter((d) => d.status === 'lost').length;
+    return !!perdido && perdido.count === expected;
+  });
+  t('etapas ativas contam só deals abertos no estágio', () => {
+    for (const stage of DEFAULT_STAGES.filter((s) => !s.terminal)) {
+      const row = funnelH.find((f) => f.stageId === stage.id);
+      const expected = FAKE_DEALS.filter(
+        (d) => d.status === 'open' && d.stageId === stage.id,
+      ).length;
+      if (!row || row.count !== expected)
+        return `${stage.id}: got ${row?.count}, esperado ${expected}`;
     }
     return true;
   });
-  t('toda etapa tem fill definido (senão renderiza preto)', () =>
-    funnel.every((f) => typeof f.fill === 'string' && f.fill.length > 0),
-  );
-  t('fill usa hsl(var(--token)) — não hex hardcoded', () =>
-    funnel.every((f) => f.fill.startsWith('hsl(var(--'))
-      ? true
-      : `fill inválido: ${funnel.map((f) => f.fill).join(', ')}`,
-  );
-  t('labelRight bem formado (count + valor compactado)', () =>
-    funnel.every((f) => f.labelRight.includes('·')),
-  );
-  t('labelCenter vazio se value === 0 (não polui gráfico)', () =>
-    funnel.every((f) => (f.value === 0 ? f.labelCenter === '' : f.labelCenter === f.name)),
-  );
+  t('toda etapa tem barClass tailwind definida', () => {
+    return funnelH.every((f) => f.barClass.startsWith('bg-'));
+  });
+  t('terminalTone preservado pra ganho (success) e perdido (destructive)', () => {
+    const ganho = funnelH.find((f) => f.stageId === 'ganho');
+    const perdido = funnelH.find((f) => f.stageId === 'perdido');
+    return ganho?.terminalTone === 'success' && perdido?.terminalTone === 'destructive';
+  });
 
-  // ── Upcoming deals (tabela) ─────────────────────────────────────────────
+  // ── Hot leads ───────────────────────────────────────────────────────────
+  const hot = getHotLeads(FAKE_LEADS);
+  t = run('transforms-hot-leads', results);
+
+  t('só leads com temperature=hot', () => {
+    const hotIds = new Set(FAKE_LEADS.filter((l) => l.temperature === 'hot').map((l) => l.id));
+    return hot.every((h) => hotIds.has(h.id));
+  });
+  t('respeita limit (default 10)', () => hot.length <= 10);
+  t('ordenado desc por lastTouchedAt', () => {
+    for (let i = 1; i < hot.length; i++) {
+      const prev = hot[i - 1];
+      const curr = hot[i];
+      if (!prev || !curr) continue;
+      if (prev.lastTouchedAt.localeCompare(curr.lastTouchedAt) < 0)
+        return `desordem em [${i - 1},${i}]`;
+    }
+    return true;
+  });
+  t('limit configurável (limit=2 retorna ≤ 2)', () => getHotLeads(FAKE_LEADS, 2).length <= 2);
+  t('com lista vazia retorna []', () => getHotLeads([]).length === 0);
+
+  // ── Tabela "Próximos do prazo" ─────────────────────────────────────────
   const upcoming = getUpcomingDeals(FAKE_DEALS, FAKE_LEADS, 8);
   t = run('upcoming', results);
 
@@ -261,6 +413,11 @@ export function GET() {
         passed,
         failed,
         allOk,
+        groups: Array.from(new Set(results.map((r) => r.group))).map((g) => ({
+          group: g,
+          passed: results.filter((r) => r.group === g && r.ok).length,
+          failed: results.filter((r) => r.group === g && !r.ok).length,
+        })),
       },
       results,
     },
