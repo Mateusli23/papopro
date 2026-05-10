@@ -1,15 +1,24 @@
+import { CtaSection } from '@/components/cta-section';
+import { DemoSection } from '@/components/demo-section';
+import { FaqSection } from '@/components/faq-section';
 import { FeaturesSection } from '@/components/features-section';
+import { Footer } from '@/components/footer';
 import { Header } from '@/components/header';
 import { HeroSection } from '@/components/hero-section';
+import { PricingSection } from '@/components/pricing-section';
 import { ProblemSection } from '@/components/problem-section';
+import { RoiCalculator } from '@/components/roi-calculator';
+import { WhatsAppFab } from '@/components/whatsapp-fab';
 
 /**
- * Landing pública — `pipeflow.com.br`.
+ * Landing pública — `pipeflow.com.br`. Bloco A do PapoPro: navegável de
+ * ponta a ponta, sem persistência. M6#3 adiciona SEO/OG/analytics/Lighthouse.
  *
- * Composição declarativa por seção. Cada section é colocated em
- * `components/<section>-section.tsx` (Server Component por default). M6#1
- * entrega Header + Hero + Problema + Features. M6#2 adiciona Demo + ROI +
- * Planos + FAQ + CTA + WhatsApp FAB. M6#3 cuida de SEO, OG e analytics.
+ * Ordem das seções (do PRD):
+ *   Hero → Problema → Funcionalidades → Demo → ROI → Planos → FAQ → CTA
+ *
+ * `WhatsAppFab` é renderizado fora do `<main>` porque é um elemento global
+ * (fixed). `Footer` fecha o documento.
  */
 export default function HomePage() {
   return (
@@ -19,8 +28,14 @@ export default function HomePage() {
         <HeroSection />
         <ProblemSection />
         <FeaturesSection />
-        {/* M6#2 — Demo, ROI, Planos, FAQ, CTA, WhatsApp FAB e Footer. */}
+        <DemoSection />
+        <RoiCalculator />
+        <PricingSection />
+        <FaqSection />
+        <CtaSection />
       </main>
+      <Footer />
+      <WhatsAppFab />
     </>
   );
 }

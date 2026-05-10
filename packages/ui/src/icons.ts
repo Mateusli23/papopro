@@ -23,6 +23,7 @@ export {
   Brain,
   Briefcase,
   Building2,
+  Calculator,
   Calendar,
   Check,
   CheckCheck,

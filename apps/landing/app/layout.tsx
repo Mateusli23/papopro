@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next';
 
 import { ThemeProvider } from '@papopro/ui';
 
+import { Toaster } from '@/components/toaster';
+
 import './globals.css';
 
 /*
@@ -43,7 +45,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <body className="bg-background text-foreground min-h-screen font-sans antialiased">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          {children}
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

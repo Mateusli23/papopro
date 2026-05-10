@@ -41,6 +41,9 @@ importers:
       '@fontsource/poppins':
         specifier: 5.2.7
         version: 5.2.7
+      '@hookform/resolvers':
+        specifier: ^5.2.2
+        version: 5.2.2(react-hook-form@7.75.0(react@18.3.1))
       '@papopro/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -53,6 +56,15 @@ importers:
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
+      react-hook-form:
+        specifier: ^7.75.0
+        version: 7.75.0(react@18.3.1)
+      react-hot-toast:
+        specifier: ^2.4.1
+        version: 2.6.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@papopro/config':
         specifier: workspace:*
@@ -71,10 +83,10 @@ importers:
         version: 10.5.0(postcss@8.5.14)
       eslint:
         specifier: ^9.17.0
-        version: 9.39.4(jiti@2.7.0)
+        version: 9.39.4(jiti@1.21.7)
       eslint-config-next:
         specifier: 14.2.20
-        version: 14.2.20(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+        version: 14.2.20(eslint@9.39.4(jiti@1.21.7))(typescript@5.9.3)
       postcss:
         specifier: ^8.4.49
         version: 8.5.14
@@ -159,10 +171,10 @@ importers:
         version: 10.5.0(postcss@8.5.14)
       eslint:
         specifier: ^9.17.0
-        version: 9.39.4(jiti@1.21.7)
+        version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: 14.2.20
-        version: 14.2.20(eslint@9.39.4(jiti@1.21.7))(typescript@5.9.3)
+        version: 14.2.20(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
       postcss:
         specifier: ^8.4.49
         version: 8.5.14
