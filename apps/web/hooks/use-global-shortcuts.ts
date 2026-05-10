@@ -8,6 +8,7 @@ import * as React from 'react';
  *  - `Ctrl/⌘ + K` ou sequência `g + n` → abre Cmd+K palette (`onOpenCmdK`)
  *  - `g + l` → navega pra `/leads` (`onGoLeads`)
  *  - `g + k` → navega pra `/kanban` (`onGoKanban`)
+ *  - `g + c` → navega pra `/cadences` (`onGoCadences`)
  *  - `n` → abre modal "Adicionar lead" (`onCreateLead`) — só na rota Leads/Kanban
  *  - `/` → foca elemento com `data-shortcut-search` (`onFocusSearch`) — atualmente
  *    o input de busca da `LeadFilters`; nenhum efeito noutras rotas
@@ -25,6 +26,7 @@ interface UseGlobalShortcutsOptions {
   onOpenCmdK?: () => void;
   onGoLeads?: () => void;
   onGoKanban?: () => void;
+  onGoCadences?: () => void;
   onCreateLead?: () => void;
   onFocusSearch?: () => void;
 }
@@ -127,6 +129,12 @@ export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
           event.preventDefault();
           lastGRef.current = null;
           optsRef.current.onGoKanban();
+          return;
+        }
+        if (event.key === 'c' && optsRef.current.onGoCadences) {
+          event.preventDefault();
+          lastGRef.current = null;
+          optsRef.current.onGoCadences();
           return;
         }
       }

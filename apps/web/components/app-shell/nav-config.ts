@@ -43,7 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: 'Kanban', href: '/kanban', icon: KanbanSquare },
       { label: 'Inbox', href: '/inbox', icon: Inbox, soon: true, badge: 4 },
       { label: 'Agentes', href: '/agents', icon: Sparkles, soon: true },
-      { label: 'Cadências', href: '/cadences', icon: Repeat, soon: true },
+      { label: 'Cadências', href: '/cadences', icon: Repeat },
       { label: 'Tarefas', href: '/tasks', icon: ListChecks },
       { label: 'Relatórios', href: '/reports', icon: PieChart },
     ],
