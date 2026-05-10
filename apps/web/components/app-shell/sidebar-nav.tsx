@@ -7,7 +7,9 @@ import { usePathname } from 'next/navigation';
 
 import { Badge, cn, ScrollArea } from '@papopro/ui';
 
-import { NAV_GROUPS } from './nav-config';
+import { useUnreadCount } from '@/features/inbox/store';
+
+import { NAV_GROUPS, type NavItem } from './nav-config';
 
 interface SidebarNavProps {
   /** Chamado ao clicar num item — usado no mobile pra fechar o drawer. */
@@ -20,14 +22,35 @@ interface SidebarNavProps {
  *
  * Os itens marcados como `soon` não têm rota implementada ainda — clicar leva
  * pro placeholder /dashboard. Em M3+ as rotas viram reais.
+ *
+ * **Badges ao vivo (M5#4c):** o item `/inbox` recebe o `unreadCount` direto
+ * do store da Inbox via `useUnreadCount()`. Quando o número é 0, `badge` fica
+ * `undefined` e o `<Badge>` simplesmente não pinta — paridade com WhatsApp Web.
+ * Outras features podem seguir o mesmo padrão (ex: tarefas atrasadas) sem
+ * mudar a shape do `NavItem`.
  */
 export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
+  const inboxUnread = useUnreadCount();
+
+  // Mescla counters live nos items declarativos. Memoizamos pra preservar
+  // a referência dos arrays quando `inboxUnread` não muda — evita rerender
+  // dos `<Link>` por causa de identity miss.
+  const groups = React.useMemo(() => {
+    return NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.map((item) =>
+        item.href === '/inbox'
+          ? ({ ...item, badge: inboxUnread > 0 ? inboxUnread : undefined } satisfies NavItem)
+          : item,
+      ),
+    }));
+  }, [inboxUnread]);
 
   return (
     <ScrollArea className="flex-1 px-3 py-4">
       <nav aria-label="Navegação principal" className="flex flex-col gap-6">
-        {NAV_GROUPS.map((group, gi) => (
+        {groups.map((group, gi) => (
           <div key={gi} className="flex flex-col gap-1">
             {group.title && (
               <div className="text-caption text-muted-foreground px-3 pb-1 font-semibold uppercase tracking-wide">

@@ -9,33 +9,71 @@ import { ConnectionHealthIndicator } from '@/features/inbox/components/connectio
 import { ConversationList } from '@/features/inbox/components/conversation-list';
 import { LeadFichaPanel } from '@/features/inbox/components/lead-ficha-panel';
 import { MessageThread } from '@/features/inbox/components/message-thread';
-import { useSortedConversations } from '@/features/inbox/store';
+import { MobileFichaDrawer } from '@/features/inbox/components/mobile-ficha-drawer';
+import { useFilteredConversations } from '@/features/inbox/store';
+import type { InboxFilters } from '@/features/inbox/types';
 
 /**
  * Container da rota `/inbox` — orquestra os 3 painéis e segura o estado
- * de seleção de conversa.
+ * de seleção de conversa, filtros e drawer mobile da ficha.
  *
- * **M5#4a entrega o layout desktop completo (3 colunas em lg+).** Mobile
- * single-pane com navegação `lista → thread → ficha (drawer)` entra em
- * M5#4c. Aqui o mobile usa fallback simples: lista colapsa pra topo, thread
- * abaixo, ficha escondida em <lg.
+ * **M5#4c finaliza o flow:**
+ *  - Filtros (vendedor/status/etapa/no-reply) **lifted** pra cá pra serem
+ *    a única fonte de verdade que alimenta `useFilteredConversations`.
+ *  - Mobile single-pane com Drawer (vaul) pra ficha — botão "Ver lead"
+ *    no header da thread aciona em `lg-`.
  *
  * Estado:
  *  - `selectedConversationId`: id da conversa aberta. Default = primeira
- *    não-arquivada da lista ordenada (`useSortedConversations`).
- *  - Em M5#4b ganha integração com `g+i` global e `↑↓` pra navegar.
+ *    da lista filtrada (default oculta arquivadas).
+ *  - `filters`: estado dos filtros do popover + busca textual.
+ *  - `mobileView`: lista ↔ thread (single-pane <lg).
+ *  - `mobileFichaOpen`: drawer da ficha (independente do mobileView).
  */
-export function InboxView() {
-  const conversations = useSortedConversations();
+const EMPTY_FILTERS: InboxFilters = {};
 
-  // Default: primeira conversa não-arquivada (mais recente). useState com
-  // lazy initializer pra evitar recompute em cada render.
-  const [selectedId, setSelectedId] = React.useState<string | undefined>(() => {
-    return conversations.find((c) => !c.archivedAt)?.id ?? conversations[0]?.id;
-  });
+export function InboxView() {
+  const [filters, setFilters] = React.useState<InboxFilters>(EMPTY_FILTERS);
+  const filteredConversations = useFilteredConversations(filters);
+
+  // Default: primeira conversa da lista filtrada. Lazy initializer pra
+  // evitar recompute. Se filters mudarem e o selectedId sumir, o
+  // selectedId fica "órfão" — `useConversation(id)` retorna undefined e
+  // a thread mostra empty state. Comportamento correto: o usuário pode
+  // limpar filtros pra recuperar a conversa, ou clicar noutra.
+  const [selectedId, setSelectedId] = React.useState<string | undefined>(
+    () => filteredConversations[0]?.id,
+  );
 
   // Estado mobile: lista visível ou thread visível. Default = lista.
   const [mobileView, setMobileView] = React.useState<'list' | 'thread'>('list');
+  // Drawer da ficha mobile — abre por botão "Ver lead" no header da thread.
+  const [mobileFichaOpen, setMobileFichaOpen] = React.useState(false);
+
+  // Fecha o Drawer ao cruzar pra `lg+` (painel fixo da ficha já visível).
+  // Sem isso, se o usuário abre o drawer em mobile e redimensiona pra desktop,
+  // o vaul mantém focus trap + body-scroll-lock invisíveis. (Fix HIGH do
+  // review M5#4c.)
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia('(min-width: 1024px)');
+    function onChange(e: MediaQueryListEvent | MediaQueryList) {
+      if (e.matches) setMobileFichaOpen(false);
+    }
+    onChange(mql);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  // Reconcilia `selectedId` quando filtros mudam: se a conversa selecionada
+  // sai da lista filtrada, salta pra primeira visível. Paridade com Gmail/
+  // WhatsApp Web — sem isso o usuário ficava com thread aberta de uma
+  // conversa que sumiu da lista (visualmente quebrado). Fix MEDIUM do review.
+  React.useEffect(() => {
+    if (selectedId && !filteredConversations.some((c) => c.id === selectedId)) {
+      setSelectedId(filteredConversations[0]?.id);
+    }
+  }, [filteredConversations, selectedId]);
 
   // `useCallback` mantém referência estável → preserva a `React.memo` em
   // `<ConversationListItem>`. Sem isso, o store re-emit (ex: markRead zera
@@ -48,6 +86,10 @@ export function InboxView() {
 
   const handleBack = React.useCallback(() => {
     setMobileView('list');
+  }, []);
+
+  const handleOpenFicha = React.useCallback(() => {
+    setMobileFichaOpen(true);
   }, []);
 
   return (
@@ -90,6 +132,8 @@ export function InboxView() {
           <ConversationList
             selectedConversationId={selectedId}
             onSelectConversation={handleSelect}
+            filters={filters}
+            onFiltersChange={setFilters}
           />
         </div>
 
@@ -104,14 +148,22 @@ export function InboxView() {
           <MessageThread
             conversationId={selectedId}
             onBack={mobileView === 'thread' ? handleBack : undefined}
+            onOpenFicha={handleOpenFicha}
           />
         </div>
 
-        {/* Painel 3: ficha do lead — só em lg+ no M5#4a (Sheet em md, Drawer em sm vem em M5#4c) */}
+        {/* Painel 3: ficha — fixo em lg+. */}
         <div className="hidden h-full min-h-0 flex-col lg:flex">
           <LeadFichaPanel conversationId={selectedId} />
         </div>
       </div>
+
+      {/* Drawer mobile da ficha — só monta em <lg, sem overhead em desktop. */}
+      <MobileFichaDrawer
+        conversationId={selectedId}
+        open={mobileFichaOpen}
+        onOpenChange={setMobileFichaOpen}
+      />
     </div>
   );
 }

@@ -27,11 +27,14 @@ import { formatCents, formatDateShort, formatDateTime, initialsOf } from '@/lib/
 import { useDistanceToNow } from '../hooks/use-distance-to-now';
 import { useConversation } from '../store';
 
+import { LeadFichaQuickActions } from './lead-ficha-quick-actions';
+
 /**
  * Painel direito da Inbox: ficha resumida do lead da conversa atual.
  *
- * Read-only em M5#4a; em M5#4c ganha quick actions (mover etapa, atribuir
- * vendedor, arquivar conversa, marcar como não lida, adicionar tarefa).
+ * **M5#4c adiciona quick actions** (mover etapa, atribuir vendedor, arquivar)
+ * no topo. As ações operam diretamente sobre o store — toast com "Desfazer"
+ * permite reverter sem abrir a tela completa.
  *
  * Princípios:
  *  - Reusa primitivos já existentes em `features/leads/components/`
@@ -42,15 +45,31 @@ import { useConversation } from '../store';
  *    quando precisa editar campos.
  *
  * Empty state quando nenhuma conversa selecionada — sem ficha sem contexto.
+ *
+ * **`hideContainer`**: usado pelo `<MobileFichaDrawer>` pra renderizar o
+ * conteúdo sem o `<aside>` border/bg externo (drawer já tem padding/bg).
  */
 interface LeadFichaPanelProps {
   conversationId: string | undefined;
+  /** Quando true, omite o `<aside>` wrapper (uso interno do drawer mobile). */
+  hideContainer?: boolean;
 }
 
-export function LeadFichaPanel({ conversationId }: LeadFichaPanelProps) {
+export function LeadFichaPanel({ conversationId, hideContainer }: LeadFichaPanelProps) {
   const conversation = useConversation(conversationId);
 
   if (!conversation) {
+    if (hideContainer) {
+      return (
+        <div className="flex h-full items-center justify-center p-6">
+          <EmptyState
+            icon={User}
+            title="Sem ficha"
+            description="A ficha do lead aparece aqui quando você abre uma conversa."
+          />
+        </div>
+      );
+    }
     return (
       <aside
         aria-label="Ficha do lead"
@@ -65,16 +84,41 @@ export function LeadFichaPanel({ conversationId }: LeadFichaPanelProps) {
     );
   }
 
-  return <PanelContent leadId={conversation.leadId} />;
+  return (
+    <PanelContent
+      conversationId={conversation.id}
+      leadId={conversation.leadId}
+      hideContainer={hideContainer}
+    />
+  );
 }
 
-function PanelContent({ leadId }: { leadId: string }) {
+function PanelContent({
+  conversationId,
+  leadId,
+  hideContainer,
+}: {
+  conversationId: string;
+  leadId: string;
+  hideContainer?: boolean;
+}) {
   const lead = getLead(leadId);
   // `getActivitiesForLead` é Map.get + slice — O(1). Sem `useMemo`,
   // que custaria mais que o trabalho real.
   const recentActivities = getActivitiesForLead(leadId).slice(0, 4);
 
   if (!lead) {
+    if (hideContainer) {
+      return (
+        <div className="flex h-full items-center justify-center p-6">
+          <EmptyState
+            icon={User}
+            title="Lead não disponível"
+            description="O lead vinculado a essa conversa não foi encontrado. Recarregue a inbox; se persistir, fale com o suporte."
+          />
+        </div>
+      );
+    }
     return (
       <aside
         aria-label="Ficha do lead"
@@ -89,11 +133,18 @@ function PanelContent({ leadId }: { leadId: string }) {
     );
   }
 
+  // `Wrapper`/`wrapperProps`: `<aside>` no painel fixo, `<div>` no drawer
+  // mobile (drawer já provê o role "dialog" + label via `<DrawerTitle>`).
+  const Wrapper = hideContainer ? 'div' : 'aside';
+  const wrapperProps = hideContainer
+    ? { className: 'flex h-full flex-col' }
+    : {
+        'aria-label': `Ficha de ${lead.name}`,
+        className: 'border-border bg-card flex h-full flex-col border-l',
+      };
+
   return (
-    <aside
-      aria-label={`Ficha de ${lead.name}`}
-      className="border-border bg-card flex h-full flex-col border-l"
-    >
+    <Wrapper {...wrapperProps}>
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-4 p-5">
           <header className="flex items-start gap-3">
@@ -113,6 +164,15 @@ function PanelContent({ leadId }: { leadId: string }) {
               </div>
             </div>
           </header>
+
+          <Separator />
+
+          {/* Quick actions M5#4c — antes dos campos read-only. */}
+          <LeadFichaQuickActions
+            conversationId={conversationId}
+            leadId={lead.id}
+            currentStageId={lead.stageId}
+          />
 
           <Separator />
 
@@ -210,7 +270,7 @@ function PanelContent({ leadId }: { leadId: string }) {
           </Link>
         </Button>
       </div>
-    </aside>
+    </Wrapper>
   );
 }
 

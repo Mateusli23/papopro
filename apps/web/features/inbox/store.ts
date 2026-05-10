@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 
+import { useLeads } from '@/features/leads/store';
 import { FAKE_CONVERSATIONS, FAKE_WHATSAPP_CONNECTION } from '@/lib/fixtures/conversations';
 import { FAKE_MESSAGES } from '@/lib/fixtures/messages';
 import { FAKE_QUICK_REPLIES } from '@/lib/fixtures/quick-replies';
@@ -13,14 +14,20 @@ import {
   type SendTextMessageInput,
 } from './schemas';
 import {
+  applyArchiveConversation,
   applyAttachMedia,
+  applyReassignConversation,
   applySendInternalNote,
   applySendMessage,
+  applyUnarchiveConversation,
   countUnreadConversations,
+  filterConversations,
+  type InboxFilterContext,
+  type InboxLeadHandle,
   messagesForConversation,
   sortConversations,
 } from './transforms';
-import type { Conversation, Message, QuickReply, WhatsAppConnection } from './types';
+import type { Conversation, InboxFilters, Message, QuickReply, WhatsAppConnection } from './types';
 
 /**
  * Store in-memory client-side da Inbox — mesmo padrão de `features/cadences/store.ts`.
@@ -139,6 +146,60 @@ export function useWhatsAppConnection(): WhatsAppConnection {
 export function useUnreadCount(): number {
   const conversations = useConversations();
   return React.useMemo(() => countUnreadConversations(conversations), [conversations]);
+}
+
+// ─── Lookup de leads pra filtros (M5#4c) ─────────────────────────────────
+
+/**
+ * Hook composto: retorna conversas **ordenadas + filtradas** segundo `filters`.
+ *
+ * Combina três snapshots reativos:
+ *  - `useSortedConversations()` — conversations + sort
+ *  - `useSyncExternalStore` — messages (filtros de noReplyDays)
+ *  - `useLeads()` — **lookup live** de leads (review M5#4c MEDIUM): mover
+ *    um lead pra outra etapa via Kanban OU via quick action "Mover etapa"
+ *    refleete imediatamente no filtro `stageId` da inbox. Sem isso, o map
+ *    seria estático nas fixtures iniciais e o filtro mostraria estado
+ *    obsoleto até full reload.
+ *
+ * Tudo dentro de `useMemo` com chaves estáveis — re-roda quando qualquer
+ * snapshot muda, preserva referência idêntica entre renders sem mudança
+ * real (essencial pro `React.memo` do `<ConversationListItem>`).
+ *
+ * **Default oculta arquivadas** (regra do `filterConversations`). Pra
+ * mostrar arquivadas o caller passa `filters.status === 'archived'`.
+ */
+export function useFilteredConversations(filters: InboxFilters): Conversation[] {
+  const conversations = useSortedConversations();
+  const messages = React.useSyncExternalStore(
+    subscribeMessages,
+    getMessagesSnapshot,
+    getMessagesServerSnapshot,
+  );
+  const leads = useLeads();
+
+  // Map montado por render — barato (50 leads em M5; em M9 vira JOIN no
+  // Postgres). `useMemo` reaproveita quando `leads` não muda referência.
+  const leadById = React.useMemo<ReadonlyMap<string, InboxLeadHandle>>(
+    () =>
+      new Map(
+        leads.map((l) => [
+          l.id,
+          {
+            stageId: l.stageId,
+            name: l.name,
+            company: l.company,
+            phone: l.phone,
+          } satisfies InboxLeadHandle,
+        ]),
+      ),
+    [leads],
+  );
+
+  return React.useMemo(() => {
+    const ctx: InboxFilterContext = { messages, leadById };
+    return filterConversations(conversations, filters, ctx);
+  }, [conversations, messages, leadById, filters]);
 }
 
 // ─── Mutações ─────────────────────────────────────────────────────────────
@@ -307,4 +368,40 @@ export function attachMedia(conversationId: string, input: AttachMediaInput): Me
   emitConversations();
   emitMessages();
   return sendResult.message;
+}
+
+// ─── Mutações: archive / unarchive / reassign (M5#4c) ────────────────────
+
+/**
+ * Arquiva conversa. Toast com "Desfazer" no caller chama `unarchiveConversation`
+ * pra reverter — ver `<LeadFichaQuickActions>`. Idempotente.
+ */
+export function archiveConversation(conversationId: string): void {
+  const next = applyArchiveConversation(conversationsState, conversationId);
+  if (next === conversationsState) return; // já arquivada → no-op silencioso
+  conversationsState = next;
+  emitConversations();
+}
+
+/**
+ * Desarquiva conversa, recalculando `status` a partir da última mensagem
+ * não-nota. Idempotente — conversa já ativa retorna sem emitir.
+ */
+export function unarchiveConversation(conversationId: string): void {
+  const next = applyUnarchiveConversation(conversationsState, messagesState, conversationId);
+  if (next === conversationsState) return;
+  conversationsState = next;
+  emitConversations();
+}
+
+/**
+ * Reatribui a conversa a outro vendedor. **Não toca leads** — decisão de
+ * design: a conversa carrega seu próprio dono, separado do `assignedRepId`
+ * do lead. Ver `applyReassignConversation`.
+ */
+export function reassignConversation(conversationId: string, vendorId: string): void {
+  const next = applyReassignConversation(conversationsState, conversationId, vendorId);
+  if (next === conversationsState) return;
+  conversationsState = next;
+  emitConversations();
 }

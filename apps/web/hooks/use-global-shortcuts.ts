@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import { isEditableTarget } from '@/lib/utils/is-editable-target';
+
 /**
  * Captura sequências e atalhos globais. Atalhos suportados:
  *
@@ -44,15 +46,6 @@ export function useGlobalShortcuts(opts: UseGlobalShortcutsOptions) {
   }, [opts]);
 
   React.useEffect(() => {
-    function isEditableTarget(target: EventTarget | null): boolean {
-      if (!(target instanceof HTMLElement)) return false;
-      if (target.isContentEditable) return true;
-      const tag = target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-      if (target.closest('[data-shortcut-ignore]')) return true;
-      return false;
-    }
-
     function focusSearch() {
       const cb = optsRef.current.onFocusSearch;
       if (cb) {

@@ -3,62 +3,68 @@
 import * as React from 'react';
 
 import { EmptyState, Input, ScrollArea, Separator } from '@papopro/ui';
-import { Inbox, Search } from '@papopro/ui/icons';
+import { Filter, Inbox, Search } from '@papopro/ui/icons';
 
-import { FAKE_LEADS } from '@/lib/fixtures/leads';
-
-import { useSortedConversations } from '../store';
-import { countConversations } from '../transforms';
+import { useConversationListKeyboardNav } from '../hooks/use-conversation-list-keyboard-nav';
+import { useConversations, useFilteredConversations } from '../store';
+import { countActiveFilters, countConversations } from '../transforms';
+import type { InboxFilters } from '../types';
 
 import { ConversationListItem } from './conversation-list-item';
-
-// Map de leads montado uma vez no módulo — evita `find()` em loop de busca.
-// Em M9 a ficha do lead vem com a query da inbox via JOIN, sem custo extra.
-const LEAD_BY_ID = new Map(FAKE_LEADS.map((l) => [l.id, l]));
+import { InboxFiltersPopover } from './inbox-filters-popover';
 
 /**
- * Painel esquerdo da Inbox: header com busca + counts, lista de conversas
- * agrupada implicitamente por ordem de `lastMessageAt`. Arquivadas vão pro
- * fim (sortConversations no store).
+ * Painel esquerdo da Inbox: header com busca + popover de filtros + counts,
+ * lista de conversas agrupada implicitamente por ordem de `lastMessageAt`.
  *
- * **M5#4a entrega busca textual simples** sobre nome do lead, telefone e
- * preview da última mensagem. Filtros completos (status/vendedor/etapa/
- * sem-resposta-X-dias) entram em M5#4c — esse arquivo já está estruturado
- * pra receber `<ConversationFilters />` lado a lado quando chegar.
+ * **Entrega M5#4c:**
+ *  - Filtros: vendedor, status, etapa, sem resposta há X dias (popover).
+ *  - Listbox ARIA com navegação `↑↓` (`aria-activedescendant`).
+ *  - Default oculta arquivadas — chip "Arquivadas" no popover pra ver.
+ *
+ * **Levantamos os filtros pra props** porque `<InboxView>` precisa conhecer
+ * o estado pra alimentar o `useFilteredConversations` numa única fonte de
+ * verdade — search + filtros entram juntos no transform, sem race.
  */
 interface ConversationListProps {
   selectedConversationId: string | undefined;
   onSelectConversation: (id: string) => void;
+  filters: InboxFilters;
+  onFiltersChange: (filters: InboxFilters) => void;
 }
 
 export function ConversationList({
   selectedConversationId,
   onSelectConversation,
+  filters,
+  onFiltersChange,
 }: ConversationListProps) {
-  const conversations = useSortedConversations();
-  const [search, setSearch] = React.useState('');
+  // Lista filtrada (já considera search + vendedor + status + etapa + noReply).
+  const filtered = useFilteredConversations(filters);
 
-  // Pré-computa um índice "buscável" por conversa pra evitar O(N×M)
-  // (find no FAKE_LEADS) em cada keystroke. Roda só quando `conversations`
-  // muda — busca em si é só `includes` em string já normalizada.
-  const searchableConversations = React.useMemo(() => {
-    return conversations.map((c) => {
-      const lead = LEAD_BY_ID.get(c.leadId);
-      const haystack = [lead?.name, lead?.company, c.contactPhone, c.lastMessagePreview]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return { conversation: c, haystack };
-    });
-  }, [conversations]);
+  // Counts globais pra header — snapshot **bruto** (inclui arquivadas no total).
+  // Antes chamávamos `useFilteredConversations({})` aqui, mas isso (1) faz uma
+  // segunda subscrição + sort + filter desnecessários (perf) e (2) o default
+  // do filterConversations exclui arquivadas, então `counts.total` ficaria
+  // sem elas — confunde a label "X · Y não lidas". Usar `useConversations`
+  // direto resolve perf e semântica numa só. (Fix MEDIUM do review M5#4c.)
+  const all = useConversations();
+  const counts = React.useMemo(() => countConversations(all), [all]);
 
-  const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return conversations;
-    return searchableConversations.filter((s) => s.haystack.includes(q)).map((s) => s.conversation);
-  }, [conversations, searchableConversations, search]);
+  const search = filters.search ?? '';
+  const setSearch = (v: string) => onFiltersChange({ ...filters, search: v });
 
-  const counts = React.useMemo(() => countConversations(conversations), [conversations]);
+  const activeFilterCount = countActiveFilters(filters);
+  const hasSearch = search.trim().length > 0;
+
+  // Keyboard nav: ↑↓ no listbox.
+  const listRef = React.useRef<HTMLUListElement | null>(null);
+  useConversationListKeyboardNav({
+    listRef,
+    items: filtered,
+    selectedId: selectedConversationId,
+    onSelect: onSelectConversation,
+  });
 
   return (
     <aside
@@ -72,20 +78,23 @@ export function ConversationList({
             {counts.total} · {counts.unread} não lidas
           </span>
         </div>
-        <div className="relative">
-          <Search
-            aria-hidden
-            className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
-          />
-          <Input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nome, telefone ou mensagem…"
-            className="pl-9"
-            data-shortcut-search
-            aria-label="Buscar conversas"
-          />
+        <div className="flex items-stretch gap-2">
+          <div className="relative flex-1">
+            <Search
+              aria-hidden
+              className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
+            />
+            <Input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nome, telefone ou mensagem…"
+              className="pl-9"
+              data-shortcut-search
+              aria-label="Buscar conversas"
+            />
+          </div>
+          <InboxFiltersPopover filters={filters} onChange={onFiltersChange} />
         </div>
       </header>
 
@@ -93,38 +102,49 @@ export function ConversationList({
 
       {filtered.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-6">
-          {conversations.length === 0 ? (
+          {hasSearch || activeFilterCount > 0 ? (
+            <EmptyState
+              icon={Filter}
+              title="Nenhuma conversa nos filtros"
+              description="Ajuste ou limpe pra ver todas."
+            />
+          ) : (
             <EmptyState
               icon={Inbox}
               title="Sem conversas"
               description="Quando o WhatsApp do workspace começar a receber mensagens, elas aparecem aqui."
-            />
-          ) : (
-            <EmptyState
-              icon={Search}
-              title="Nada bate com a busca"
-              description={`Nenhuma conversa pra "${search}". Limpe a busca pra ver todas.`}
             />
           )}
         </div>
       ) : (
         <ScrollArea className="flex-1">
           {/*
-           * Lista de navegação simples (não-listbox). Listbox/option do ARIA
-           * exigiria gestão de aria-activedescendant + setas ↑↓ que entram
-           * só em M5#4b. Aqui usamos `aria-current` na seleção, padrão
-           * análogo à sidebar (`aria-current="page"`) — funciona com
-           * leitores de tela e mantém o `<button>` com role nativo.
+           * Listbox ARIA com `aria-activedescendant`. O `<ul>` é focável
+           * (tabindex=0); itens internos NÃO recebem tabindex — quem governa
+           * o foco visível é o `aria-activedescendant` + estilo `selected`.
+           * Padrão WAI-ARIA Listbox 1.2.
            */}
-          <ul aria-label="Conversas" className="flex flex-col">
+          <ul
+            ref={listRef}
+            role="listbox"
+            tabIndex={0}
+            aria-label="Conversas — use as setas para navegar, Enter para abrir"
+            aria-activedescendant={
+              selectedConversationId ? `conv-${selectedConversationId}` : undefined
+            }
+            // Focus indicator (WCAG 2.4.7): ring sutil no listbox quando recebe
+            // foco por teclado. Sem isso, usuário keyboard-only não sabe que o
+            // ↑↓ vai funcionar — o item highlight é o mesmo focado ou não.
+            // (Fix HIGH do review M5#4c.)
+            className="focus-visible:ring-primary/40 flex flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset"
+          >
             {filtered.map((c) => (
-              <li key={c.id}>
-                <ConversationListItem
-                  conversation={c}
-                  selected={c.id === selectedConversationId}
-                  onSelect={onSelectConversation}
-                />
-              </li>
+              <ConversationListItem
+                key={c.id}
+                conversation={c}
+                selected={c.id === selectedConversationId}
+                onSelect={onSelectConversation}
+              />
             ))}
           </ul>
         </ScrollArea>
