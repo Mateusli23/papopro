@@ -26,8 +26,10 @@ import type { NextRequest, NextResponse } from 'next/server';
  */
 
 export const WORKSPACE_COOKIE_NAME = 'papopro_workspace_id';
+export const WIZARD_COMPLETED_COOKIE_NAME = 'papopro_wizard_completed';
 
 const WORKSPACE_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 dias
+const WIZARD_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 ano (flag de primeira visita)
 
 /**
  * Server Action / Route Handler grava o cookie via `cookies()` de
@@ -84,4 +86,25 @@ export function setWorkspaceCookieOnResponse(response: NextResponse, workspaceId
     path: '/',
     maxAge: WORKSPACE_COOKIE_MAX_AGE,
   });
+}
+
+/**
+ * Cookie de "primeira visita ao dashboard" — flag de UX local (M7#4 Onda 3).
+ *
+ * Substitui o `papopro_workspace_mock_wizard_completed` do legado mock. Vive
+ * 1 ano; depois disso o wizard reabre (próximo big release UX). httpOnly pra
+ * impedir manipulação trivial via devtools.
+ */
+export function setWizardCookie(): void {
+  cookies().set(WIZARD_COMPLETED_COOKIE_NAME, '1', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: WIZARD_COOKIE_MAX_AGE,
+  });
+}
+
+export function readWizardCookie(): boolean {
+  return cookies().get(WIZARD_COMPLETED_COOKIE_NAME)?.value === '1';
 }

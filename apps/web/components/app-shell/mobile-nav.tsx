@@ -15,7 +15,12 @@ import { Menu } from '@papopro/ui/icons';
 
 import { SidebarFooter } from './sidebar-footer';
 import { SidebarNav } from './sidebar-nav';
-import { WorkspaceSwitcher } from './workspace-switcher';
+import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switcher';
+
+interface MobileNavProps {
+  workspaces: WorkspaceSwitcherItem[];
+  activeWorkspaceId: string | null;
+}
 
 /**
  * Hamburger + drawer lateral pra telas <1024px.
@@ -23,8 +28,11 @@ import { WorkspaceSwitcher } from './workspace-switcher';
  * Reusa SidebarNav/SidebarFooter/WorkspaceSwitcher — o mesmo conteúdo da
  * sidebar fixa fica "guardado" atrás do botão. `onNavigate` fecha o sheet
  * automaticamente ao clicar num link.
+ *
+ * **M7#4 Onda 3:** workspaces vêm via prop do Topbar (server) em vez de
+ * fixtures via `useWorkspaceMock`.
  */
-export function MobileNav() {
+export function MobileNav({ workspaces, activeWorkspaceId }: MobileNavProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
@@ -54,7 +62,7 @@ export function MobileNav() {
           <LogoFull />
         </div>
         <div className="border-sidebar-border border-b p-2">
-          <WorkspaceSwitcher />
+          <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
         </div>
         <SidebarNav onNavigate={() => setOpen(false)} />
         <SidebarFooter />

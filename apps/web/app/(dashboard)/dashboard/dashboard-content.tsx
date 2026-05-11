@@ -21,8 +21,15 @@ import {
 } from '@papopro/ui/icons';
 
 import { PostWizardDashboard } from '@/features/dashboard/components/post-wizard-dashboard';
-import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
 import { useUser } from '@/lib/auth/use-user';
+
+interface DashboardContentProps {
+  /**
+   * Vem do `readWizardCookie` no Server Component pai (M7#4 Onda 3).
+   * Substitui `useWorkspaceMock().wizardCompleted` legacy.
+   */
+  wizardCompleted: boolean;
+}
 
 /**
  * Dashboard com 2 variantes:
@@ -30,17 +37,15 @@ import { useUser } from '@/lib/auth/use-user';
  *    instruindo o próximo passo. Princípio CLAUDE.md §8: "Estado vazio
  *    sempre orienta o próximo passo. Sem tela em branco."
  *  - **pós-onboarding** (`wizardCompleted=true`): dashboard real com KPIs
- *    derivados das fixtures.
+ *    derivados das fixtures (M8 troca por queries reais).
  *
- * Em M7#3 a auth virou Supabase real (`useUser`), mas `wizardCompleted` segue
- * mock até M7#4 ligar o wizard a workspace_members real. Os dois loadings
- * são distintos — mostramos skeleton se qualquer um ainda não resolveu.
+ * `useUser` continua client — name vem do auth metadata hidratado runtime;
+ * skeleton mostra enquanto o user resolve.
  */
-export function DashboardContent() {
+export function DashboardContent({ wizardCompleted }: DashboardContentProps) {
   const { loading: userLoading, displayName } = useUser();
-  const { loading: wsLoading, wizardCompleted } = useWorkspaceMock();
 
-  if (userLoading || wsLoading) {
+  if (userLoading) {
     return <DashboardSkeleton />;
   }
 

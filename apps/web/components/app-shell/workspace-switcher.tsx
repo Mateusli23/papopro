@@ -1,5 +1,11 @@
 'use client';
 
+import * as React from 'react';
+
+import { useRouter } from 'next/navigation';
+
+import toast from 'react-hot-toast';
+
 import {
   Avatar,
   AvatarFallback,
@@ -15,39 +21,97 @@ import {
 } from '@papopro/ui';
 import { Check, ChevronsUpDown, PlusCircle } from '@papopro/ui/icons';
 
-import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
-import { FAKE_WORKSPACES, type Workspace } from '@/lib/fixtures/workspaces';
+import { setActiveWorkspaceAction } from '@/features/workspace/actions';
+import type { MembershipSummary } from '@/lib/auth/get-user';
 
-const ACCENT_BG: Record<Workspace['accent'], string> = {
-  primary: 'bg-primary/10 text-primary',
-  success: 'bg-success/15 text-success',
-  warning: 'bg-warning/15 text-warning',
-  info: 'bg-info/15 text-info',
-  // `accent` agora é amarelo decorativo — usar como fundo de avatar lê
-  // como warning. Aqui a key permanece (fixture compatível) mas mapeia
-  // para o azul primário; quando workspaces reais vierem (M7), o tipo
-  // `Workspace['accent']` é refeito sem essa colagem.
-  accent: 'bg-primary/10 text-primary',
-};
+export interface WorkspaceSwitcherItem {
+  workspaceId: string;
+  name: string;
+  /** Sigla 2 letras pra avatar fallback (gerada server-side em `toSwitcherItem`). */
+  initials: string;
+  /** Plano do workspace (Pro / Pro IA / Enterprise). */
+  plan: string;
+  /** Papel do user no workspace. */
+  role: MembershipSummary['role'];
+  /** Cor de marca (semântica baseada no índice + plano — vira coluna real em M8). */
+  accent: 'primary' | 'success' | 'info' | 'warning';
+}
 
 interface WorkspaceSwitcherProps {
+  workspaces: WorkspaceSwitcherItem[];
+  activeWorkspaceId: string | null;
   /** Versão "compacta" (só sigla) usada quando o switcher está num espaço estreito. */
   compact?: boolean;
 }
 
+const ACCENT_BG: Record<WorkspaceSwitcherItem['accent'], string> = {
+  primary: 'bg-primary/10 text-primary',
+  success: 'bg-success/15 text-success',
+  warning: 'bg-warning/15 text-warning',
+  info: 'bg-info/15 text-info',
+};
+
 /**
- * Switcher de workspace no topo da sidebar.
+ * Switcher de workspace no topo da sidebar (M7#4 Onda 3 — agora real).
  *
- * Lê o workspace ativo do `WorkspaceMockProvider` — placeholder até M7#4 ligar
- * a workspace_members real. Quando M7#4 entrar, este componente passa a
- * receber as workspaces via `getCurrentUserContext` (server) e o Zustand
- * store de workspace ativo escreve cookie httpOnly pra middleware ler.
+ * **Antes (M3/M7#3):** consumia `useWorkspaceMock()` com fixtures hardcoded.
+ * **Agora:** recebe `workspaces` + `activeWorkspaceId` via prop do Server
+ * Component pai (Sidebar/MobileNav), que fazem fetch de `getCurrentUserContext`.
+ * Troca chama `setActiveWorkspaceAction(id)` que valida membership e seta o
+ * cookie httpOnly `papopro_workspace_id`. `router.refresh()` re-roda o
+ * middleware/Server Components com o cookie novo.
+ *
+ * **Otimismo controlado:** mantemos `pendingId` em state durante a transição
+ * pra feedback visual imediato (Check muda de lugar enquanto a action roda).
+ * Se action falhar, voltamos pro ID atual + toast com mensagem da action.
+ *
+ * **"Criar workspace"** continua placeholder por enquanto — fluxo de criar
+ * 2º+ workspace pelo switcher é Onda 4+ (vai precisar de modal + reuso de
+ * `createWorkspaceAction` permitindo múltiplos).
  */
-export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
-  const { activeWorkspace, setActiveWorkspace } = useWorkspaceMock();
-  // Fallback: se o provider ainda não hidratou (loading), exibe o primeiro
-  // fixture pra a UI não piscar com placeholder vazio.
-  const active = (activeWorkspace ?? FAKE_WORKSPACES[0]) as Workspace;
+export function WorkspaceSwitcher({
+  workspaces,
+  activeWorkspaceId,
+  compact = false,
+}: WorkspaceSwitcherProps) {
+  const router = useRouter();
+  const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [isPending, startTransition] = React.useTransition();
+
+  // Workspace ativo: cookie > primeiro da lista. Cobre caso raro de cookie
+  // apontar pra workspace que o user não tem mais acesso (foi removido).
+  const activeFromCookie = workspaces.find((w) => w.workspaceId === activeWorkspaceId);
+  const active = pendingId
+    ? (workspaces.find((w) => w.workspaceId === pendingId) ?? activeFromCookie ?? workspaces[0])
+    : (activeFromCookie ?? workspaces[0]);
+
+  // Sem workspaces: middleware deveria ter redirecionado pra /onboarding —
+  // mas defensivamente render placeholder pra não crashar.
+  if (!active) {
+    return (
+      <Button variant="ghost" disabled className="h-auto w-full justify-start gap-2 p-2">
+        <span className="text-caption text-muted-foreground">Sem workspace</span>
+      </Button>
+    );
+  }
+
+  async function handleSelect(workspaceId: string) {
+    if (workspaceId === active!.workspaceId) return;
+    setPendingId(workspaceId);
+    const result = await setActiveWorkspaceAction(workspaceId);
+    if (!result.ok) {
+      setPendingId(null);
+      toast.error(result.error);
+      return;
+    }
+    startTransition(() => {
+      // `router.refresh()` força server components dependentes (layout,
+      // dashboard) a re-renderizar com a workspace nova. Topbar/sidebar
+      // mostram o estado atualizado sem reload completo.
+      router.refresh();
+      setPendingId(null);
+    });
+  }
 
   return (
     <DropdownMenu>
@@ -59,6 +123,7 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
             'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
           )}
           aria-label={`Workspace atual: ${active.name}. Trocar`}
+          disabled={isPending}
         >
           <span className="flex min-w-0 items-center gap-2.5">
             <Avatar className="size-8 rounded-md">
@@ -86,13 +151,17 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {FAKE_WORKSPACES.map((ws) => {
-          const isActive = ws.id === active.id;
+        {workspaces.map((ws) => {
+          const isActive = ws.workspaceId === active.workspaceId;
           return (
             <DropdownMenuItem
-              key={ws.id}
-              onSelect={() => setActiveWorkspace(ws.id)}
+              key={ws.workspaceId}
+              onSelect={(event) => {
+                event.preventDefault();
+                void handleSelect(ws.workspaceId);
+              }}
               className="gap-3 py-2"
+              disabled={isPending}
             >
               <Avatar className="size-8 rounded-md">
                 <AvatarFallback
@@ -118,9 +187,10 @@ export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
           );
         })}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-muted-foreground">
+        <DropdownMenuItem className="text-muted-foreground" disabled>
           <PlusCircle />
           Criar workspace
+          <span className="text-caption ml-auto">Em breve</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

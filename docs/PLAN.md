@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                                    | PR                 |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------- | ------------------ |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                               | _aguardando abrir_ |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                               | _aguardando abrir_ |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                               | _aguardando abrir_ |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ⚠️ em andamento (Ondas 1 + 2 entregues; Onda 3 = switcher real + cleanup) | _aguardando abrir_ |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                                                               | —                  |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                               | —                  |
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                           | PR                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------- | ------------------ |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                      | _aguardando abrir_ |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                      | _aguardando abrir_ |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                      | _aguardando abrir_ |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas, 3 commits) | _aguardando abrir_ |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                      | —                  |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                      | —                  |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -549,7 +549,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha _(M7#3 — "logout em todos os dispositivos" fica pra M7#5 junto com audit log)_
 - [x] Server Actions de auth substituem mocks de M3 _(M7#3)_
 - [x] Convite por email via Resend + aceite via magic link _(M7#4 — Onda 2: `inviteMemberAction` (RBAC Owner/Admin inline + idempotência por workspace×email), `acceptInvitationAction` (transação member + audit + cookie), `revokeInvitationAction`; página pública `/invite/accept` com 4 variantes; cliente Resend via `fetch` nativo pra contornar TLS strict no registry; `next` propagado por signup/login pra retomar fluxo de convite depois da confirmação)_
-- [ ] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3)_
+- [x] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3: Sidebar + MobileNav viraram Server Components fetchando `getCurrentUserContext`; `WorkspaceSwitcher` recebe `workspaces[]` + `activeWorkspaceId` via prop, `setActiveWorkspaceAction` valida membership antes de setar cookie, `router.refresh()` re-roda middleware + Server Components com tenant novo)_
 - [x] Wizard de onboarding (M3) cria workspace de verdade _(M7#4 — Onda 1: `/onboarding` chama `createWorkspaceAction` que insere Workspace + WorkspaceMember(Owner) + NotificationPreference + AuditLog em transação; cookie httpOnly `papopro_workspace_id` setado pela action e lido pelo middleware)_
 - [x] Middleware com gate de auth + redirect inteligente _(M7#3 entregou gate por sessão + email confirmado; M7#4 Onda 1 fechou o lookup de memberships — cookie httpOnly `papopro_workspace_id` é fast path, `getMembershipCountForUser` via admin client é fallback Edge-safe; /onboarding bloqueia quem já tem workspace, demais rotas bloqueiam quem não tem)_
 - [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
@@ -716,6 +716,48 @@ Segunda das 3 ondas do M7#4. Owner/Admin convida por email; convidado recebe lin
 - Domínio verificado no Resend dashboard com SPF/DKIM (passo dos pré-requisitos M0; bloqueante pra emails saírem em produção).
 
 **Commit:** `feat(invitations): convite por email via resend + accept por magic link (M7#4 onda 2)`
+
+**Entregas — M7#4 Onda 3 — Switcher real + cleanup do mock + smoke endpoint:**
+
+Terceira e última onda do M7#4. Removemos o `WorkspaceMockProvider` legado (criado em M3 como ponte até backend real), trocamos o switcher por dados reais com Server Action validando RBAC, e adicionamos smoke endpoint cobrindo os helpers puros do feature.
+
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) ampliado com 3 actions novas:
+  - `setActiveWorkspaceAction(workspaceId)` — valida formato UUID + sessão + **membership** (defense-in-depth — devtools alterando cookie não pivota tenant, action retorna 403 antes do middleware liberar). Seta cookie `papopro_workspace_id`.
+  - `clearActiveWorkspaceAction()` — limpa cookie. Usado pelo `logoutAction` (M7#3 não limpava, gerava ricochete confuso quando user trocava de conta no mesmo browser).
+  - `markWizardCompletedAction()` — seta cookie `papopro_wizard_completed=1` (httpOnly, 1 ano). Substitui o `markWizardCompleted` do mock provider. Decisão: cookie em vez de coluna `users.first_run_completed_at` porque flag é "primeira visita neste dispositivo" — semântica local, sem necessidade de sync entre devices.
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — `logoutAction` agora chama `clearWorkspaceCookie()` antes do `redirect('/login')`. Sem isso, user logava com conta B no mesmo navegador e o middleware lia cookie de tenant A — `resolveHasWorkspace` retornava true por cookie stale, queries filtravam por workspaceId errado, RLS bloqueava, UX confusa.
+- [x] [`apps/web/lib/auth/workspace-cookie.ts`](apps/web/lib/auth/workspace-cookie.ts) — ganhou `WIZARD_COMPLETED_COOKIE_NAME`, `setWizardCookie()`, `readWizardCookie()`. Mesmo padrão httpOnly/SameSite Lax/secure-prod do cookie de workspace ativo.
+- [x] [`apps/web/components/app-shell/workspace-switcher.tsx`](apps/web/components/app-shell/workspace-switcher.tsx) — refatorado para receber `workspaces: WorkspaceSwitcherItem[]` + `activeWorkspaceId: string | null` via prop. Chama `setActiveWorkspaceAction(id)` + `router.refresh()` na seleção. **Otimismo controlado:** `pendingId` em state durante a transição mostra Check visualmente no item escolhido enquanto a action roda (rollback + toast em caso de falha). Item "Criar workspace" continua placeholder ("Em breve") — fluxo de criar 2º+ workspace pelo switcher fica pra Onda 4+ (precisa modal + reuso de `createWorkspaceAction` permitindo múltiplos por user).
+- [x] [`apps/web/features/workspace/presentation.ts`](apps/web/features/workspace/presentation.ts) (novo, server-only) — `workspaceInitials(name)` e `toSwitcherItem(membership, index)`. Centraliza derivações cosméticas (iniciais 2-letras pro avatar, `accent` determinístico por índice em `[primary, success, info, warning]`). Substitui o mapa hardcoded de fixtures.
+- [x] [`apps/web/components/app-shell/sidebar.tsx`](apps/web/components/app-shell/sidebar.tsx) — virou **async Server Component**. `loadSwitcherData()` exportado (helper compartilhado com Topbar) fetcha `getCurrentUserContext` (cached por request) + lê cookie e devolve `{workspaces, activeWorkspaceId}`. Cookie stale (workspace removida) cai pra primeiro item da lista.
+- [x] [`apps/web/components/app-shell/topbar.tsx`](apps/web/components/app-shell/topbar.tsx) + [`apps/web/components/app-shell/mobile-nav.tsx`](apps/web/components/app-shell/mobile-nav.tsx) — Topbar virou async Server Component, chama `loadSwitcherData()` (mesma cache da Sidebar — 1 round-trip total) e passa pro `<MobileNav workspaces activeWorkspaceId>` (que continua client por causa do `useState` do Sheet).
+- [x] [`apps/web/features/onboarding/components/welcome-wizard.tsx`](apps/web/features/onboarding/components/welcome-wizard.tsx) — **3 steps** agora (WhatsApp, Agent, CSV); step 1 "Confirme seu workspace" removido (workspace é criado em `/onboarding` antes do dashboard). `finish()` chama `markWizardCompletedAction()` em vez do mock.
+- [x] [`apps/web/features/onboarding/components/welcome-wizard-controller.tsx`](apps/web/features/onboarding/components/welcome-wizard-controller.tsx) — recebe `hasWorkspace` + `wizardCompleted` via prop do server.
+- [x] [`apps/web/app/(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) + [`apps/web/app/(dashboard)/dashboard/page.tsx`](<apps/web/app/(dashboard)/dashboard/page.tsx>) + [`apps/web/app/(dashboard)/dashboard/dashboard-content.tsx`](<apps/web/app/(dashboard)/dashboard/dashboard-content.tsx>) — fluxo de `wizardCompleted` 100% server-side via `readWizardCookie()`, sem cookie client read.
+- [x] [`apps/web/app/layout.tsx`](apps/web/app/layout.tsx) — `<WorkspaceMockProvider>` removido do `<ThemeProvider>`. Comentário documenta a remoção e o padrão "sem provider — cada consumer pega direto da fonte canônica (cookies + Supabase Auth)".
+- [x] **Deletados** (arquivos mortos): [`apps/web/features/workspace/workspace-mock-provider.tsx`](apps/web/features/workspace/workspace-mock-provider.tsx), [`apps/web/lib/fixtures/workspaces.ts`](apps/web/lib/fixtures/workspaces.ts), [`apps/web/features/onboarding/components/steps/workspace-step.tsx`](apps/web/features/onboarding/components/steps/workspace-step.tsx).
+- [x] [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) — smoke endpoint cobrindo 33 asserts em 5 grupos: **slugify** (10 — diacritics, casos limite Unicode, truncate 64, non-string fallback), **ensureUniqueSlug** (5 — append -2, iteração, base livre, fallback "workspace", throw após 50), **schema** (5 — válido, < 2 chars, > 60, control chars, emoji+acento aceito), **initials** (6 — 1/2 palavras, vazio, espaços, lowercase→uppercase), **switcher-item** (8 — propagação + accent determinístico em índices 0/3/5). Não toca no banco — Server Actions exigem sessão real, cobertura E2E vai pro Playwright M7#6.
+
+**Decisões registradas:**
+
+- **`setActiveWorkspaceAction` valida membership server-side:** confiamos no cookie como cache, mas a action que escreve o cookie chama Prisma pra confirmar acesso. Devtools trocando cookie diretamente → action devolve "Você não tem acesso a esse workspace" antes de qualquer query rodar com tenant errado.
+- **`Sidebar` e `Topbar` compartilham `loadSwitcherData()`:** evita 2 round-trips. `getCurrentUserContext` já é cached por request via React `cache()`, mas extrair o helper documenta a intenção e facilita reuso futuro (settings/team list em M7#5 vai reaproveitar).
+- **`presentation.ts` server-only:** o adaptador `MembershipSummary → WorkspaceSwitcherItem` tem `import 'server-only'` pra garantir que a derivação acontece no boundary correto. Se rodasse no client, `workspaceInitials` viraria duplicação e o `accent` determinístico (que vira coluna real em M8) precisaria sync.
+- **Switcher step 1 do wizard removido (não cosmético):** wizard tinha "Confirme seu workspace" como step 1 mockado em M3. Em M7#4 Onda 1, `/onboarding` virou a criação real → step 1 sobrou apenas como input cosmético. Onda 3 remove pra a UI alinhar com o fluxo real (3 steps: WhatsApp, Agent, CSV).
+- **`markWizardCompletedAction` como Server Action e não cliente:** cookie httpOnly só pode ser setado pelo server. Server Action devolve no header `Set-Cookie` da response; `router.refresh()` após a action garante que o próximo render do layout lê o cookie atualizado.
+- **`workspace_step.tsx` deletado mesmo sendo "ainda usável":** YAGNI — restaurar do git é trivial se mudarmos de ideia, ter o arquivo no repo confunde futuro reviewer que pensa "esse step é parte do fluxo?". Limpeza explícita > legado preservado.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 37 rotas (`/api/smoke-test/workspaces` nova), middleware Edge 82.8 kB (estável vs Onda 2 — sem regra nova no middleware)
+- E2E manual pendente (mesmo motivo das ondas anteriores; smoke endpoint roda local quando `pnpm dev` está ativo: `curl http://localhost:3000/api/smoke-test/workspaces`)
+
+**Commit:** `feat(workspace): switcher real + cleanup do mock provider + smoke endpoint (M7#4 onda 3)`
+
+**Commit final do M7#4 (entregue só no último sub-PR):** já efetivado nos commits das 3 ondas — não há squash separado.
 
 ---
 

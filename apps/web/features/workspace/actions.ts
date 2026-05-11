@@ -23,7 +23,11 @@
 import { prisma, type Prisma } from '@papopro/db';
 
 import { getCurrentUser } from '@/lib/auth/get-user';
-import { setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import {
+  clearWorkspaceCookie,
+  setWizardCookie,
+  setWorkspaceCookie,
+} from '@/lib/auth/workspace-cookie';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
 
 import { workspaceCreateSchema, type WorkspaceCreateInput } from './schemas';
@@ -201,4 +205,82 @@ function isPrismaErrorCode(err: unknown, code: string): boolean {
     'code' in err &&
     (err as { code?: unknown }).code === code
   );
+}
+
+// =============================================================================
+// Onda 3 — switcher real + flag de wizard
+// =============================================================================
+
+const WORKSPACE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type SetActiveWorkspaceResult =
+  | { ok: true; workspaceId: string }
+  | { ok: false; error: string };
+
+/**
+ * `setActiveWorkspaceAction` — switcher real (M7#4 Onda 3).
+ *
+ * Recebe o `workspaceId` selecionado, **valida que o caller é membro** do
+ * workspace (defense-in-depth — não confia no input, mesmo com RLS), e seta
+ * o cookie httpOnly `papopro_workspace_id` lido pelo middleware/with-workspace.
+ *
+ * Sem essa validação, qualquer client poderia "se logar" em qualquer workspace
+ * trocando o cookie no devtools — a RLS bloqueia leituras mas o gate de
+ * middleware libera a rota, levando a uma tela 403 confusa em vez de redirect
+ * imediato.
+ *
+ * Retorna `{ok:true}` em sucesso; client chama `router.refresh()` em seguida
+ * pra Server Components re-renderizarem com o workspace novo.
+ */
+export async function setActiveWorkspaceAction(
+  workspaceId: string,
+): Promise<SetActiveWorkspaceResult> {
+  if (typeof workspaceId !== 'string' || !WORKSPACE_ID_REGEX.test(workspaceId)) {
+    return { ok: false, error: 'Workspace inválido.' };
+  }
+
+  const user = await getCurrentUser();
+  if (!user) {
+    return { ok: false, error: 'Sessão expirada — faça login novamente.' };
+  }
+
+  const member = await prisma.workspaceMember.findUnique({
+    where: { workspaceId_userId: { workspaceId, userId: user.id } },
+    select: { id: true },
+  });
+
+  if (!member) {
+    return { ok: false, error: 'Você não tem acesso a esse workspace.' };
+  }
+
+  setWorkspaceCookie(workspaceId);
+  return { ok: true, workspaceId };
+}
+
+/**
+ * `clearActiveWorkspaceAction` — usado no logout (M7#3 não limpava esse
+ * cookie). Sem isso o user faz logout, loga com outra conta no mesmo
+ * navegador, e o middleware tenta usar o cookie do tenant anterior — RLS
+ * bloqueia mas a UX fica confusa. Limpar explicitamente.
+ */
+export async function clearActiveWorkspaceAction(): Promise<{ ok: true }> {
+  clearWorkspaceCookie();
+  return { ok: true };
+}
+
+export type WizardActionResult = { ok: true };
+
+/**
+ * `markWizardCompletedAction` — marca cookie `papopro_wizard_completed=1`
+ * (httpOnly, 1 ano). Substitui `markWizardCompleted` do `WorkspaceMockProvider`.
+ *
+ * **Por que cookie e não coluna no banco:** o flag é "primeira visita ao
+ * dashboard deste browser/perfil" — semântica local. Usuário pode usar
+ * dispositivo novo e ver wizard de novo (aceitável; é guia, não onboarding
+ * obrigatório). Adicionar `users.first_run_completed_at` força sync entre
+ * dispositivos e introduz uma migration — não vale o ganho.
+ */
+export async function markWizardCompletedAction(): Promise<WizardActionResult> {
+  setWizardCookie();
+  return { ok: true };
 }

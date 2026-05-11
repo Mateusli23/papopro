@@ -19,6 +19,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
+import { clearWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 import {
@@ -200,6 +201,13 @@ export async function forgotAction(input: ForgotPasswordInput): Promise<AuthActi
 export async function logoutAction(): Promise<void> {
   const supabase = createSupabaseServerClient();
   await supabase.auth.signOut();
+  // Limpa o cookie de workspace ativo (M7#4 Onda 3). Sem isso, o user
+  // loga com outra conta no mesmo navegador e o middleware ainda enxerga
+  // o tenant anterior — `resolveHasWorkspace` retorna true por cookie
+  // stale, e a primeira tela mostra dados do membership novo mas com
+  // workspace cookie do antigo, gerando 403 em queries que filtram por
+  // workspaceId. Limpeza explícita evita o ricochete.
+  clearWorkspaceCookie();
   revalidatePath('/', 'layout');
   redirect('/login');
 }

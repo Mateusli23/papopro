@@ -3,6 +3,7 @@ import { Search } from '@papopro/ui/icons';
 
 import { MobileNav } from './mobile-nav';
 import { NotificationsButton } from './notifications-button';
+import { loadSwitcherData } from './sidebar';
 import { UserMenu } from './user-menu';
 
 /**
@@ -10,15 +11,21 @@ import { UserMenu } from './user-menu';
  *  - mobile (<lg): hamburger à esquerda + ações à direita;
  *  - desktop (≥lg): busca expandida + ações.
  *
+ * **M7#4 Onda 3:** Server Component async pra carregar workspaces e passar
+ * pro `<MobileNav>` (client). React `cache()` em `getCurrentUserContext`
+ * garante que Sidebar + Topbar compartilham o mesmo round-trip.
+ *
  * Busca é placeholder visual até M3+ (CommandMenu/Cmd+K vem depois).
  */
-export function Topbar() {
+export async function Topbar() {
+  const { workspaces, activeWorkspaceId } = await loadSwitcherData();
+
   return (
     <header
       className="bg-background/80 supports-[backdrop-filter]:bg-background/60 border-border sticky top-0 z-30 flex h-14 items-center gap-3 border-b px-4 backdrop-blur-md sm:px-6"
       role="banner"
     >
-      <MobileNav />
+      <MobileNav workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
 
       <div className="relative hidden max-w-md flex-1 md:flex">
         <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
