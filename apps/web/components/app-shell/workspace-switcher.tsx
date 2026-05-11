@@ -15,7 +15,7 @@ import {
 } from '@papopro/ui';
 import { Check, ChevronsUpDown, PlusCircle } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
 import { FAKE_WORKSPACES, type Workspace } from '@/lib/fixtures/workspaces';
 
 const ACCENT_BG: Record<Workspace['accent'], string> = {
@@ -38,13 +38,13 @@ interface WorkspaceSwitcherProps {
 /**
  * Switcher de workspace no topo da sidebar.
  *
- * Lê o workspace ativo do `AuthMockProvider` (cookie compartilhado com o
- * middleware). Em M7 quem fornece o estado vira o helper `with-workspace.ts`
- * + Server Action que escreve o cookie httpOnly — o componente em si não
- * muda, só a fonte do hook.
+ * Lê o workspace ativo do `WorkspaceMockProvider` — placeholder até M7#4 ligar
+ * a workspace_members real. Quando M7#4 entrar, este componente passa a
+ * receber as workspaces via `getCurrentUserContext` (server) e o Zustand
+ * store de workspace ativo escreve cookie httpOnly pra middleware ler.
  */
 export function WorkspaceSwitcher({ compact = false }: WorkspaceSwitcherProps) {
-  const { activeWorkspace, setActiveWorkspace } = useAuthMock();
+  const { activeWorkspace, setActiveWorkspace } = useWorkspaceMock();
   // Fallback: se o provider ainda não hidratou (loading), exibe o primeiro
   // fixture pra a UI não piscar com placeholder vazio.
   const active = (activeWorkspace ?? FAKE_WORKSPACES[0]) as Workspace;

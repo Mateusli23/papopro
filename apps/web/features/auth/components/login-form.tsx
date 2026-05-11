@@ -11,26 +11,25 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
-
+import { loginAction } from '../actions';
 import { loginSchema, type LoginInput } from '../schemas';
 
 import { FormField } from './form-field';
 
 /**
- * Form de login. Validação client-side com Zod + React Hook Form.
+ * Form de login. Validação client-side com Zod + RHF, submit via Server
+ * Action `loginAction` (M7#3) — antes era mock.
  *
- * Estado da navegação **mockado** (M3): o submit espera ~600 ms para mostrar
- * o loading no botão e redireciona pro dashboard sem checar credenciais. Em
- * M7 esse handler vira Server Action chamando `supabase.auth.signInWithPassword`,
- * mas a forma do componente não muda — o RHF e os schemas continuam.
- *
- * O slot `submitError` já está pronto para renderizar erros vindos do servidor
- * (ex: "Email ou senha incorretos") — basta setar via `setSubmitError`.
+ * Fluxo:
+ *  1. RHF valida (Zod) → submit chamado
+ *  2. `loginAction(data)` → Supabase signInWithPassword + cookies httpOnly
+ *  3. Sucesso: `router.push(result.redirectTo)`. Middleware corrige rota
+ *     se for o caso (sem workspace → /onboarding).
+ *  4. Erro: `setSubmitError(result.error)` — mensagem pt-BR já vem traduzida
+ *     da action (CLAUDE.md §7.6).
  */
 export function LoginForm() {
   const router = useRouter();
-  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -46,14 +45,18 @@ export function LoginForm() {
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
-    // Mock: simula latência da rede pra mostrar o loading do botão.
-    // Em M7, troca por Server Action real.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const result = await loginAction(data);
 
-    // Marca o cookie de "logado" antes de navegar — o middleware checa esse
-    // cookie no próximo render e libera /dashboard sem redirect pra /login.
-    signIn(data.email);
-    router.push('/dashboard');
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+
+    // `router.refresh()` antes do push força o middleware a re-rodar com a
+    // sessão recém-criada — sem isso, o primeiro render do destino pode
+    // ainda enxergar `user=null`.
+    router.refresh();
+    router.push(result.redirectTo ?? '/dashboard');
   });
 
   return (

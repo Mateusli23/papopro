@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import { ThemeProvider } from '@papopro/ui';
 
 import { Toaster } from '@/components/toaster';
-import { AuthMockProvider } from '@/lib/auth/auth-mock-provider';
+import { WorkspaceMockProvider } from '@/features/workspace/workspace-mock-provider';
 
 import './globals.css';
 
@@ -41,10 +41,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="pt-BR" suppressHydrationWarning>
       <body className="bg-background text-foreground min-h-screen font-sans antialiased">
         <ThemeProvider>
-          <AuthMockProvider>
+          {/*
+           * AuthMockProvider saiu em M7#3 — sessão real Supabase é gerida via
+           * cookies httpOnly (@supabase/ssr) e lida pelos hooks `useUser` /
+           * helpers server-side `getCurrentUser`. Não precisa de Provider
+           * envolvendo a árvore.
+           *
+           * WorkspaceMockProvider é temporário até M7#4: enquanto workspaces
+           * reais não existem, mantém `activeWorkspace`/`wizardCompleted` em
+           * fixtures pra UI não regredir.
+           */}
+          <WorkspaceMockProvider>
             {children}
             <Toaster />
-          </AuthMockProvider>
+          </WorkspaceMockProvider>
         </ThemeProvider>
       </body>
     </html>

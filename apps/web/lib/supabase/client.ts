@@ -10,9 +10,9 @@
  * via cookies httpOnly. Componentes client (`'use client'`) usam este
  * factory; Server Components e Server Actions usam `server.ts`.
  *
- * Em M7#1 (sub-PR atual) este factory ainda não é consumido pela UI — o
- * `AuthMockProvider` continua sendo a fonte de sessão. M7#3 troca os
- * componentes de auth para chamarem `createBrowserClient()` aqui.
+ * Em M7#3 o hook `useUser()` em [`lib/auth/use-user.ts`] consome este factory
+ * pra ler a sessão httpOnly do browser + reagir a `onAuthStateChange`. O
+ * antigo `AuthMockProvider` foi deletado nessa onda.
  */
 import { createBrowserClient } from '@supabase/ssr';
 

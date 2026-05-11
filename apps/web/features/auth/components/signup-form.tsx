@@ -11,23 +11,26 @@ import { Controller, useForm } from 'react-hook-form';
 import { Button, Checkbox } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
-
+import { signupAction } from '../actions';
 import { signupSchema, type SignupInput } from '../schemas';
 
 import { FormField } from './form-field';
 
 /**
- * Form de cadastro (signup). Validação Zod + RHF, mesma forma do login.
+ * Form de cadastro (signup). Validação Zod + RHF, submit via Server Action
+ * `signupAction` (M7#3) — antes era mock.
  *
- * Submit mockado (M3): cria nada, só redireciona para `/onboarding`, onde o
- * usuário nomeia o primeiro workspace. Em M7 vira `supabase.auth.signUp` +
- * envio de email de confirmação via Resend; o redirect passa a ser para
- * `/verify-email` antes do onboarding.
+ * Fluxo:
+ *  1. RHF valida (Zod) → submit chamado
+ *  2. `signupAction(data)` → Supabase signUp + email de confirmação + cookies
+ *     httpOnly (sessão ativa imediatamente, mas dashboard fica bloqueado
+ *     até confirmar email — middleware §7.8 CLAUDE.md)
+ *  3. Sucesso: redirect pra `/verify-email` (tela "confirme seu email").
+ *     O trigger SQL `handle_new_auth_user` já espelhou em `public.users`.
+ *  4. Erro: `setSubmitError(result.error)` — pt-BR já traduzido na action.
  */
 export function SignupForm() {
   const router = useRouter();
-  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -44,14 +47,15 @@ export function SignupForm() {
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
-    // Mock: simula latência da rede. Em M7, troca por Server Action real.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const result = await signupAction(data);
 
-    // Marca como "logado" pra destravar /onboarding (middleware libera). Em
-    // M7 quem vai entrar primeiro é o /verify-email, mas a UX intermediária
-    // (signup → onboarding) já vale como mock pra fechar o fluxo de M3.
-    signIn(data.email);
-    router.push('/onboarding');
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+
+    router.refresh();
+    router.push(result.redirectTo ?? '/verify-email');
   });
 
   return (

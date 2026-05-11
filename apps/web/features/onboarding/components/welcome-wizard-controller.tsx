@@ -2,34 +2,36 @@
 
 import * as React from 'react';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
+import { useUser } from '@/lib/auth/use-user';
 
 import { WelcomeWizard } from './welcome-wizard';
 
 /**
  * Controller que decide quando abrir o `WelcomeWizard`.
  *
- * Regra (M3): abre AUTOMATICAMENTE no primeiro acesso a qualquer rota do
- * dashboard quando o usuário está logado E ainda não completou/pulou o
- * wizard. Após concluir/pular, o cookie `papopro_auth_mock_wizard_completed`
- * fica setado e o wizard nunca mais reabre nessa sessão.
+ * Regra (M7#3): abre AUTOMATICAMENTE no primeiro acesso ao dashboard quando
+ * o user está logado (Supabase) E ainda não completou/pulou o wizard mock.
  *
- * Estado `loading` do AuthMock é importante: enquanto o cookie ainda não
- * foi lido (entre render inicial e useEffect do provider), `wizardCompleted`
- * default é `false` — se abríssemos o wizard nesse intervalo, o usuário que
- * JÁ concluiu veria o wizard piscar antes de fechar. Esperar `loading=false`
- * resolve.
+ * Em M7#4 a fonte de `wizardCompleted` vira "user tem ao menos um
+ * `workspace_member` com `joined_at != null`" — wizard vira o handler real
+ * de criação de workspace + role Owner.
+ *
+ * Os dois `loading` (user + workspace) são esperados juntos pra evitar flash:
+ * se abríssemos antes do cookie hidratar, o user que já completou veria o
+ * wizard piscar.
  */
 export function WelcomeWizardController() {
-  const { loading, user, wizardCompleted } = useAuthMock();
+  const { loading: userLoading, user } = useUser();
+  const { loading: wsLoading, wizardCompleted } = useWorkspaceMock();
   const [open, setOpen] = React.useState(false);
 
   React.useEffect(() => {
-    if (loading) return;
+    if (userLoading || wsLoading) return;
     if (!user) return;
     if (wizardCompleted) return;
     setOpen(true);
-  }, [loading, user, wizardCompleted]);
+  }, [userLoading, wsLoading, user, wizardCompleted]);
 
   return <WelcomeWizard open={open} onOpenChange={setOpen} />;
 }

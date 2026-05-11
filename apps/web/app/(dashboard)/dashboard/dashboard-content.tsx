@@ -21,7 +21,8 @@ import {
 } from '@papopro/ui/icons';
 
 import { PostWizardDashboard } from '@/features/dashboard/components/post-wizard-dashboard';
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
+import { useUser } from '@/lib/auth/use-user';
 
 /**
  * Dashboard com 2 variantes:
@@ -29,24 +30,21 @@ import { useAuthMock } from '@/lib/auth/auth-mock-provider';
  *    instruindo o próximo passo. Princípio CLAUDE.md §8: "Estado vazio
  *    sempre orienta o próximo passo. Sem tela em branco."
  *  - **pós-onboarding** (`wizardCompleted=true`): dashboard real com KPIs
- *    derivados das fixtures (Total Leads / Negócios Abertos / Pipeline /
- *    Conversão), funil Recharts e tabela de prazos. Vive em
- *    `features/dashboard/` como `<PostWizardDashboard>`.
+ *    derivados das fixtures.
  *
- * Enquanto `loading=true` (cookie ainda hidratando) mostramos skeletons —
- * evita flash entre as duas variantes na 1ª render.
+ * Em M7#3 a auth virou Supabase real (`useUser`), mas `wizardCompleted` segue
+ * mock até M7#4 ligar o wizard a workspace_members real. Os dois loadings
+ * são distintos — mostramos skeleton se qualquer um ainda não resolveu.
  */
 export function DashboardContent() {
-  const { loading, user, wizardCompleted } = useAuthMock();
+  const { loading: userLoading, displayName } = useUser();
+  const { loading: wsLoading, wizardCompleted } = useWorkspaceMock();
 
-  if (loading) {
+  if (userLoading || wsLoading) {
     return <DashboardSkeleton />;
   }
 
-  // `user` sempre existe aqui (o middleware bloqueia o acesso sem login),
-  // mas mantemos o fallback pra TypeScript não reclamar e proteger contra
-  // race conditions em dev (cookie removido manual no DevTools).
-  const greeting = user?.name ? `Bem-vindo, ${user.name.split(' ')[0]}` : 'Bem-vindo de volta';
+  const greeting = displayName ? `Bem-vindo, ${displayName.split(' ')[0]}` : 'Bem-vindo de volta';
 
   if (!wizardCompleted) {
     return <PreOnboardingDashboard greeting={greeting} />;

@@ -8,10 +8,12 @@ export const metadata: Metadata = {
 
 /**
  * Dashboard — Server Component fino. Toda lógica de variante (pré × pós
- * onboarding) e dados do user vivem no `DashboardContent` client, porque
- * dependem do `AuthMockProvider`. Quando M7 substituir o AuthMock por
- * sessão Supabase real, fica trivial mover essa decisão pro server (ler
- * `wizardCompleted` no `cookies()` e renderizar a variante certa direto).
+ * onboarding) e dados do user vivem no `DashboardContent` client.
+ *
+ * Em M7#3 o user veio do Supabase (`useUser`), mas `wizardCompleted` ainda
+ * é mock (`useWorkspaceMock`) — fonte cliente. M7#4 vai derivar isso de
+ * `getCurrentUserContext().memberships`, aí faz sentido mover a decisão
+ * pro server e enviar a variante já renderizada.
  */
 export default function DashboardPage() {
   return <DashboardContent />;

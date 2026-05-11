@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle } from '@papopro/ui';
 import { ArrowLeft, ArrowRight, Check, Loader2, Sparkles } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useWorkspaceMock } from '@/features/workspace/workspace-mock-provider';
 
 import { AgentStep } from './steps/agent-step';
 import { CsvStep } from './steps/csv-step';
@@ -54,17 +54,17 @@ const INITIAL_STATE: WizardState = {
  *    e expõe seu próprio botão "Continuar"/"Pular" via `onAdvance`/`onSkip`.
  *
  * Conclusão (qualquer combinação):
- *  - Concluir o último passo → `markWizardCompleted()` no AuthMockProvider
+ *  - Concluir o último passo → `markWizardCompleted()` no WorkspaceMockProvider
  *  - "Pular este passo" no último → mesmo efeito (wizard não reabre)
  *  - Fechar pelo X / Esc → mesmo efeito (decisão de UX: o usuário viu uma
  *    vez, não enchemos a vista de novo)
  *
- * Em marcos posteriores (M7 onboarding real, M9 QR real, M11 agentes reais)
- * cada step troca o stub por chamadas reais — a forma `state ↔ onChange`
- * permanece.
+ * Em M7#4 o WorkspaceMockProvider sai e este wizard vira o caminho real de
+ * criação de workspace (insert em `workspaces` + `workspace_members` com role
+ * Owner). A forma `state ↔ onChange` permanece.
  */
 export function WelcomeWizard({ open, onOpenChange }: WelcomeWizardProps) {
-  const { markWizardCompleted } = useAuthMock();
+  const { markWizardCompleted } = useWorkspaceMock();
   const [currentStep, setCurrentStep] = React.useState<StepId>('workspace');
   const [state, setState] = React.useState<WizardState>(INITIAL_STATE);
   const [finishing, setFinishing] = React.useState(false);
