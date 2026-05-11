@@ -4,16 +4,26 @@ import { CmdKPalette } from '@/components/app-shell/cmdk-palette';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Topbar } from '@/components/app-shell/topbar';
 import { WelcomeWizardController } from '@/features/onboarding/components/welcome-wizard-controller';
+import { getCurrentUserContext } from '@/lib/auth/get-user';
 
 /**
  * Layout do produto. Aplicado a TODAS as rotas dentro de `(dashboard)/` —
  * leads, kanban, inbox, agentes, etc. Sidebar à esquerda (desktop) ou drawer
  * (mobile), topbar fixa, conteúdo rolável.
  *
- * Ainda não checa auth — em M3 entra um middleware que redireciona pra
- * `/login` se não houver sessão; em M7 a sessão fica real (Supabase).
+ * **M7#4 Onda 1:** o middleware já garante que quem chega aqui tem workspace.
+ * Mesmo assim derivamos `hasWorkspace` do `getCurrentUserContext` (cached por
+ * request via `cache()`) pra alimentar o `WelcomeWizardController` — quando
+ * `hasWorkspace=false` (caso impossível em prod, mas defensivo) o controller
+ * mantém o wizard fechado e a UI vazia até o middleware recarregar.
+ *
+ * Não há `'use client'` — é Server Component por default (CLAUDE.md §5). Os
+ * filhos (Sidebar/Topbar) são client porque tem interação local.
  */
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const context = await getCurrentUserContext();
+  const hasWorkspace = (context?.memberships.length ?? 0) > 0;
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="bg-background text-foreground flex min-h-screen">
@@ -27,10 +37,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
       {/*
        * Wizard de boas-vindas — auto-abre na primeira visita ao dashboard
-       * quando o usuário logou mas ainda não concluiu/pulou. Lógica
-       * encapsulada no controller; aqui é só ponto de montagem.
+       * após o user criar workspace. Controller recebe `hasWorkspace` do
+       * server (em M7#4 isso é a fonte de verdade; em M3 vinha do mock).
        */}
-      <WelcomeWizardController />
+      <WelcomeWizardController hasWorkspace={hasWorkspace} />
 
       {/*
        * Cmd+K palette placeholder — `useGlobalShortcuts` registra o listener

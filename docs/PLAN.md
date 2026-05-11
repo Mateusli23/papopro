@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch               | Status      | PR                 |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- | ------------------ |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core` | ✅ entregue | _aguardando abrir_ |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`      | ✅ entregue | _aguardando abrir_ |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`      | ✅ entregue | _aguardando abrir_ |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | _a definir_          | ⏳ pendente | —                  |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_          | ⏳ pendente | —                  |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_          | ⏳ pendente | —                  |
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                                | PR                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------- | ------------------ |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                           | _aguardando abrir_ |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                           | _aguardando abrir_ |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                           | _aguardando abrir_ |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ⚠️ em andamento (Onda 1 entregue: workspace real + middleware lookup) | _aguardando abrir_ |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                                                           | —                  |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                           | —                  |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -548,10 +548,10 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
 - [x] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha _(M7#3 — "logout em todos os dispositivos" fica pra M7#5 junto com audit log)_
 - [x] Server Actions de auth substituem mocks de M3 _(M7#3)_
-- [ ] Convite por email via Resend + aceite via magic link _(M7#4)_
-- [ ] Switcher de workspace lê `workspace_members` real _(M7#4)_
-- [ ] Wizard de onboarding (M3) cria workspace de verdade _(M7#4)_
-- [x] Middleware com gate de auth + redirect inteligente _(M7#3 — gate por sessão + email confirmado entregue; lookup de memberships pra escolher /onboarding × /dashboard fica pra M7#4 quando `workspace_members` tiver dados reais)_
+- [ ] Convite por email via Resend + aceite via magic link _(M7#4 — Onda 2)_
+- [ ] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3)_
+- [x] Wizard de onboarding (M3) cria workspace de verdade _(M7#4 — Onda 1: `/onboarding` chama `createWorkspaceAction` que insere Workspace + WorkspaceMember(Owner) + NotificationPreference + AuditLog em transação; cookie httpOnly `papopro_workspace_id` setado pela action e lido pelo middleware)_
+- [x] Middleware com gate de auth + redirect inteligente _(M7#3 entregou gate por sessão + email confirmado; M7#4 Onda 1 fechou o lookup de memberships — cookie httpOnly `papopro_workspace_id` é fast path, `getMembershipCountForUser` via admin client é fallback Edge-safe; /onboarding bloqueia quem já tem workspace, demais rotas bloqueiam quem não tem)_
 - [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
 - [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5)_
 - [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5)_
@@ -618,7 +618,45 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - `feat(auth): middleware Supabase + UI consome sessao real (M7#3 onda 2)`
 - `feat(auth): tela /settings/security + updatePasswordAction (M7#3 onda 3)`
 
-**Commit final do marco (entregue só no último sub-PR):** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
+**Entregas — M7#4 Onda 1 — Workspace real + middleware multi-tenant gate:**
+
+Primeira de 3 ondas do M7#4. Sai do fluxo mockado (`AuthMockProvider` legacy via `WorkspaceMockProvider`) pro caminho real de criação de workspace + gate de tenant no Edge.
+
+- [x] [`apps/web/lib/workspace/slugify.ts`](apps/web/lib/workspace/slugify.ts) — função pura `slugify(name)` (normaliza NFKD, remove combining marks, força `[a-z0-9-]`, trunca em 64) + `ensureUniqueSlug(base, isTaken)` com retry de sufixo numérico (até 50 tentativas; explode barulhento depois). `isTaken` injetável pra teste sem DB.
+- [x] [`apps/web/features/workspace/schemas.ts`](apps/web/features/workspace/schemas.ts) — `workspaceCreateSchema` (Zod) com `name` (2–60 chars, control-chars bloqueados via charCodeAt-loop em vez de regex hex pra não depender de escapes que sobrevivem mal a copy/paste entre LLM e disco), `segment?` opcional. Casa com `Workspace.name VARCHAR(60)` do schema.prisma.
+- [x] [`apps/web/lib/auth/workspace-cookie.ts`](apps/web/lib/auth/workspace-cookie.ts) — helpers httpOnly server-only pro cookie `papopro_workspace_id`. Quatro entry points: `setWorkspaceCookie` / `readWorkspaceCookie` (via `next/headers` — Server Actions/Components) e `setWorkspaceCookieOnResponse` / `readWorkspaceCookieFromRequest` (via `req`/`response` — Edge middleware). `secure: process.env.NODE_ENV === 'production'` evita o sintoma "cookie silenciosamente ignorado pelo browser" em dev HTTP.
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) — `'use server'` com `createWorkspaceAction(input)`:
+  1. Valida Zod;
+  2. `getCurrentUser` exige sessão + email confirmado (defense-in-depth — middleware já guarda);
+  3. **Idempotência**: se já tem WorkspaceMember, reaproveita (cobre dupliclick e refresh em `/onboarding`);
+  4. `ensureUniqueSlug` com fallback `'workspace'` quando o nome só tem caracteres não-ASCII;
+  5. `prisma.$transaction` insere Workspace + WorkspaceMember(Owner, joinedAt=now) + NotificationPreference(`prefs: {}` — matriz PRD §3.2 fica pra M7#5) + AuditLog(`workspace_created`, changes={name, slug}). Upsert defensivo em `public.users` antes da FK do member (cobre raro caso de trigger `on_auth_user_created` não ter rodado);
+  6. `setWorkspaceCookie` _fora_ da transação (cookies não são transacionais com Postgres).
+- [x] [`apps/web/features/workspace/queries.ts`](apps/web/features/workspace/queries.ts) — `getMembershipCountForUser(userId)` retornando `{count, firstWorkspaceId}`. **Não fica em `actions.ts`** porque `'use server'` transforma todo export em Server Action callable do client — vetor de probing de existência de user. Single query Supabase admin com `count: 'exact'` + `limit(1)` (traz contagem e primeira row no mesmo round-trip).
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — adiciona o gate multi-tenant ao gate de auth de M7#3. `resolveHasWorkspace(req, response, userId)` faz **fast path por cookie** (`readWorkspaceCookieFromRequest`) e **slow path por query** (`getMembershipCountForUser` quando cookie ausente; popula cookie na response). Regras novas: `/onboarding` redireciona pra `/dashboard` se já tem workspace; demais rotas protegidas redirecionam pra `/onboarding` se não tem. Edge runtime continua < 100 kB (82.7 kB no build).
+- [x] [`apps/web/features/auth/components/onboarding-form.tsx`](apps/web/features/auth/components/onboarding-form.tsx) — rewire pro `createWorkspaceAction` real. `router.refresh()` antes do `router.push` força middleware a re-rodar com cookie recém-setado, evitando race condition que mandaria de volta pra `/onboarding`. Schema migrado pra `workspaceCreateSchema` (mesmo shape, owner conceitual movido pro feature workspace).
+- [x] [`apps/web/app/(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) — virou **async Server Component**, fetches `getCurrentUserContext` (cached por request via `cache()`) e passa `hasWorkspace` pro `<WelcomeWizardController>`. Defense-in-depth: mesmo com middleware protegendo, controller só abre wizard se `hasWorkspace=true`.
+- [x] [`apps/web/features/onboarding/components/welcome-wizard-controller.tsx`](apps/web/features/onboarding/components/welcome-wizard-controller.tsx) — aceita prop `hasWorkspace: boolean`. `useWorkspaceMock` ainda usado pra `wizardCompleted` (cookie legacy) — sai inteiro em Onda 3.
+- [x] [`apps/web/lib/auth/get-user.ts`](apps/web/lib/auth/get-user.ts) — fix de typecheck: Supabase tipa relação FK aninhada como array quando schema generation não rodou contra a DB. `Array.isArray(row.workspaces) ? row.workspaces[0] : row.workspaces` normaliza; em runtime a relação 1:1 (workspace_members → workspaces) sempre devolve objeto único.
+
+**Decisões registradas:**
+
+- **Cookie httpOnly em vez de localStorage:** o middleware precisa ler antes do JS rodar, e XSS roubando o workspace ativo seria pivot pra outro tenant.
+- **`getMembershipCountForUser` em `queries.ts`, não `actions.ts`:** `'use server'` expõe RPC. Probing seria barato (1 chamada por uid candidato).
+- **Slow path Edge-safe:** admin client Supabase é fetch-based; query roda no Edge sem precisar de driver Postgres. 1 round-trip por sessão (cookie cacheia o resultado).
+- **`Prisma.TransactionClient` tipado, runtime errors duck-typed:** `prisma generate` não roda local (TLS strict bloqueia `binaries.prisma.sh` — herdado de M7#1). Tipos do client são `any` placeholder; classes de erro não exportadas. Solução: `isPrismaErrorCode(err, 'P2002')` em vez de `instanceof PrismaClientKnownRequestError`. Códigos `Pxxxx` são contrato público estável do Prisma.
+- **Wizard step 1 cosmético até Onda 3:** o WorkspaceStep do `welcome-wizard.tsx` ainda aceita input mas não persiste — o middleware redireciona pra `/onboarding` antes do dashboard montar, então usuários reais nunca chegam ao step 1. Cleanup em Onda 3 quando o `WorkspaceMockProvider` sair inteiro.
+- **`WorkspaceMockProvider` continua montado:** ainda alimenta o `WorkspaceSwitcher` na sidebar (lista fixtures) e a flag `wizardCompleted`. Onda 3 substitui ambos por dados reais e remove o provider.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓ (consertado de passagem o erro pré-existente no `getCurrentUserContext` causado por inferência de array do Supabase)
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 35/35 rotas, middleware Edge 82.7 kB
+- E2E manual via Vercel preview ou ambiente sem TLS strict pendente (Prisma engine roda nesses contextos)
+
+**Commit:** `feat(workspace): server action real + middleware multi-tenant gate (M7#4 onda 1)`
 
 ---
 

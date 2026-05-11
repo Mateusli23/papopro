@@ -10,22 +10,27 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
-import { onboardingSchema, type OnboardingInput } from '../schemas';
+import { createWorkspaceAction } from '@/features/workspace/actions';
+import { workspaceCreateSchema, type WorkspaceCreateInput } from '@/features/workspace/schemas';
 
 import { FormField } from './form-field';
 
 /**
- * Form de onboarding mínimo — pede o nome do primeiro workspace e redireciona
- * pro dashboard.
+ * Form de onboarding — cria o primeiro workspace de verdade (M7#4 Onda 1).
  *
- * Em M3 isso é suficiente para destravar a navegação ponta-a-ponta. O wizard
- * completo de 4 passos (workspace, conectar WhatsApp, criar agente IA,
- * importar CSV — PLAN.md M3) entra junto com as features que ele dispara, em
- * marcos posteriores; aqui o objetivo é só nomear e seguir.
+ * Antes (M3): persistia em fixtures, navegava direto pra /dashboard.
+ * Agora: chama `createWorkspaceAction`, que insere Workspace + WorkspaceMember
+ * (Owner) + NotificationPreference + AuditLog em uma transação, e seta o
+ * cookie httpOnly `papopro_workspace_id` lido pelo middleware.
  *
- * Em M7 o submit vira Server Action que cria a row em `workspaces`, vincula
- * o usuário em `workspace_members` como Owner e seta o cookie de workspace
- * ativo lido pelo `with-workspace.ts`.
+ * Pós-sucesso: `router.refresh()` força o middleware a re-rodar com o cookie
+ * novo (evita "redireciona pra /onboarding de novo" em refresh manual) e
+ * `router.push(redirectTo)` navega pro destino que a action sugeriu — hoje
+ * sempre `/dashboard`.
+ *
+ * O schema vive em `features/workspace/schemas.ts` (não em `features/auth`)
+ * porque conceitualmente o owner é o feature workspace; onboarding é só uma
+ * superfície de UI que dispara a criação.
  */
 export function OnboardingForm() {
   const router = useRouter();
@@ -35,16 +40,24 @@ export function OnboardingForm() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<OnboardingInput>({
-    resolver: zodResolver(onboardingSchema),
-    defaultValues: { workspaceName: '' },
+  } = useForm<WorkspaceCreateInput>({
+    resolver: zodResolver(workspaceCreateSchema),
+    defaultValues: { name: '', segment: null },
     mode: 'onTouched',
   });
 
-  const onSubmit = handleSubmit(async () => {
+  const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    router.push('/dashboard');
+    const result = await createWorkspaceAction(data);
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+    // router.refresh() reativa o middleware com o cookie recém-setado; sem
+    // ele, o push abaixo entrega ao middleware um snapshot stale e mandaria
+    // o usuário de volta pra /onboarding em raros race conditions.
+    router.refresh();
+    router.push(result.redirectTo);
   });
 
   return (
@@ -67,8 +80,8 @@ export function OnboardingForm() {
         autoComplete="organization"
         placeholder="Ex: Imóvel Pro Vendas"
         hint="Você pode criar mais workspaces depois nas configurações."
-        error={errors.workspaceName?.message}
-        {...register('workspaceName')}
+        error={errors.name?.message}
+        {...register('name')}
       />
 
       <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">

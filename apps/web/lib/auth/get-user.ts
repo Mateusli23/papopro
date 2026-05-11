@@ -89,22 +89,30 @@ export const getCurrentUserContext = cache(async (): Promise<UserContext | null>
     };
   }
 
+  // Supabase tipa relação FK aninhada como **array** quando não há
+  // `generate types` rodado contra a DB (caso atual em M7 — geração via MCP
+  // depende de `binaries.prisma.sh` que TLS strict bloqueia). Normalizamos
+  // pegando o primeiro elemento; em runtime a FK é 1:1 (workspace_members →
+  // workspaces) e Supabase devolve um objeto único, mas o TypeScript precisa
+  // do guard.
   const memberships: MembershipSummary[] = (data ?? [])
-    .filter((row): row is typeof row & { workspaces: NonNullable<typeof row.workspaces> } =>
-      Boolean(row.workspaces),
-    )
-    .map((row) => ({
-      workspaceId: row.workspace_id,
-      role: row.role,
-      joinedAt: row.joined_at,
-      workspace: {
-        id: row.workspaces.id,
-        name: row.workspaces.name,
-        slug: row.workspaces.slug,
-        plan: row.workspaces.plan,
-        segment: row.workspaces.segment,
-      },
-    }));
+    .map((row) => {
+      const ws = Array.isArray(row.workspaces) ? row.workspaces[0] : row.workspaces;
+      if (!ws) return null;
+      return {
+        workspaceId: row.workspace_id,
+        role: row.role,
+        joinedAt: row.joined_at,
+        workspace: {
+          id: ws.id,
+          name: ws.name,
+          slug: ws.slug,
+          plan: ws.plan,
+          segment: ws.segment,
+        },
+      } satisfies MembershipSummary;
+    })
+    .filter((m): m is MembershipSummary => m !== null);
 
   return {
     user,

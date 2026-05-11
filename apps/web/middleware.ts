@@ -1,51 +1,88 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
+import { getMembershipCountForUser } from '@/features/workspace/queries';
+import {
+  readWorkspaceCookieFromRequest,
+  setWorkspaceCookieOnResponse,
+} from '@/lib/auth/workspace-cookie';
 import { updateSession } from '@/lib/supabase/middleware';
 
 /**
- * Middleware de auth — Supabase real (M7#3).
- *
- * Substitui o cookie mock por `supabase.auth.getUser()` via `updateSession`,
- * que também renova o JWT silenciosamente se vencido. O matcher já filtra
- * rotas estáticas/API; aqui só decide quem pode ver o quê.
+ * Middleware de auth — Supabase real + multi-tenant gate (M7#3 + M7#4 Onda 1).
  *
  * **Regras (em ordem):**
  *
- *  1. `/auth/callback` (handler PKCE): passa sem checagem — quem está
- *     aterrissando aqui ainda não tem sessão, é justamente onde a sessão é
- *     criada.
+ *  1. `/auth/callback` (handler PKCE): passa sem checagem — quem aterrissa
+ *     aqui ainda não tem sessão, é justamente onde a sessão é criada.
  *
  *  2. `/` (raiz): redireciona pro destino certo. Sem user → `/login`. Com
  *     user mas sem email confirmado → `/verify-email`. Com user confirmado
- *     → `/dashboard` (o layout dashboard valida se tem workspace e
- *     redireciona pra `/onboarding` se não — M7#4 faz workspace real).
+ *     → `/onboarding` se ainda não tem workspace, `/dashboard` se já tem.
  *
  *  3. Rotas de auth (`/login`, `/signup`, `/forgot`): se já logado,
- *     redireciona pra `/dashboard` ou `/verify-email`. Caso contrário,
- *     libera.
+ *     redireciona pra `/dashboard`/`/onboarding` ou `/verify-email`.
  *
- *  4. `/verify-email`: exige logado. Já confirmado → `/dashboard`.
+ *  4. `/verify-email`: exige logado. Já confirmado → `/dashboard`/`/onboarding`.
  *
- *  5. Demais rotas (dashboard, onboarding, configurações etc.): exigem
- *     logado **E** email confirmado. Falta sessão → `/login?next=…`.
- *     Falta confirmação → `/verify-email`.
+ *  5. `/onboarding`: exige logado + email confirmado. Se já tem workspace,
+ *     **redireciona pra `/dashboard`** — não deixar criar dois "primeiros"
+ *     workspaces sem intenção. Sem workspace, libera (é a tela de criação).
  *
- * CLAUDE.md §7.8: verificação de email obrigatória antes do primeiro
- * acesso ao produto — regra 5 implementa.
+ *  6. Demais rotas (dashboard, configurações etc.): exigem logado + email
+ *     confirmado + 1+ workspaces. Sem workspace → `/onboarding`.
+ *
+ * **Determinação de "tem workspace":**
+ *
+ *  - **Fast path:** cookie `papopro_workspace_id` (httpOnly, setado pela
+ *    `createWorkspaceAction`). Presente → tem workspace, sem query.
+ *  - **Slow path (cache miss):** cookie ausente + user logado → 1 query
+ *    via `getMembershipCountForUser` (admin client, fetch-based, Edge-safe).
+ *    Resultado popula o cookie na resposta — próximos requests da sessão
+ *    voltam pro fast path.
+ *
+ * **Trade-off vs. checar em cada request:** o cookie pode ficar stale (user
+ * foi removido de todos os workspaces enquanto navegava). Aceitável até
+ * M7#5 trazer revogação; pior caso é o usuário ver tela 403 da action em
+ * vez do bounce automático.
+ *
+ * CLAUDE.md §7.8: verificação de email obrigatória antes do primeiro acesso.
+ * CLAUDE.md §7.2: defense-in-depth — middleware é só gate, RLS + filtro no
+ * código continuam sendo a fonte de verdade.
  */
 
 const AUTH_ROUTES = new Set(['/login', '/signup', '/forgot']);
 const VERIFY_ROUTE = '/verify-email';
+const ONBOARDING_ROUTE = '/onboarding';
 const DEFAULT_LOGGED_OUT = '/login';
 const DEFAULT_LOGGED_IN = '/dashboard';
+
+/**
+ * Resolve "tem workspace?" usando o cookie como cache e fallback pra query.
+ *
+ * Side effect: se a query encontrar workspace, popula o cookie na response
+ * passada — caller deve devolver essa response pro browser persistir.
+ */
+async function resolveHasWorkspace(
+  req: NextRequest,
+  response: NextResponse,
+  userId: string,
+): Promise<boolean> {
+  const cookieValue = readWorkspaceCookieFromRequest(req);
+  if (cookieValue) return true;
+
+  const { count, firstWorkspaceId } = await getMembershipCountForUser(userId);
+  if (count > 0 && firstWorkspaceId) {
+    setWorkspaceCookieOnResponse(response, firstWorkspaceId);
+    return true;
+  }
+  return false;
+}
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 1. Callback PKCE é público — quem chega aqui está prestes a logar.
   if (pathname.startsWith('/auth/callback')) {
-    // Mesmo assim, passa pelo updateSession pra cookies vencidos serem
-    // renovados na resposta (caso o user esteja já logado e clique outro link).
     const { response } = await updateSession(req);
     return response;
   }
@@ -61,17 +98,25 @@ export async function middleware(req: NextRequest) {
     } else if (!emailVerified) {
       url.pathname = VERIFY_ROUTE;
     } else {
-      url.pathname = DEFAULT_LOGGED_IN;
+      const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
+      url.pathname = hasWorkspace ? DEFAULT_LOGGED_IN : ONBOARDING_ROUTE;
     }
-    return NextResponse.redirect(url);
+    // Reaproveita a response (com cookies renovados pelo updateSession e
+    // potencialmente o cookie de workspace populado em resolveHasWorkspace).
+    return NextResponse.redirect(url, { headers: response.headers });
   }
 
   // 3. Rotas de auth.
   if (AUTH_ROUTES.has(pathname)) {
     if (user) {
       const url = req.nextUrl.clone();
-      url.pathname = emailVerified ? DEFAULT_LOGGED_IN : VERIFY_ROUTE;
-      return NextResponse.redirect(url);
+      if (!emailVerified) {
+        url.pathname = VERIFY_ROUTE;
+      } else {
+        const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
+        url.pathname = hasWorkspace ? DEFAULT_LOGGED_IN : ONBOARDING_ROUTE;
+      }
+      return NextResponse.redirect(url, { headers: response.headers });
     }
     return response;
   }
@@ -85,17 +130,17 @@ export async function middleware(req: NextRequest) {
     }
     if (emailVerified) {
       const url = req.nextUrl.clone();
-      url.pathname = DEFAULT_LOGGED_IN;
-      return NextResponse.redirect(url);
+      const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
+      url.pathname = hasWorkspace ? DEFAULT_LOGGED_IN : ONBOARDING_ROUTE;
+      return NextResponse.redirect(url, { headers: response.headers });
     }
     return response;
   }
 
-  // 5. Demais rotas (dashboard, onboarding, etc): logado + email confirmado.
+  // 5/6. Demais rotas exigem logado + email confirmado primeiro.
   if (!user) {
     const url = req.nextUrl.clone();
     url.pathname = DEFAULT_LOGGED_OUT;
-    // Preserva destino original — "acesse seu workspace e te levamos de volta"
     url.searchParams.set('next', pathname);
     return NextResponse.redirect(url);
   }
@@ -103,6 +148,26 @@ export async function middleware(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = VERIFY_ROUTE;
     return NextResponse.redirect(url);
+  }
+
+  // 5. `/onboarding` é o único caminho que aceita "sem workspace". Se já
+  // tem, manda pro dashboard (não criar duplicata por refresh).
+  if (pathname === ONBOARDING_ROUTE) {
+    const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
+    if (hasWorkspace) {
+      const url = req.nextUrl.clone();
+      url.pathname = DEFAULT_LOGGED_IN;
+      return NextResponse.redirect(url, { headers: response.headers });
+    }
+    return response;
+  }
+
+  // 6. Demais rotas protegidas: precisa ter workspace.
+  const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
+  if (!hasWorkspace) {
+    const url = req.nextUrl.clone();
+    url.pathname = ONBOARDING_ROUTE;
+    return NextResponse.redirect(url, { headers: response.headers });
   }
 
   return response;
