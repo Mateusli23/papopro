@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                                | PR                 |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------------- | ------------------ |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                           | _aguardando abrir_ |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                           | _aguardando abrir_ |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                           | _aguardando abrir_ |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ⚠️ em andamento (Onda 1 entregue: workspace real + middleware lookup) | _aguardando abrir_ |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                                                           | —                  |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                           | —                  |
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                                    | PR                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------- | ------------------ |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                               | _aguardando abrir_ |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                               | _aguardando abrir_ |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                               | _aguardando abrir_ |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ⚠️ em andamento (Ondas 1 + 2 entregues; Onda 3 = switcher real + cleanup) | _aguardando abrir_ |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                                                               | —                  |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                               | —                  |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -548,7 +548,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
 - [x] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha _(M7#3 — "logout em todos os dispositivos" fica pra M7#5 junto com audit log)_
 - [x] Server Actions de auth substituem mocks de M3 _(M7#3)_
-- [ ] Convite por email via Resend + aceite via magic link _(M7#4 — Onda 2)_
+- [x] Convite por email via Resend + aceite via magic link _(M7#4 — Onda 2: `inviteMemberAction` (RBAC Owner/Admin inline + idempotência por workspace×email), `acceptInvitationAction` (transação member + audit + cookie), `revokeInvitationAction`; página pública `/invite/accept` com 4 variantes; cliente Resend via `fetch` nativo pra contornar TLS strict no registry; `next` propagado por signup/login pra retomar fluxo de convite depois da confirmação)_
 - [ ] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3)_
 - [x] Wizard de onboarding (M3) cria workspace de verdade _(M7#4 — Onda 1: `/onboarding` chama `createWorkspaceAction` que insere Workspace + WorkspaceMember(Owner) + NotificationPreference + AuditLog em transação; cookie httpOnly `papopro_workspace_id` setado pela action e lido pelo middleware)_
 - [x] Middleware com gate de auth + redirect inteligente _(M7#3 entregou gate por sessão + email confirmado; M7#4 Onda 1 fechou o lookup de memberships — cookie httpOnly `papopro_workspace_id` é fast path, `getMembershipCountForUser` via admin client é fallback Edge-safe; /onboarding bloqueia quem já tem workspace, demais rotas bloqueiam quem não tem)_
@@ -657,6 +657,65 @@ Primeira de 3 ondas do M7#4. Sai do fluxo mockado (`AuthMockProvider` legacy via
 - E2E manual via Vercel preview ou ambiente sem TLS strict pendente (Prisma engine roda nesses contextos)
 
 **Commit:** `feat(workspace): server action real + middleware multi-tenant gate (M7#4 onda 1)`
+
+**Entregas — M7#4 Onda 2 — Convite por email via Resend + aceite via magic link:**
+
+Segunda das 3 ondas do M7#4. Owner/Admin convida por email; convidado recebe link, aceita e cai no workspace como member.
+
+- [x] [`apps/web/lib/email/resend.ts`](apps/web/lib/email/resend.ts) — cliente Resend via `fetch` nativo (sem o SDK oficial `resend`, evitando dep adicional). **Decisão de fundo:** `pnpm add resend` falhou aqui por `UNABLE_TO_VERIFY_LEAF_SIGNATURE` no `registry.npmjs.org` — mesma classe de TLS strict que bloqueia `binaries.prisma.sh` em M7#1. Como o endpoint do Resend é um único `POST /emails`, 30 linhas de wrapper resolvem com timeout (AbortSignal 10s), retry único com backoff 500ms só em 5xx, parsing de erro com mensagem do servidor. Lazy-read das env vars dentro da função (em vez de top-level) pra não derrubar o bundle inteiro de Server Actions se `RESEND_API_KEY` faltar.
+- [x] [`apps/web/lib/email/templates/invite.ts`](apps/web/lib/email/templates/invite.ts) — `renderInviteEmail` retorna `{subject, html, text}`. HTML em string-template (não `@react-email/components`) — 1 template não justifica a dep. Padrão de email tradicional: tabelas + CSS inline, sem `<style>`/`<link>`/JS, fontes com fallback web-safe, largura 600px. Sem dark mode (Outlook não respeita prefers-color-scheme). Versão `text` separada melhora deliverability (anti-spam). Escape HTML mínimo (4 chars) defense-in-depth contra nome de workspace com caractere RTL/exótico.
+- [x] [`apps/web/features/invitations/schemas.ts`](apps/web/features/invitations/schemas.ts) — `invitationCreateSchema` (email + role com `INVITABLE_ROLES = ['Admin','Manager','Vendedor','Viewer']` — Owner propositalmente excluído; transferência de propriedade é fluxo separado em M7#5), `invitationAcceptSchema` (token UUID), `invitationRevokeSchema` (invitationId UUID).
+- [x] [`apps/web/features/invitations/actions.ts`](apps/web/features/invitations/actions.ts) — 3 Server Actions com idempotência e RBAC inline:
+  - `inviteMemberAction`: valida sessão + workspace ativo (cookie) + RBAC (Owner/Admin) + bloqueio de auto-convite + bloqueio se já é membro. **Upsert por `(workspaceId, email)`** reaproveita convite pending existente (atualiza `role`/`expiresAt`/reseta para `pending` se estava `revoked`/`expired`) — UX "convidei e o email não chegou, mando de novo" funciona sem duplicar. Email via Resend; se falha, **NÃO** deleta a row (convite existe, dá pra reenviar pelo /settings/team em M7#5). AuditLog `member_invited` fora da upsert (best-effort).
+  - `acceptInvitationAction`: valida sessão + email confirmado + token + status `pending` + não expirado + email do caller bate com o do convite (case-insensitive). Idempotência: se já é membro, marca convite como aceito e retorna sucesso silente. Senão, transação Member + invitation.status='accepted' + NotificationPreference + AuditLog. Seta cookie de workspace ativo no sucesso.
+  - `revokeInvitationAction`: RBAC Owner/Admin + filtro defense-in-depth no `updateMany` (id + workspaceId + status pending) — se nada bater, mensagem "convite não encontrado ou já processado".
+- [x] [`apps/web/features/invitations/queries.ts`](apps/web/features/invitations/queries.ts) — `getInvitationByToken` **server-only** (não em `actions.ts` pra não virar RPC callable do client — vetor de probing de tokens existentes). Validação regex UUID antes de bater no banco (curto-circuita ataques com strings malformadas). Admin client bypassa RLS — o token É a autorização (UUID single-use, 2^122 entropia).
+- [x] [`apps/web/app/invite/accept/page.tsx`](apps/web/app/invite/accept/page.tsx) — landing pública (semi-pública) com **4 variantes** decididas server-side via `getInvitationByToken` + `getCurrentUser`:
+  - **Inválido/expirado/revogado/já aceito** → mensagem específica + CTA voltar/login (não genérico "deu errado").
+  - **Token válido + não logado** → CTA pra `/signup?next=/invite/accept?token=…&email=<convidado>` ou `/login?next=…`. Link inclui email pré-preenchido pro signup.
+  - **Token válido + logado com email diferente** → "Saia e troque de conta" com botão sair.
+  - **Token válido + logado + email bate** → `<AcceptInvitationForm>` client component com botão de aceite.
+- [x] [`apps/web/app/invite/accept/accept-form.tsx`](apps/web/app/invite/accept/accept-form.tsx) — client component que chama `acceptInvitationAction(token)`; toast no sucesso + `router.refresh() + router.push('/dashboard')`. Erro inline com `role="alert"`.
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — `/invite/accept` virou rota **semi-pública** (regra 1b nova, antes da regra raiz). Passa sem checagem se não logado; se logado mas email não confirmado, força `/verify-email`. Open-redirect guard `safeNextParam` extraído pra honrar `?next=` em redirects de auth routes pra users já logados — quem clica em "Já tenho conta" no invite landing volta certo após bater em `/login`.
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — `signupAction(input, options?: {next?})` aceita segundo argumento opcional. `safeNext` é validado (path relativo, sem `//`) e injetado no `emailRedirectTo` (`/auth/callback?next=<safe>`) — convidado novo confirma email e cai direto em `/invite/accept?token=…` em vez do `/onboarding` default.
+- [x] [`apps/web/features/auth/components/signup-form.tsx`](apps/web/features/auth/components/signup-form.tsx) — aceita props `next` + `prefilledEmail`. Email pré-preenchido fica `readOnly` (não `disabled` — `disabled` exclui do form data; queremos só não editável) + hint "Email do convite". Defense-in-depth: server-side check que `data.email === prefilledEmail` (DevTools pode alterar readonly). Link "Já tem conta?" propaga o `next`.
+- [x] [`apps/web/features/auth/components/login-form.tsx`](apps/web/features/auth/components/login-form.tsx) — aceita prop `next` e usa como destino após login bem-sucedido (override do `result.redirectTo`). Open-redirect guard local. Link "Criar conta grátis" propaga o `next`.
+- [x] [`apps/web/app/(auth)/signup/page.tsx`](<apps/web/app/(auth)/signup/page.tsx>) + [`apps/web/app/(auth)/login/page.tsx`](<apps/web/app/(auth)/login/page.tsx>) — Server Components leem `searchParams.next` (e `email` no signup) e passam pros forms.
+
+**Fluxo end-to-end de convite (novo user):**
+
+1. Owner em `/settings/team` (M7#5) → chama `inviteMemberAction` → row em `invitations` + email enviado.
+2. Convidado clica no link do email → `/invite/accept?token=…`.
+3. Não logado → variante "Crie sua conta" → `/signup?next=/invite/accept?token=…&email=convidado@x.com`.
+4. Cria conta (email travado) → recebe email de confirmação com `emailRedirectTo=/auth/callback?next=/invite/accept?token=…`.
+5. Confirma email → callback PKCE → redireciona pra `/invite/accept?token=…`.
+6. Logado + email confirmado + bate com convite → variante "Pronto pra entrar" → clica aceitar.
+7. `acceptInvitationAction` cria `workspace_members` + marca convite + seta cookie → `/dashboard` real do workspace.
+
+**Decisões registradas:**
+
+- **Resend via fetch nativo:** TLS strict no `registry.npmjs.org` impede `pnpm add resend` aqui (mesma raiz do bloqueio do Prisma engine). Wrapper com 30 linhas é simples; promovemos pro SDK oficial se passarmos de 5+ templates (M9 + M12 vão exigir).
+- **Email HTML string-template:** mesma lógica — `@react-email/components` é overkill pra 1 template e adiciona ~3 MB. Migração trivial quando crescer.
+- **Owner não convidável:** propriedade do workspace é singular. Transferência é fluxo dedicado (M7#5 ou Onda 3). `INVITABLE_ROLES` no schema bloqueia na fonte.
+- **Upsert idempotente por `(workspace, email)`:** dois usuários convidando o mesmo email simultaneamente é raro mas possível; reaproveitar a row é mais limpo que tratar erro de unique. Reativação de `revoked`/`expired` pelo upsert também é desejável (Owner pode "ressuscitar" convite cancelado sem código adicional).
+- **Email failure não rollback do convite:** se Resend cair, a row de convite continua válida. UX em M7#5: tela `/settings/team` mostra pending invites com "Reenviar email". Aqui na Onda 2 não temos UI de reenvio ainda — Owner pode reconvidar pelo mesmo email (upsert reaproveita).
+- **`next` propagação:** signup/login forms recebem `next` via props (page Server Components lêem search params). Middleware honra `next` em redirects de auth-route pra logged users. `signupAction` honra `next` em `emailRedirectTo`. Open-redirect guard repetido em 4 lugares (signupAction, loginForm, middleware, /auth/callback) — extrair pra util compartilhado se ficar 5+.
+- **`/settings/team` real fica pra M7#5:** UI de "convidar membro" + "lista de convites pending" + "remover member" usa `inviteMemberAction` e `revokeInvitationAction` já entregues. Onda 2 entrega só o fluxo de aceite porque ele é independente — invite pode ser disparado via smoke endpoint ou direto no banco até /settings/team chegar.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 36 rotas (`/invite/accept` nova), middleware Edge 82.8 kB (+0.1 da Onda 1, regra `/invite/accept` + `safeNextParam`)
+- E2E manual pendente (mesmo motivo da Onda 1 — Prisma engine + Resend env). Cadeia signup→email→callback→accept testável em Vercel preview.
+
+**Pendente de configuração (operador faz uma vez):**
+
+- `RESEND_API_KEY` e `RESEND_FROM_EMAIL` em `apps/web/.env.local` (templates já estão em `.env.example`).
+- Domínio verificado no Resend dashboard com SPF/DKIM (passo dos pré-requisitos M0; bloqueante pra emails saírem em produção).
+
+**Commit:** `feat(invitations): convite por email via resend + accept por magic link (M7#4 onda 2)`
 
 ---
 

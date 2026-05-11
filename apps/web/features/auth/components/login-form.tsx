@@ -16,19 +16,23 @@ import { loginSchema, type LoginInput } from '../schemas';
 
 import { FormField } from './form-field';
 
+interface LoginFormProps {
+  /** Path relativo pra retomar após login (ex: `/invite/accept?token=…`). */
+  next?: string;
+}
+
 /**
  * Form de login. Validação client-side com Zod + RHF, submit via Server
- * Action `loginAction` (M7#3) — antes era mock.
+ * Action `loginAction` (M7#3, ampliado em M7#4 Onda 2 pra honrar `next`).
  *
  * Fluxo:
  *  1. RHF valida (Zod) → submit chamado
  *  2. `loginAction(data)` → Supabase signInWithPassword + cookies httpOnly
- *  3. Sucesso: `router.push(result.redirectTo)`. Middleware corrige rota
- *     se for o caso (sem workspace → /onboarding).
- *  4. Erro: `setSubmitError(result.error)` — mensagem pt-BR já vem traduzida
- *     da action (CLAUDE.md §7.6).
+ *  3. Sucesso: redireciona pra `next` (se safe) ou `result.redirectTo`.
+ *     Middleware corrige rota se for o caso (sem workspace → /onboarding).
+ *  4. Erro: `setSubmitError(result.error)` — pt-BR já traduzido na action.
  */
-export function LoginForm() {
+export function LoginForm({ next }: LoginFormProps = {}) {
   const router = useRouter();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
@@ -41,6 +45,11 @@ export function LoginForm() {
     defaultValues: { email: '', password: '' },
     mode: 'onTouched',
   });
+
+  // Open-redirect guard (mesmo padrão do middleware/callback). Em raros
+  // casos `next` chega como string absoluta ou `//evil.com` — rebaixamos
+  // pro default. Só aceita path relativo começando com `/` sem `//`.
+  const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
 
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
@@ -56,7 +65,7 @@ export function LoginForm() {
     // sessão recém-criada — sem isso, o primeiro render do destino pode
     // ainda enxergar `user=null`.
     router.refresh();
-    router.push(result.redirectTo ?? '/dashboard');
+    router.push(safeNext ?? result.redirectTo ?? '/dashboard');
   });
 
   return (
@@ -127,7 +136,10 @@ export function LoginForm() {
 
       <p className="text-muted-foreground text-body text-center">
         Ainda não tem conta?{' '}
-        <Link href="/signup" className="text-primary font-medium hover:underline">
+        <Link
+          href={safeNext ? `/signup?next=${encodeURIComponent(safeNext)}` : '/signup'}
+          className="text-primary font-medium hover:underline"
+        >
           Criar conta grátis
         </Link>
       </p>

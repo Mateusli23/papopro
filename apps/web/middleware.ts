@@ -53,8 +53,21 @@ import { updateSession } from '@/lib/supabase/middleware';
 const AUTH_ROUTES = new Set(['/login', '/signup', '/forgot']);
 const VERIFY_ROUTE = '/verify-email';
 const ONBOARDING_ROUTE = '/onboarding';
+const INVITE_ACCEPT_ROUTE = '/invite/accept';
 const DEFAULT_LOGGED_OUT = '/login';
 const DEFAULT_LOGGED_IN = '/dashboard';
+
+/**
+ * Helper: o destino `next` em redirects de auth (login/signup) só é
+ * preservado se for um path relativo seguro (sem `//` que pula domínio).
+ * Open-redirect guard equivalente ao do callback PKCE.
+ */
+function safeNextParam(next: string | null): string | null {
+  if (!next) return null;
+  if (!next.startsWith('/')) return null;
+  if (next.startsWith('//')) return null;
+  return next;
+}
 
 /**
  * Resolve "tem workspace?" usando o cookie como cache e fallback pra query.
@@ -90,6 +103,24 @@ export async function middleware(req: NextRequest) {
   const { response, user } = await updateSession(req);
   const emailVerified = user?.email_confirmed_at != null;
 
+  // 1b. `/invite/accept` é **semi-público** (M7#4 Onda 2).
+  //   - Logado OU não logado: a página decide a variante (LoggedOutState
+  //     mostra CTA pra signup/login com `?next=` propagado; AcceptForm
+  //     mostra o aceite).
+  //   - **Mas** se logado + email NÃO confirmado: força /verify-email.
+  //     Aceitar sem email confirmado quebra o invariante "todo membro
+  //     tem email verificado" que outras telas assumem.
+  if (pathname.startsWith(INVITE_ACCEPT_ROUTE)) {
+    if (user && !emailVerified) {
+      const url = req.nextUrl.clone();
+      url.pathname = VERIFY_ROUTE;
+      // Preserva o token pra retomar o aceite depois da confirmação.
+      url.searchParams.delete('token');
+      return NextResponse.redirect(url);
+    }
+    return response;
+  }
+
   // 2. Raiz: encaminha conforme estado.
   if (pathname === '/') {
     const url = req.nextUrl.clone();
@@ -112,9 +143,19 @@ export async function middleware(req: NextRequest) {
       const url = req.nextUrl.clone();
       if (!emailVerified) {
         url.pathname = VERIFY_ROUTE;
+        url.search = '';
       } else {
+        // `?next=` é honrado pra quem JÁ está logado bater no link certo
+        // depois (caso típico Onda 2: /signup?next=/invite/accept?token=…
+        // pra um user que já tinha conta).
+        const next = safeNextParam(req.nextUrl.searchParams.get('next'));
+        if (next) {
+          const target = new URL(next, req.url);
+          return NextResponse.redirect(target, { headers: response.headers });
+        }
         const hasWorkspace = await resolveHasWorkspace(req, response, user.id);
         url.pathname = hasWorkspace ? DEFAULT_LOGGED_IN : ONBOARDING_ROUTE;
+        url.search = '';
       }
       return NextResponse.redirect(url, { headers: response.headers });
     }

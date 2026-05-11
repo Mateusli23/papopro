@@ -63,11 +63,23 @@ function getAppUrl(): string {
  * shape pra evitar enumeração. Mas se vier `error` com mensagem específica,
  * traduzimos pra pt-BR.
  */
-export async function signupAction(input: SignupInput): Promise<AuthActionResult> {
+export async function signupAction(
+  input: SignupInput,
+  options?: { next?: string },
+): Promise<AuthActionResult> {
   const parsed = signupSchema.safeParse(input);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
   }
+
+  // Open-redirect guard espelha o do `/auth/callback`: aceita só paths
+  // relativos sem `//`. `next` chega de `/signup?next=…` propagado pelo
+  // landing `/invite/accept` ou pelo middleware. Fallback é o fluxo padrão
+  // do signup (criar workspace em /onboarding).
+  const safeNext =
+    options?.next && options.next.startsWith('/') && !options.next.startsWith('//')
+      ? options.next
+      : '/onboarding';
 
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.auth.signUp({
@@ -78,8 +90,10 @@ export async function signupAction(input: SignupInput): Promise<AuthActionResult
       // handle_new_auth_user (M7#2 §5.1) copia pra `public.users.name`.
       data: { name: parsed.data.name.trim() },
       // Link no email de confirmação aponta pra /auth/callback, que troca
-      // o `?code` por sessão httpOnly e depois redireciona pro `next`.
-      emailRedirectTo: `${getAppUrl()}/auth/callback?next=/onboarding`,
+      // o `?code` por sessão httpOnly e depois redireciona pro `next`. Em
+      // M7#4 Onda 2: convites passam `next=/invite/accept?token=…` pra
+      // levar o user recém-confirmado direto pro aceite.
+      emailRedirectTo: `${getAppUrl()}/auth/callback?next=${encodeURIComponent(safeNext)}`,
     },
   });
 

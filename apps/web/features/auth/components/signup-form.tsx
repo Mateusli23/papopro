@@ -16,20 +16,26 @@ import { signupSchema, type SignupInput } from '../schemas';
 
 import { FormField } from './form-field';
 
+interface SignupFormProps {
+  /** Path relativo pra retomar após confirmação de email (ex: `/invite/accept?token=…`). */
+  next?: string;
+  /** Email pré-preenchido (UX de convite — trava o campo pra não desviar do fluxo). */
+  prefilledEmail?: string;
+}
+
 /**
  * Form de cadastro (signup). Validação Zod + RHF, submit via Server Action
- * `signupAction` (M7#3) — antes era mock.
+ * `signupAction` (M7#3, ampliado em M7#4 Onda 2 com `next` opcional).
  *
  * Fluxo:
  *  1. RHF valida (Zod) → submit chamado
- *  2. `signupAction(data)` → Supabase signUp + email de confirmação + cookies
- *     httpOnly (sessão ativa imediatamente, mas dashboard fica bloqueado
- *     até confirmar email — middleware §7.8 CLAUDE.md)
- *  3. Sucesso: redirect pra `/verify-email` (tela "confirme seu email").
- *     O trigger SQL `handle_new_auth_user` já espelhou em `public.users`.
+ *  2. `signupAction(data, { next })` → Supabase signUp + email de confirmação
+ *     + cookies httpOnly. `next` vai pro `emailRedirectTo` (volta pro convite
+ *     depois de confirmar email).
+ *  3. Sucesso: redirect pra `/verify-email`.
  *  4. Erro: `setSubmitError(result.error)` — pt-BR já traduzido na action.
  */
-export function SignupForm() {
+export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
   const router = useRouter();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
@@ -40,14 +46,29 @@ export function SignupForm() {
     formState: { errors, isSubmitting },
   } = useForm<SignupInput>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { name: '', email: '', password: '', acceptTerms: false },
+    defaultValues: {
+      name: '',
+      email: prefilledEmail ?? '',
+      password: '',
+      acceptTerms: false,
+    },
     mode: 'onTouched',
   });
 
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
-    const result = await signupAction(data);
+    // Bloqueia divergência entre email pré-preenchido (do convite) e o que
+    // veio submetido. Defense-in-depth: o input pode estar `readOnly` mas
+    // DevTools consegue alterar — server-side garante.
+    if (prefilledEmail && data.email.toLowerCase() !== prefilledEmail.toLowerCase()) {
+      setSubmitError(
+        'Para aceitar o convite, crie a conta com o email convidado. Para outro email, peça um novo convite.',
+      );
+      return;
+    }
+
+    const result = await signupAction(data, next ? { next } : undefined);
 
     if (!result.ok) {
       setSubmitError(result.error);
@@ -98,6 +119,11 @@ export function SignupForm() {
           autoCorrect="off"
           spellCheck={false}
           placeholder="voce@empresa.com"
+          // `readOnly` em vez de `disabled`: campo continua submetido pelo
+          // form (disabled exclui do form data), só não é editável. UX clara
+          // que esse é o email do convite — usuário não confunde.
+          readOnly={Boolean(prefilledEmail)}
+          hint={prefilledEmail ? 'Email do convite — crie a conta com esse endereço.' : undefined}
           error={errors.email?.message}
           {...register('email')}
         />
@@ -177,7 +203,10 @@ export function SignupForm() {
 
       <p className="text-muted-foreground text-body text-center">
         Já tem conta?{' '}
-        <Link href="/login" className="text-primary font-medium hover:underline">
+        <Link
+          href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}
+          className="text-primary font-medium hover:underline"
+        >
           Entrar
         </Link>
       </p>
