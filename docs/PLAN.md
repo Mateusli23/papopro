@@ -533,7 +533,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- | ------------------ |
 | M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core` | ✅ entregue | _aguardando abrir_ |
 | M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`      | ✅ entregue | _aguardando abrir_ |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | _a definir_          | ⏳ pendente | —                  |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`      | ✅ entregue | _aguardando abrir_ |
 | M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | _a definir_          | ⏳ pendente | —                  |
 | M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_          | ⏳ pendente | —                  |
 | M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_          | ⏳ pendente | —                  |
@@ -546,12 +546,12 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC) _(M7#2)_
 - [x] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `set_config('app.workspace_id', …, true)` parametrizado e roda callback _(M7#1 — usa `set_config(...)` em vez de `SET LOCAL` literal porque Prisma `$executeRaw` só parametriza valores, não nomes de GUC)_
 - [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
-- [ ] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha, logout em todos dispositivos _(M7#3)_
-- [ ] Server Actions de auth substituem mocks de M3 _(M7#3)_
+- [x] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha _(M7#3 — "logout em todos os dispositivos" fica pra M7#5 junto com audit log)_
+- [x] Server Actions de auth substituem mocks de M3 _(M7#3)_
 - [ ] Convite por email via Resend + aceite via magic link _(M7#4)_
 - [ ] Switcher de workspace lê `workspace_members` real _(M7#4)_
 - [ ] Wizard de onboarding (M3) cria workspace de verdade _(M7#4)_
-- [ ] Middleware com gate de auth + redirect inteligente (0/1/N workspaces) _(M7#3)_
+- [x] Middleware com gate de auth + redirect inteligente _(M7#3 — gate por sessão + email confirmado entregue; lookup de memberships pra escolher /onboarding × /dashboard fica pra M7#4 quando `workspace_members` tiver dados reais)_
 - [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
 - [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5)_
 - [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5)_
@@ -589,6 +589,34 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] **Validação pós-migration:** advisors security = `lints: []`, `count(tables WHERE schema='public') = 7`, `count(pg_policies WHERE schemaname='public') = 19`, `count(user_triggers) = 6`, `current_workspace_id()` retorna NULL fora de tx (não crasha), `citext` continua resolvendo após mover de schema.
 
 **Commit:** `feat(backend): aplicar M7#2 schema + RLS + hardening`
+
+**Entregas — M7#3 Supabase Auth real (em 3 ondas, 3 commits):**
+
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — Server Actions: `signupAction`, `loginAction`, `forgotAction`, `logoutAction`, `resendVerificationAction`, `updatePasswordAction`. Retornam `AuthActionResult` (`{ok, redirectTo|error|message}`) em vez de `redirect()` direto — `NEXT_REDIRECT` throws atrapalham o handler de erro no RHF. Mensagens Supabase mapeadas pra pt-BR direto (CLAUDE.md §7.6). `forgotAction` sempre retorna `ok=true` (anti-enumeração de emails, LGPD).
+- [x] [`apps/web/app/auth/callback/route.ts`](apps/web/app/auth/callback/route.ts) — handler PKCE oficial `@supabase/ssr`. Troca `?code=` por sessão httpOnly e redireciona pro `?next=` validado (open-redirect guard — só paths relativos, sem `//`).
+- [x] [`apps/web/lib/auth/get-user.ts`](apps/web/lib/auth/get-user.ts) — `getCurrentUser` (React `cache()` + `auth.getUser()` que valida JWT contra forgery de cookie) + `getCurrentUserContext` (user + memberships via admin client pra contornar chicken-and-egg da policy `workspace_members_select`).
+- [x] [`apps/web/lib/auth/use-user.ts`](apps/web/lib/auth/use-user.ts) — hook client com `getUser` + `onAuthStateChange`. Shape `{ loading, user, displayName }` compatível com o antigo `useAuthMock` pra minimizar refactor nos consumidores.
+- [x] [`apps/web/lib/supabase/middleware.ts`](apps/web/lib/supabase/middleware.ts) — `createServerClient` pro Edge runtime, propaga cookies renovados pra req + response (refresh silencioso do JWT a cada hora).
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — gate Supabase: `/auth/callback` público; raiz redireciona conforme estado; rotas auth mandam logado pra dashboard ou `/verify-email`; `/verify-email` exige logado mas redireciona se já confirmado; demais exigem logado + `email_confirmed_at != null` (CLAUDE.md §7.8). Sem cookie mock.
+- [x] **Forms reais:** [`login-form`](apps/web/features/auth/components/login-form.tsx), [`signup-form`](apps/web/features/auth/components/signup-form.tsx), [`forgot-form`](apps/web/features/auth/components/forgot-form.tsx), [`verify-email-card`](apps/web/features/auth/components/verify-email-card.tsx) chamam as Server Actions correspondentes. `router.refresh() + router.push(redirectTo)` pra middleware re-rodar com sessão recém-criada.
+- [x] [`apps/web/components/app-shell/user-menu.tsx`](apps/web/components/app-shell/user-menu.tsx) — `useUser()` + `logoutAction` (server `redirect()` direto, sem `router.push`).
+- [x] **WorkspaceMockProvider temporário** ([`apps/web/features/workspace/workspace-mock-provider.tsx`](apps/web/features/workspace/workspace-mock-provider.tsx)) — extrai do antigo `AuthMockProvider` só `activeWorkspace`/`wizardCompleted`. Cookies próprios `papopro_workspace_mock_*` (separados pra não bagunçar com resíduo do mock antigo). **Sai inteiro em M7#4** quando workspaces reais entrarem.
+- [x] **`/settings/security`** ([`apps/web/app/(dashboard)/settings/security/`](<apps/web/app/(dashboard)/settings/security/>)) — page + view com form de troca de senha consumindo `updatePasswordAction`. Aterriza aqui via reset por email (`forgotAction → /auth/callback?next=/settings/security`) ou troca proativa pelo sub-nav. Item "Segurança" adicionado em [`settings-nav-config.ts`](apps/web/features/settings/components/settings-nav-config.ts).
+- [x] **DELETADOS:** `apps/web/lib/auth/auth-mock-provider.tsx` + `apps/web/lib/auth/cookies.ts` (substituídos por Supabase + `useUser` + WorkspaceMock).
+
+**Configuração Supabase pendente (Dashboard — operador faz uma vez):**
+
+- [ ] Authentication → URL Configuration → Site URL: `http://localhost:3000` (dev) e `https://app.pipeflow.com.br` (prod, quando deployarmos)
+- [ ] Authentication → URL Configuration → Redirect URLs allowlist: `http://localhost:3000/auth/callback` e `https://app.pipeflow.com.br/auth/callback`
+- [ ] Authentication → Email Templates: customizar em pt-BR (Confirm signup, Reset password) — opcional, default já vem em inglês
+
+**Validação local pendente:** signup → email → callback → /onboarding → login → /dashboard. Local bloqueado pelo postinstall do Prisma (TLS strict no `binaries.prisma.sh`). Validar via Vercel preview ou ambiente com rede limpa.
+
+**Commits:**
+
+- `feat(auth): server actions, callback PKCE e helper getCurrentUser (M7#3 onda 1)`
+- `feat(auth): middleware Supabase + UI consome sessao real (M7#3 onda 2)`
+- `feat(auth): tela /settings/security + updatePasswordAction (M7#3 onda 3)`
 
 **Commit final do marco (entregue só no último sub-PR):** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
 

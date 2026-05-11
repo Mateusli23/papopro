@@ -25,9 +25,11 @@ import {
   forgotPasswordSchema,
   loginSchema,
   signupSchema,
+  updatePasswordSchema,
   type ForgotPasswordInput,
   type LoginInput,
   type SignupInput,
+  type UpdatePasswordInput,
 } from './schemas';
 
 export type AuthActionResult =
@@ -186,6 +188,39 @@ export async function logoutAction(): Promise<void> {
   await supabase.auth.signOut();
   revalidatePath('/', 'layout');
   redirect('/login');
+}
+
+/**
+ * `updatePasswordAction` — troca a senha do user logado.
+ *
+ * Usado em duas situações:
+ *  - Reset por email: forgotAction → email link → /auth/callback?next=/settings/security
+ *    (sessão temporária do reset token, com permissão pra `updateUser`).
+ *  - Troca proativa em /settings/security (user já logado normalmente).
+ *
+ * Validação cruza os dois campos do schema (newPassword === confirmPassword)
+ * antes de bater no Supabase, evitando round-trip desnecessário.
+ */
+export async function updatePasswordAction(input: UpdatePasswordInput): Promise<AuthActionResult> {
+  const parsed = updatePasswordSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.newPassword });
+
+  if (error) {
+    if (error.message.includes('Password should be') || error.code === 'weak_password') {
+      return { ok: false, error: 'Senha muito fraca — use pelo menos 8 caracteres.' };
+    }
+    if (error.message.includes('same as')) {
+      return { ok: false, error: 'A nova senha precisa ser diferente da atual.' };
+    }
+    return { ok: false, error: 'Não foi possível trocar a senha agora. Tente em instantes.' };
+  }
+
+  return { ok: true, message: 'Senha atualizada. Use a nova nas próximas vezes.' };
 }
 
 /**

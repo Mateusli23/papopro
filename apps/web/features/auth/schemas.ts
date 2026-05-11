@@ -58,6 +58,29 @@ export const forgotPasswordSchema = z.object({
 
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 
+/**
+ * Schema de troca de senha — usado em `/settings/security` e no fim do fluxo
+ * de recuperação (forgot → email link → /auth/callback → /settings/security).
+ *
+ * `refine` cruza os dois campos pra exigir que confirmação bata. Mensagem
+ * de erro aterrissa em `confirmPassword` (não em `newPassword`) — UX padrão
+ * de "marca o campo da divergência".
+ */
+export const updatePasswordSchema = z
+  .object({
+    newPassword: z
+      .string()
+      .min(1, 'Crie uma nova senha')
+      .min(PASSWORD_MIN, `A senha precisa ter pelo menos ${PASSWORD_MIN} caracteres`),
+    confirmPassword: z.string().min(1, 'Confirme a nova senha'),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: 'As senhas não conferem',
+    path: ['confirmPassword'],
+  });
+
+export type UpdatePasswordInput = z.infer<typeof updatePasswordSchema>;
+
 export const onboardingSchema = z.object({
   workspaceName: z
     .string()

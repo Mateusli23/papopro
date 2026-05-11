@@ -12,6 +12,7 @@ import {
   Bell,
   Building2,
   CreditCard,
+  Lock,
   type LucideIcon,
   Plug,
   Smartphone,
@@ -51,6 +52,12 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     href: '/settings/notifications',
     icon: Bell,
     description: 'Preferências por evento × canal',
+  },
+  {
+    label: 'Segurança',
+    href: '/settings/security',
+    icon: Lock,
+    description: 'Trocar senha e gerenciar sessão',
   },
   {
     label: 'Conexões',
