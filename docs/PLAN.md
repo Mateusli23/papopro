@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                     |
-| -------- | ------- | --------------- | ---------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                               |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                               |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                               |
-| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2) |
-| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳   |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                |
+| Sprint   | Dias    | Marcos cobertos | Status                                                                       |
+| -------- | ------- | --------------- | ---------------------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                 |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                 |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                 |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                   |
+| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳ (1 sub-PR entregue) |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                  |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                  |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                  |
 
 **Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Gitflow strict ativado** (ver CLAUDE.md §10): `dev` é a nova default branch e integration trunk; `main` recebe só releases (`PR dev → main`). Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
@@ -523,31 +523,60 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 ## M7 — Backend Foundation: Supabase + Auth + Multi-tenant + RLS
 
-**Branch:** `m7-backend-foundation`
+**Branches:** múltiplos sub-PRs empilhados sobre `dev` (gitflow strict, CLAUDE.md §10), partindo de `feat/supabase-core`.
 
 **Objetivo:** Substituir os mocks de auth/workspace por Supabase real. Schema mínimo, RLS aplicada, helper de contexto de workspace, convites por email funcionando.
 
-**Entregas:**
+**Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-- [ ] Projeto Supabase Pro provisionado (região São Paulo)
-- [ ] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`)
-- [ ] Migration inicial aplicada
-- [ ] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC)
-- [ ] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `SET LOCAL app.workspace_id = $1` e roda callback
-- [ ] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role)
-- [ ] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha, logout em todos dispositivos
-- [ ] Server Actions de auth substituem mocks de M3
-- [ ] Convite por email via Resend + aceite via magic link
-- [ ] Switcher de workspace lê `workspace_members` real
-- [ ] Wizard de onboarding (M3) cria workspace de verdade
-- [ ] Middleware com gate de auth + redirect inteligente (0/1/N workspaces)
-- [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])`
-- [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel)
-- [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin)
-- [ ] Testes E2E (Playwright): signup → verificação email → login → criar workspace → convidar → aceitar
-- [ ] Sentry capturando erros de Server Actions e API routes
+| Sub-PR | Escopo                                                                                                                                       | Branch               | Status      | PR                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- | ------------------ |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core` | ✅ entregue | _aguardando abrir_ |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | _a definir_          | ⏳ pendente | —                  |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | _a definir_          | ⏳ pendente | —                  |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | _a definir_          | ⏳ pendente | —                  |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_          | ⏳ pendente | —                  |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_          | ⏳ pendente | —                  |
 
-**Commit final:** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
+**Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
+
+- [x] Projeto Supabase Pro provisionado (região São Paulo) _(M7#1 — user-provided keys do projeto existente `ulmswswmriweyxkwelim`)_
+- [ ] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) _(M7#2)_
+- [ ] Migration inicial aplicada _(M7#2)_
+- [ ] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC) _(M7#2)_
+- [x] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `set_config('app.workspace_id', …, true)` parametrizado e roda callback _(M7#1 — usa `set_config(...)` em vez de `SET LOCAL` literal porque Prisma `$executeRaw` só parametriza valores, não nomes de GUC)_
+- [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
+- [ ] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha, logout em todos dispositivos _(M7#3)_
+- [ ] Server Actions de auth substituem mocks de M3 _(M7#3)_
+- [ ] Convite por email via Resend + aceite via magic link _(M7#4)_
+- [ ] Switcher de workspace lê `workspace_members` real _(M7#4)_
+- [ ] Wizard de onboarding (M3) cria workspace de verdade _(M7#4)_
+- [ ] Middleware com gate de auth + redirect inteligente (0/1/N workspaces) _(M7#3)_
+- [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
+- [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5)_
+- [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5)_
+- [ ] Testes E2E (Playwright): signup → verificação email → login → criar workspace → convidar → aceitar _(M7#6)_
+- [ ] Sentry capturando erros de Server Actions e API routes _(M7#6)_
+
+**Entregas — M7#1 Setup Supabase & Chaves:**
+
+- [x] Projeto Supabase existente reutilizado (`ulmswswmriweyxkwelim`, sa-east-1) — `.env.local` populado pelo usuário com `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` (pooled :6543, transaction mode), `DIRECT_URL` (:5432 pra migrations). Extensões `pgcrypto`, `pg_trgm`, `vector`, `pg_cron` habilitadas via Supabase Dashboard (Database → Extensions) — MCP autenticado na sessão não tinha permissão neste projeto, delegado ao operador.
+- [x] SDKs instalados em `apps/web`: `@supabase/ssr@^0.10.3` (wrapper oficial Next.js 14 com cookies httpOnly) + `@supabase/supabase-js@^2.105.4` + `@prisma/client@^6.1.0` direto pra Next bundlear o engine no `.next/standalone`.
+- [x] `@types/node` adicionado a `packages/db/devDependencies` (eslint reclamava de `process.env` sem tipo).
+- [x] [`apps/web/lib/supabase/client.ts`](apps/web/lib/supabase/client.ts) — `createSupabaseBrowserClient()` via `@supabase/ssr/client` com anon key. Browser-safe, confia em RLS.
+- [x] [`apps/web/lib/supabase/server.ts`](apps/web/lib/supabase/server.ts) — `createSupabaseServerClient()` com `cookies()` de `next/headers`. `set`/`remove` envolvidos em try/catch porque Server Components não podem mutar cookies no Next 14 (padrão recomendado em `supabase.com/docs/guides/auth/server-side/nextjs`). `import 'server-only'` no topo.
+- [x] [`apps/web/lib/supabase/admin.ts`](apps/web/lib/supabase/admin.ts) — `createSupabaseAdminClient()` com service role + `auth.persistSession: false`. `import 'server-only'` no topo (CLAUDE.md §7.1).
+- [x] [`apps/web/lib/supabase/with-workspace.ts`](apps/web/lib/supabase/with-workspace.ts) — `withWorkspace(workspaceId, fn)` abre `prisma.$transaction`, valida workspaceId com regex `/^[\w-]{1,64}$/`, executa `SELECT set_config('app.workspace_id', ${workspaceId}, true)` (parametrizado via prepared statement) e roda o callback recebendo `tx: Prisma.TransactionClient`. **Não substitui defense-in-depth**: callback continua obrigado a filtrar `where: { workspaceId }` no código (CLAUDE.md §7.2).
+- [x] [`packages/db/src/index.ts`](packages/db/src/index.ts) — Prisma client agora exportado como **Proxy lazy singleton**: `new Proxy({}, { get: ... })` materializa o `PrismaClient` só no primeiro acesso a propriedade, evitando "Failed to collect page data" do Next 14 (que importa rotas em build-time). Cache em `globalThis.__papoproPrisma` em dev/test pra não vazar pool no HMR. Re-exporta o namespace `Prisma`.
+- [x] [`apps/web/app/api/smoke-test/supabase/route.ts`](apps/web/app/api/smoke-test/supabase/route.ts) — endpoint interno seguindo padrão do `/api/smoke-test/leads` (M4). Valida 4 checks: (1) `createSupabaseServerClient()` instancia sem crashar; (2) dentro de `withWorkspace`, `current_setting('app.workspace_id', true)` retorna o id aplicado; (3) fora do helper, o setting voltou a vazio (isolamento por transação); (4) erro dentro do callback faz rollback e limpa o setting. Retorna `{ ok, checks }` com status 200/500.
+- [x] **`AuthMockProvider` e `middleware.ts` intactos.** Produto navega exatamente como antes — nada da UI atual depende de Supabase ainda. M7#3 faz a troca.
+- [x] **Schema Prisma continua placeholder** (sem `model` declarado). M7#2 popula com `workspaces`/`users`/etc.
+- [x] **Decisão de tooling:** `prisma generate` não pôde rodar localmente neste ambiente (TLS strict bloqueia `binaries.prisma.sh`). Build local passa porque o lazy Proxy não instancia Prisma em build-time. CI no GitHub Actions (sem proxy corporativo) baixa o engine normalmente. Smoke endpoint runtime exige `prisma generate` ter rodado uma vez — operador roda `pnpm --filter @papopro/db db:generate` localmente em rede sem TLS strict antes do `pnpm dev`.
+- [x] Verificação local: `pnpm lint` 5/5 ✓, `pnpm typecheck` 5/5 ✓, `pnpm -w run format:check` ✓ (arquivos do PR), `pnpm build` 2/2 ✓ (web + landing).
+
+**Commit:** `feat(backend): supabase sdk, prisma client singleton e helper with-workspace`
+
+**Commit final do marco (entregue só no último sub-PR):** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
 
 ---
 
