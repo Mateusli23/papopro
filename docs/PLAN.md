@@ -532,7 +532,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 | Sub-PR | Escopo                                                                                                                                       | Branch               | Status      | PR                 |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------- | ------------------ |
 | M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core` | ✅ entregue | _aguardando abrir_ |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | _a definir_          | ⏳ pendente | —                  |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`      | ✅ entregue | _aguardando abrir_ |
 | M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | _a definir_          | ⏳ pendente | —                  |
 | M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | _a definir_          | ⏳ pendente | —                  |
 | M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_          | ⏳ pendente | —                  |
@@ -540,10 +540,10 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
-- [x] Projeto Supabase Pro provisionado (região São Paulo) _(M7#1 — user-provided keys do projeto existente `ulmswswmriweyxkwelim`)_
-- [ ] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) _(M7#2)_
-- [ ] Migration inicial aplicada _(M7#2)_
-- [ ] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC) _(M7#2)_
+- [x] Projeto Supabase provisionado (sa-east-1, São Paulo) _(M7#1 — projeto `iffmjydjeukozopxxitb` "papo pro", criado em 2026-05-11 via MCP `create_project`; substituiu refs anteriores `ulmswswmriweyxkwelim` e `celuvzodbmobkigdoetm` que ficaram órfãos)_
+- [x] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) _(M7#2)_
+- [x] Migration inicial aplicada _(M7#2)_
+- [x] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC) _(M7#2)_
 - [x] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `set_config('app.workspace_id', …, true)` parametrizado e roda callback _(M7#1 — usa `set_config(...)` em vez de `SET LOCAL` literal porque Prisma `$executeRaw` só parametriza valores, não nomes de GUC)_
 - [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
 - [ ] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha, logout em todos dispositivos _(M7#3)_
@@ -560,7 +560,7 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Entregas — M7#1 Setup Supabase & Chaves:**
 
-- [x] Projeto Supabase existente reutilizado (`ulmswswmriweyxkwelim`, sa-east-1) — `.env.local` populado pelo usuário com `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` (pooled :6543, transaction mode), `DIRECT_URL` (:5432 pra migrations). Extensões `pgcrypto`, `pg_trgm`, `vector`, `pg_cron` habilitadas via Supabase Dashboard (Database → Extensions) — MCP autenticado na sessão não tinha permissão neste projeto, delegado ao operador.
+- [x] Projeto Supabase `iffmjydjeukozopxxitb` ("papo pro", sa-east-1, criado em 2026-05-11 via MCP) — `.env.local` populado com `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (legacy JWT), `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` (Supavisor pooler :6543, transaction mode) e `DIRECT_URL` (Supavisor pooler :5432, session mode — `db.<ref>.supabase.co:5432` é IPv6-only desde 2024). Extensões `pgcrypto`, `pg_trgm`, `citext` criadas pelo próprio SQL de M7#2 (`docs/m7-2-migration.sql`, idempotente). `vector` (pgvector) e `pg_cron` ficam pra M9/M11.
 - [x] SDKs instalados em `apps/web`: `@supabase/ssr@^0.10.3` (wrapper oficial Next.js 14 com cookies httpOnly) + `@supabase/supabase-js@^2.105.4` + `@prisma/client@^6.1.0` direto pra Next bundlear o engine no `.next/standalone`.
 - [x] `@types/node` adicionado a `packages/db/devDependencies` (eslint reclamava de `process.env` sem tipo).
 - [x] [`apps/web/lib/supabase/client.ts`](apps/web/lib/supabase/client.ts) — `createSupabaseBrowserClient()` via `@supabase/ssr/client` com anon key. Browser-safe, confia em RLS.
@@ -575,6 +575,20 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] Verificação local: `pnpm lint` 5/5 ✓, `pnpm typecheck` 5/5 ✓, `pnpm -w run format:check` ✓ (arquivos do PR), `pnpm build` 2/2 ✓ (web + landing).
 
 **Commit:** `feat(backend): supabase sdk, prisma client singleton e helper with-workspace`
+
+**Entregas — M7#2 Schema inicial + RLS:**
+
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — 7 models declarados (`Workspace`, `User`, `WorkspaceMember`, `Invitation`, `AuditLog`, `NotificationPreference`, `WebhookEvent`) + 3 enums (`Role`, `InvitationStatus`, `AuditAction`) com FKs, índices (incluindo composto `[workspaceId, createdAt(sort: Desc)]` em `audit_logs` pra suportar timeline), `@unique` em `(workspace_id, user_id)`, `(workspace_id, email)` e `(source, external_id)`. `User.email` em `citext` (case-insensitive). `Workspace.settings` JSONB wide. `previewFeatures = ["postgresqlExtensions"]` ativo com `extensions = [pgcrypto, pg_trgm, vector, citext]` (vector reservado pra M11).
+- [x] [`docs/m7-2-migration.sql`](docs/m7-2-migration.sql) — SQL idempotente versionado (`CREATE … IF NOT EXISTS`, `DO $$ EXCEPTION WHEN duplicate_object THEN NULL $$`, `CREATE OR REPLACE FUNCTION`, `DROP POLICY IF EXISTS` antes de cada `CREATE POLICY`). Source of truth pra reproduzir o schema em outro projeto Supabase (preview, prod). Aplicado via MCP `apply_migration` (server-side, dispensa Prisma CLI local).
+- [x] **Funções SQL:** `public.current_workspace_id()` (lê `app.workspace_id` setado por `withWorkspace()`, cast UUID seguro, retorna NULL fora de transação), `public.touch_updated_at()` (trigger genérico em 4 tabelas com `updated_at`), `public.handle_new_auth_user()` SECURITY DEFINER (espelha `auth.users` → `public.users` no signup, `ON CONFLICT DO NOTHING`), `public.handle_auth_user_email_confirmed()` SECURITY DEFINER (sincroniza `email_verified_at` quando user confirma email). Todas com `SET search_path` fixo (hardening).
+- [x] **Triggers:** `on_auth_user_created` (AFTER INSERT em `auth.users`) e `on_auth_user_email_confirmed` (AFTER UPDATE OF `email_confirmed_at`) — padrão Supabase oficial.
+- [x] **RLS habilitada nas 7 tabelas + 19 policies.** Padrão de filtro: `workspace_id = public.current_workspace_id()` em tabelas de domínio, `id IN (SELECT workspace_id FROM workspace_members WHERE user_id = auth.uid())` em `workspaces`, e `id = auth.uid()` + acesso a membros do mesmo workspace em `users`. `audit_logs` e `webhook_events` são append-only (sem policies UPDATE/DELETE — escrita administrativa via service role). Service role bypassa RLS por padrão (CLAUDE.md §7.1).
+- [x] **Hardening (advisors Supabase = 0 lints):** extensions `pg_trgm`, `citext`, `pgcrypto` em schema `extensions` (não `public`), `SET search_path = pg_catalog, public` em `current_workspace_id` e `touch_updated_at` (já tinha em handle\_\*), `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` nas duas SECURITY DEFINER pra fechar `/rest/v1/rpc/…`. supabase_auth_admin continua funcionando porque SECURITY DEFINER executa como o owner (postgres), não como o role chamador.
+- [x] [`apps/web/app/api/smoke-test/supabase/route.ts`](apps/web/app/api/smoke-test/supabase/route.ts) — endpoint expandido pra M7#2: além dos 4 checks de M7#1 (`with-workspace` plumbing), adicionou 2 checks de RLS — seed via `createSupabaseAdminClient` em 2 workspaces (WS_A, WS_B), verifica que SELECT com `SET LOCAL ROLE authenticated` dentro de `withWorkspace(WS_A_ID)` vê só `audit_logs` de WS_A, e que INSERT cross-tenant é rejeitado por policy `WITH CHECK`. Cleanup garantido em `finally`. Removido em M7#6 quando Playwright E2E entrar.
+- [x] **Projeto Supabase trocado.** Refs antigas `celuvzodbmobkigdoetm` e `ulmswswmriweyxkwelim` (deletadas/órfãs) substituídas por `iffmjydjeukozopxxitb` ("papo pro", sa-east-1, criado em 2026-05-11 via MCP). Atualizado em `apps/web/.env.local`, `.env.local`, [`.mcp.json`](.mcp.json), [`docs/mcp.json`](docs/mcp.json). `DIRECT_URL` aponta pra Supavisor session mode em `:5432` (não `db.<ref>.supabase.co` que é IPv6-only desde 2024).
+- [x] **Validação pós-migration:** advisors security = `lints: []`, `count(tables WHERE schema='public') = 7`, `count(pg_policies WHERE schemaname='public') = 19`, `count(user_triggers) = 6`, `current_workspace_id()` retorna NULL fora de tx (não crasha), `citext` continua resolvendo após mover de schema.
+
+**Commit:** `feat(backend): aplicar M7#2 schema + RLS + hardening`
 
 **Commit final do marco (entregue só no último sub-PR):** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
 
