@@ -74,6 +74,7 @@ export function OnboardingForm() {
 
       <FormField
         id="onboarding-workspace"
+        data-testid="onboarding-name"
         label="Nome do workspace"
         type="text"
         autoFocus
@@ -84,7 +85,13 @@ export function OnboardingForm() {
         {...register('name')}
       />
 
-      <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+      <Button
+        type="submit"
+        size="lg"
+        disabled={isSubmitting}
+        data-testid="onboarding-submit"
+        className="w-full"
+      >
         {isSubmitting ? (
           <>
             <Loader2 className="animate-spin" />

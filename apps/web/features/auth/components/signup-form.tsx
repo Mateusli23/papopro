@@ -92,6 +92,7 @@ export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
         {submitError && (
           <div
             role="alert"
+            data-testid="signup-error"
             className="bg-destructive/10 text-destructive text-body flex items-start gap-2 rounded-md p-3"
           >
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
@@ -101,6 +102,7 @@ export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
 
         <FormField
           id="signup-name"
+          data-testid="signup-name"
           label="Seu nome"
           type="text"
           autoComplete="name"
@@ -111,6 +113,7 @@ export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
 
         <FormField
           id="signup-email"
+          data-testid="signup-email"
           label="Email de trabalho"
           type="email"
           inputMode="email"
@@ -130,6 +133,7 @@ export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
 
         <FormField
           id="signup-password"
+          data-testid="signup-password"
           label="Senha"
           type="password"
           autoComplete="new-password"
@@ -186,7 +190,13 @@ export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
           )}
         </div>
 
-        <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={isSubmitting}
+          data-testid="signup-submit"
+          className="w-full"
+        >
           {isSubmitting ? (
             <>
               <Loader2 className="animate-spin" />
