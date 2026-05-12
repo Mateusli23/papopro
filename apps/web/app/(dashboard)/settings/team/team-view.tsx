@@ -152,7 +152,7 @@ export function TeamView({
           description="Gerencie membros, papéis e convites pendentes do workspace."
           actions={
             canManage ? (
-              <Button onClick={() => setInviteOpen(true)}>
+              <Button onClick={() => setInviteOpen(true)} data-testid="invite-button">
                 <UserPlus /> Convidar membro
               </Button>
             ) : null
@@ -210,6 +210,7 @@ export function TeamView({
                 variant="outline"
                 onClick={handleCancel}
                 disabled={confirmPending}
+                data-testid="confirm-no"
               >
                 Cancelar
               </Button>
@@ -218,6 +219,7 @@ export function TeamView({
                 variant={confirmReq?.destructive ? 'destructive' : 'default'}
                 onClick={handleConfirm}
                 disabled={confirmPending}
+                data-testid="confirm-yes"
               >
                 {confirmPending ? 'Processando…' : (confirmReq?.confirmLabel ?? 'Confirmar')}
               </Button>
@@ -317,7 +319,7 @@ function PendingInviteRowItem({
   }
 
   return (
-    <tr className="text-body">
+    <tr className="text-body" data-testid={`invitation-row-${invite.id}`}>
       <td className="px-4 py-3">
         <div className="flex flex-col">
           <span className="text-foreground font-medium">{invite.email}</span>
@@ -348,15 +350,19 @@ function PendingInviteRowItem({
                 size="icon-sm"
                 aria-label={`Ações para convite de ${invite.email}`}
                 disabled={pending}
+                data-testid={`invitation-menu-${invite.id}`}
               >
                 <MoreHorizontal />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={handleResend}>Reenviar email</DropdownMenuItem>
+              <DropdownMenuItem onSelect={handleResend} data-testid="resend-invite">
+                Reenviar email
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={handleRevoke}
+                data-testid="cancel-invite"
                 className="text-destructive focus:text-destructive"
               >
                 Cancelar convite
@@ -442,7 +448,7 @@ function MemberRow({
   isSelf: boolean;
 }) {
   return (
-    <tr className="text-body">
+    <tr className="text-body" data-testid={`member-row-${member.userId}`}>
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <Avatar className="size-8">
@@ -606,18 +612,27 @@ function MemberActions({
           size="icon-sm"
           aria-label={`Ações para ${memberDisplayName(member)}`}
           disabled={pending}
+          data-testid={`member-menu-${member.userId}`}
         >
           <MoreHorizontal />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {CHANGEABLE_ROLES.filter((r) => r !== member.role).map((role) => (
-          <DropdownMenuItem key={role} onSelect={() => onChangeRole(role)}>
+          <DropdownMenuItem
+            key={role}
+            onSelect={() => onChangeRole(role)}
+            data-testid={`change-role-${role}`}
+          >
             Mudar para {role}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onRemove} className="text-destructive focus:text-destructive">
+        <DropdownMenuItem
+          onSelect={onRemove}
+          data-testid="remove-member"
+          className="text-destructive focus:text-destructive"
+        >
           Remover do workspace
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -688,6 +703,7 @@ function InviteMemberDialog({
                       type="email"
                       autoComplete="email"
                       placeholder="colaborador@empresa.com.br"
+                      data-testid="invite-email"
                     />
                   </FormControl>
                   <FormMessage />
@@ -703,13 +719,13 @@ function InviteMemberDialog({
                   <FormLabel>Papel</FormLabel>
                   <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
-                      <SelectTrigger>
+                      <SelectTrigger data-testid="invite-role-trigger">
                         <SelectValue />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
                       {INVITABLE_ROLES.map((role) => (
-                        <SelectItem key={role} value={role}>
+                        <SelectItem key={role} value={role} data-testid={`invite-role-${role}`}>
                           <span className="flex flex-col">
                             <span className="text-body font-medium">{role}</span>
                             <span className="text-caption text-muted-foreground">
@@ -729,7 +745,11 @@ function InviteMemberDialog({
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={form.formState.isSubmitting}>
+              <Button
+                type="submit"
+                disabled={form.formState.isSubmitting}
+                data-testid="invite-submit"
+              >
                 Enviar convite
               </Button>
             </DialogFooter>

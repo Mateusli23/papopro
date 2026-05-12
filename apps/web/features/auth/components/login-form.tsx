@@ -81,6 +81,7 @@ export function LoginForm({ next }: LoginFormProps = {}) {
         {submitError && (
           <div
             role="alert"
+            data-testid="login-error"
             className="bg-destructive/10 text-destructive text-body flex items-start gap-2 rounded-md p-3"
           >
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
@@ -90,6 +91,7 @@ export function LoginForm({ next }: LoginFormProps = {}) {
 
         <FormField
           id="login-email"
+          data-testid="login-email"
           label="Email"
           type="email"
           inputMode="email"
@@ -105,6 +107,7 @@ export function LoginForm({ next }: LoginFormProps = {}) {
         <div className="flex flex-col gap-1.5">
           <FormField
             id="login-password"
+            data-testid="login-password"
             label="Senha"
             type="password"
             autoComplete="current-password"
@@ -119,7 +122,13 @@ export function LoginForm({ next }: LoginFormProps = {}) {
           </div>
         </div>
 
-        <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={isSubmitting}
+          data-testid="login-submit"
+          className="w-full"
+        >
           {isSubmitting ? (
             <>
               <Loader2 className="animate-spin" />

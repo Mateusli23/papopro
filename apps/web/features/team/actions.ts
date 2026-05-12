@@ -32,6 +32,7 @@ import { getRequestAuditContext } from '@/lib/audit/context';
 import { requireRole, type Role } from '@/lib/auth/require-role';
 import { sendEmail } from '@/lib/email/resend';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
 import {
@@ -366,7 +367,9 @@ export async function resendInviteAction(input: ResendInviteInput): Promise<Team
   });
 
   if (!emailResult.ok) {
-    console.error('[resendInviteAction] email send failed', emailResult.error);
+    reportNonFatal('team.resend-invite.email-send', new Error(emailResult.error), {
+      status: emailResult.status,
+    });
     return {
       ok: false,
       error: 'Não foi possível reenviar o email agora. Tente em instantes.',

@@ -28,6 +28,7 @@ import {
   setWizardCookie,
   setWorkspaceCookie,
 } from '@/lib/auth/workspace-cookie';
+import { reportNonFatal } from '@/lib/observability/report';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 import { isUuid } from '@/lib/utils/uuid';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
@@ -107,7 +108,7 @@ export async function createWorkspaceAction(
       return found !== null;
     });
   } catch (err) {
-    console.error('[createWorkspaceAction] slug exhausted', err);
+    reportNonFatal('workspace.create.slug-exhausted', err, { userId: user.id });
     return {
       ok: false,
       error: 'Não foi possível gerar o endereço do workspace. Tente outro nome.',
@@ -189,10 +190,10 @@ export async function createWorkspaceAction(
     // `prisma generate`). `err.code === 'P2002'` é estável em todas as versões
     // do Prisma — é o que a constraint UNIQUE produz.
     if (isPrismaErrorCode(err, 'P2002')) {
-      console.error('[createWorkspaceAction] unique violation', err);
+      reportNonFatal('workspace.create.unique-violation', err, { userId: user.id });
       return { ok: false, error: 'Esse nome de workspace já existe. Tente outro.' };
     }
-    console.error('[createWorkspaceAction] transaction failed', err);
+    reportNonFatal('workspace.create.tx', err, { userId: user.id });
     return { ok: false, error: 'Não foi possível criar o workspace agora. Tente em instantes.' };
   }
 

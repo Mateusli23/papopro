@@ -30,6 +30,7 @@ import { requireRole } from '@/lib/auth/require-role';
 import { setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { sendEmail } from '@/lib/email/resend';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 
@@ -219,7 +220,10 @@ export async function inviteMemberAction(
     // O convite EXISTE no banco — não deletamos. UX: "convite criado mas
     // email falhou; tente reenviar". Em M7#5 a tela /settings/team mostra
     // pending invites com botão "Reenviar email".
-    console.error('[inviteMemberAction] email send failed', emailResult.error);
+    reportNonFatal('invitations.invite.email-send', new Error(emailResult.error), {
+      workspaceId,
+      status: emailResult.status,
+    });
     return {
       ok: false,
       error:
@@ -246,7 +250,7 @@ export async function inviteMemberAction(
       });
     });
   } catch (err) {
-    console.error('[inviteMemberAction] audit log failed (non-fatal)', err);
+    reportNonFatal('invitations.invite.audit', err, { workspaceId, userId });
   }
 
   return { ok: true, invitationId: invitation.id };
@@ -413,7 +417,7 @@ export async function acceptInvitationAction(
       setWorkspaceCookie(invitation.workspaceId);
       return { ok: true, workspaceId: invitation.workspaceId, redirectTo: '/dashboard' };
     }
-    console.error('[acceptInvitationAction] transaction failed', err);
+    reportNonFatal('invitations.accept.tx', err, { workspaceId: invitation.workspaceId });
     return { ok: false, error: 'Não foi possível aceitar o convite agora. Tente em instantes.' };
   }
 
@@ -483,7 +487,11 @@ export async function revokeInvitationAction(
       });
     });
   } catch (err) {
-    console.error('[revokeInvitationAction] audit log failed (non-fatal)', err);
+    reportNonFatal('invitations.revoke.audit', err, {
+      workspaceId,
+      userId,
+      invitationId: parsed.data.invitationId,
+    });
   }
 
   return { ok: true };

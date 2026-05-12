@@ -23,6 +23,7 @@ import { prisma } from '@papopro/db';
 
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { clearWorkspaceCookie, readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { reportNonFatal } from '@/lib/observability/report';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isUuid } from '@/lib/utils/uuid';
 
@@ -206,7 +207,7 @@ async function logLoginEvent(userId: string | undefined): Promise<void> {
     });
     workspaceId = firstMembership?.workspaceId ?? null;
   } catch (err) {
-    console.error('[loginAction] workspace lookup failed (non-fatal)', err);
+    reportNonFatal('auth.login.workspace-lookup', err, { userId });
     return;
   }
 
@@ -224,7 +225,7 @@ async function logLoginEvent(userId: string | undefined): Promise<void> {
       },
     });
   } catch (err) {
-    console.error('[loginAction] audit log failed (non-fatal)', err);
+    reportNonFatal('auth.login.audit', err, { workspaceId, userId });
   }
 }
 
@@ -307,7 +308,7 @@ async function logLogoutEvent(): Promise<void> {
       },
     });
   } catch (err) {
-    console.error('[logoutAction] audit log failed (non-fatal)', err);
+    reportNonFatal('auth.logout.audit', err, { workspaceId: cookieWs, userId: user.id });
   }
 }
 
