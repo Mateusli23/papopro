@@ -10,7 +10,9 @@
       "PowerShell(gh --version 2>&1)",
       "PowerShell(gh auth status 2>&1)",
       "PowerShell(node --version)",
-      "PowerShell(node -e \"process.stdout.write\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('base64'\\)\\)\")"
+      "PowerShell(node -e \"process.stdout.write\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('base64'\\)\\)\")",
+      "Bash(cd '/mnt/c/Users/Mateus/Desktop/Projetos_Claude/app_crm' && ls -la)",
+      "Read(//mnt/c/Users/Mateus/Desktop/Projetos_Claude/**)"
     ]
   },
   "enabledPlugins": {
