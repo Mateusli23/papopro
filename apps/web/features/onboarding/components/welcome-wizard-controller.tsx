@@ -2,34 +2,48 @@
 
 import * as React from 'react';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useUser } from '@/lib/auth/use-user';
 
 import { WelcomeWizard } from './welcome-wizard';
+
+interface WelcomeWizardControllerProps {
+  /**
+   * Vem do `getCurrentUserContext` no Server Component pai (Onda 1). Em prod
+   * o middleware garante que quem chega aqui tem workspace; isso é defesa
+   * adicional pra evitar abrir wizard em estado inválido.
+   */
+  hasWorkspace: boolean;
+  /**
+   * Vem do cookie httpOnly `papopro_wizard_completed` lido server-side (Onda 3).
+   * Substitui o `useWorkspaceMock().wizardCompleted` legado.
+   */
+  wizardCompleted: boolean;
+}
 
 /**
  * Controller que decide quando abrir o `WelcomeWizard`.
  *
- * Regra (M3): abre AUTOMATICAMENTE no primeiro acesso a qualquer rota do
- * dashboard quando o usuário está logado E ainda não completou/pulou o
- * wizard. Após concluir/pular, o cookie `papopro_auth_mock_wizard_completed`
- * fica setado e o wizard nunca mais reabre nessa sessão.
+ * **Regra:** abre AUTOMATICAMENTE quando o user tem workspace **E** ainda
+ * não marcou o wizard como concluído. Se `wizardCompleted=true`, nunca abre.
  *
- * Estado `loading` do AuthMock é importante: enquanto o cookie ainda não
- * foi lido (entre render inicial e useEffect do provider), `wizardCompleted`
- * default é `false` — se abríssemos o wizard nesse intervalo, o usuário que
- * JÁ concluiu veria o wizard piscar antes de fechar. Esperar `loading=false`
- * resolve.
+ * **M7#4 Onda 3:** ambos os flags vêm via prop do server (sem cookie client
+ * read, sem provider). `useUser` continua client porque o wizard depende de
+ * estar logado pra renderizar — o status do user é hidratado em runtime.
  */
-export function WelcomeWizardController() {
-  const { loading, user, wizardCompleted } = useAuthMock();
+export function WelcomeWizardController({
+  hasWorkspace,
+  wizardCompleted,
+}: WelcomeWizardControllerProps) {
+  const { loading: userLoading, user } = useUser();
   const [open, setOpen] = React.useState(false);
 
   React.useEffect(() => {
-    if (loading) return;
+    if (userLoading) return;
     if (!user) return;
+    if (!hasWorkspace) return;
     if (wizardCompleted) return;
     setOpen(true);
-  }, [loading, user, wizardCompleted]);
+  }, [userLoading, user, hasWorkspace, wizardCompleted]);
 
   return <WelcomeWizard open={open} onOpenChange={setOpen} />;
 }

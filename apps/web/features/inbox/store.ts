@@ -234,9 +234,11 @@ export function markConversationRead(conversationId: string): void {
 // ─── Identidade do usuário logado (mock) ──────────────────────────────────
 
 /**
- * Em M5 o "vendedor logado" é fixo. Em M7+ vem do contexto Supabase Auth
- * via `useAuthMockProvider` → `useSession`. Centralizamos aqui pra trocar
- * num único lugar quando chegar a hora.
+ * Em M5 o "vendedor logado" é fixo. Em M7#3 a auth virou real, mas o inbox
+ * ainda consome fixtures (M9 vai ligar uazapi de verdade) — quando essa
+ * troca acontecer, o user_id real vem de `useUser()` (lib/auth/use-user.ts)
+ * ou `getCurrentUser()` (lib/auth/get-user.ts), e o `authorId` das mensagens
+ * outbound passa a casar com `auth.uid()`.
  *
  * `user_mateus` casa com o `authorId` usado nas fixtures de mensagem
  * outbound — mantém o avatar consistente com o histórico.

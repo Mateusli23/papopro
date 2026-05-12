@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                     |
-| -------- | ------- | --------------- | ---------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                               |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                               |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                               |
-| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2) |
-| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳   |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                |
+| Sprint   | Dias    | Marcos cobertos | Status                                                                       |
+| -------- | ------- | --------------- | ---------------------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                 |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                 |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                 |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                   |
+| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳ (1 sub-PR entregue) |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                  |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                  |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                  |
 
 **Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Gitflow strict ativado** (ver CLAUDE.md §10): `dev` é a nova default branch e integration trunk; `main` recebe só releases (`PR dev → main`). Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
@@ -523,31 +523,300 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 ## M7 — Backend Foundation: Supabase + Auth + Multi-tenant + RLS
 
-**Branch:** `m7-backend-foundation`
+**Branches:** múltiplos sub-PRs empilhados sobre `dev` (gitflow strict, CLAUDE.md §10), partindo de `feat/supabase-core`.
 
 **Objetivo:** Substituir os mocks de auth/workspace por Supabase real. Schema mínimo, RLS aplicada, helper de contexto de workspace, convites por email funcionando.
 
-**Entregas:**
+**Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-- [ ] Projeto Supabase Pro provisionado (região São Paulo)
-- [ ] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`)
-- [ ] Migration inicial aplicada
-- [ ] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC)
-- [ ] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `SET LOCAL app.workspace_id = $1` e roda callback
-- [ ] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role)
-- [ ] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha, logout em todos dispositivos
-- [ ] Server Actions de auth substituem mocks de M3
-- [ ] Convite por email via Resend + aceite via magic link
-- [ ] Switcher de workspace lê `workspace_members` real
-- [ ] Wizard de onboarding (M3) cria workspace de verdade
-- [ ] Middleware com gate de auth + redirect inteligente (0/1/N workspaces)
-- [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])`
-- [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel)
-- [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin)
-- [ ] Testes E2E (Playwright): signup → verificação email → login → criar workspace → convidar → aceitar
-- [ ] Sentry capturando erros de Server Actions e API routes
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                           | PR                 |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------- | ------------------ |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                      | _aguardando abrir_ |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                      | _aguardando abrir_ |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                      | _aguardando abrir_ |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas, 3 commits) | _aguardando abrir_ |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                      | —                  |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                      | —                  |
 
-**Commit final:** `feat(backend): supabase auth, multi-tenant workspaces and RLS policies`
+**Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
+
+- [x] Projeto Supabase provisionado (sa-east-1, São Paulo) _(M7#1 — projeto `iffmjydjeukozopxxitb` "papo pro", criado em 2026-05-11 via MCP `create_project`; substituiu refs anteriores `ulmswswmriweyxkwelim` e `celuvzodbmobkigdoetm` que ficaram órfãos)_
+- [x] `packages/db` com Prisma: schema inicial (`users`, `workspaces`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) _(M7#2)_
+- [x] Migration inicial aplicada _(M7#2)_
+- [x] Policies RLS em todas as tabelas (leitura/escrita filtra por `workspace_id` + papel RBAC) _(M7#2)_
+- [x] `lib/supabase/with-workspace.ts` — helper que abre transação, faz `set_config('app.workspace_id', …, true)` parametrizado e roda callback _(M7#1 — usa `set_config(...)` em vez de `SET LOCAL` literal porque Prisma `$executeRaw` só parametriza valores, não nomes de GUC)_
+- [x] `lib/supabase/{client,server,admin}.ts` configurados (anon vs service role) _(M7#1 — `admin.ts` com `import 'server-only'`)_
+- [x] Supabase Auth integrado: signup com confirmação de email, login, recuperar senha _(M7#3 — "logout em todos os dispositivos" fica pra M7#5 junto com audit log)_
+- [x] Server Actions de auth substituem mocks de M3 _(M7#3)_
+- [x] Convite por email via Resend + aceite via magic link _(M7#4 — Onda 2: `inviteMemberAction` (RBAC Owner/Admin inline + idempotência por workspace×email), `acceptInvitationAction` (transação member + audit + cookie), `revokeInvitationAction`; página pública `/invite/accept` com 4 variantes; cliente Resend via `fetch` nativo pra contornar TLS strict no registry; `next` propagado por signup/login pra retomar fluxo de convite depois da confirmação)_
+- [x] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3: Sidebar + MobileNav viraram Server Components fetchando `getCurrentUserContext`; `WorkspaceSwitcher` recebe `workspaces[]` + `activeWorkspaceId` via prop, `setActiveWorkspaceAction` valida membership antes de setar cookie, `router.refresh()` re-roda middleware + Server Components com tenant novo)_
+- [x] Wizard de onboarding (M3) cria workspace de verdade _(M7#4 — Onda 1: `/onboarding` chama `createWorkspaceAction` que insere Workspace + WorkspaceMember(Owner) + NotificationPreference + AuditLog em transação; cookie httpOnly `papopro_workspace_id` setado pela action e lido pelo middleware)_
+- [x] Middleware com gate de auth + redirect inteligente _(M7#3 entregou gate por sessão + email confirmado; M7#4 Onda 1 fechou o lookup de memberships — cookie httpOnly `papopro_workspace_id` é fast path, `getMembershipCountForUser` via admin client é fallback Edge-safe; /onboarding bloqueia quem já tem workspace, demais rotas bloqueiam quem não tem)_
+- [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
+- [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5)_
+- [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5)_
+- [ ] Testes E2E (Playwright): signup → verificação email → login → criar workspace → convidar → aceitar _(M7#6)_
+- [ ] Sentry capturando erros de Server Actions e API routes _(M7#6)_
+
+**Entregas — M7#1 Setup Supabase & Chaves:**
+
+- [x] Projeto Supabase `iffmjydjeukozopxxitb` ("papo pro", sa-east-1, criado em 2026-05-11 via MCP) — `.env.local` populado com `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (legacy JWT), `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` (Supavisor pooler :6543, transaction mode) e `DIRECT_URL` (Supavisor pooler :5432, session mode — `db.<ref>.supabase.co:5432` é IPv6-only desde 2024). Extensões `pgcrypto`, `pg_trgm`, `citext` criadas pelo próprio SQL de M7#2 (`docs/m7-2-migration.sql`, idempotente). `vector` (pgvector) e `pg_cron` ficam pra M9/M11.
+- [x] SDKs instalados em `apps/web`: `@supabase/ssr@^0.10.3` (wrapper oficial Next.js 14 com cookies httpOnly) + `@supabase/supabase-js@^2.105.4` + `@prisma/client@^6.1.0` direto pra Next bundlear o engine no `.next/standalone`.
+- [x] `@types/node` adicionado a `packages/db/devDependencies` (eslint reclamava de `process.env` sem tipo).
+- [x] [`apps/web/lib/supabase/client.ts`](apps/web/lib/supabase/client.ts) — `createSupabaseBrowserClient()` via `@supabase/ssr/client` com anon key. Browser-safe, confia em RLS.
+- [x] [`apps/web/lib/supabase/server.ts`](apps/web/lib/supabase/server.ts) — `createSupabaseServerClient()` com `cookies()` de `next/headers`. `set`/`remove` envolvidos em try/catch porque Server Components não podem mutar cookies no Next 14 (padrão recomendado em `supabase.com/docs/guides/auth/server-side/nextjs`). `import 'server-only'` no topo.
+- [x] [`apps/web/lib/supabase/admin.ts`](apps/web/lib/supabase/admin.ts) — `createSupabaseAdminClient()` com service role + `auth.persistSession: false`. `import 'server-only'` no topo (CLAUDE.md §7.1).
+- [x] [`apps/web/lib/supabase/with-workspace.ts`](apps/web/lib/supabase/with-workspace.ts) — `withWorkspace(workspaceId, fn)` abre `prisma.$transaction`, valida workspaceId com regex `/^[\w-]{1,64}$/`, executa `SELECT set_config('app.workspace_id', ${workspaceId}, true)` (parametrizado via prepared statement) e roda o callback recebendo `tx: Prisma.TransactionClient`. **Não substitui defense-in-depth**: callback continua obrigado a filtrar `where: { workspaceId }` no código (CLAUDE.md §7.2).
+- [x] [`packages/db/src/index.ts`](packages/db/src/index.ts) — Prisma client agora exportado como **Proxy lazy singleton**: `new Proxy({}, { get: ... })` materializa o `PrismaClient` só no primeiro acesso a propriedade, evitando "Failed to collect page data" do Next 14 (que importa rotas em build-time). Cache em `globalThis.__papoproPrisma` em dev/test pra não vazar pool no HMR. Re-exporta o namespace `Prisma`.
+- [x] [`apps/web/app/api/smoke-test/supabase/route.ts`](apps/web/app/api/smoke-test/supabase/route.ts) — endpoint interno seguindo padrão do `/api/smoke-test/leads` (M4). Valida 4 checks: (1) `createSupabaseServerClient()` instancia sem crashar; (2) dentro de `withWorkspace`, `current_setting('app.workspace_id', true)` retorna o id aplicado; (3) fora do helper, o setting voltou a vazio (isolamento por transação); (4) erro dentro do callback faz rollback e limpa o setting. Retorna `{ ok, checks }` com status 200/500.
+- [x] **`AuthMockProvider` e `middleware.ts` intactos.** Produto navega exatamente como antes — nada da UI atual depende de Supabase ainda. M7#3 faz a troca.
+- [x] **Schema Prisma continua placeholder** (sem `model` declarado). M7#2 popula com `workspaces`/`users`/etc.
+- [x] **Decisão de tooling:** `prisma generate` não pôde rodar localmente neste ambiente (TLS strict bloqueia `binaries.prisma.sh`). Build local passa porque o lazy Proxy não instancia Prisma em build-time. CI no GitHub Actions (sem proxy corporativo) baixa o engine normalmente. Smoke endpoint runtime exige `prisma generate` ter rodado uma vez — operador roda `pnpm --filter @papopro/db db:generate` localmente em rede sem TLS strict antes do `pnpm dev`.
+- [x] Verificação local: `pnpm lint` 5/5 ✓, `pnpm typecheck` 5/5 ✓, `pnpm -w run format:check` ✓ (arquivos do PR), `pnpm build` 2/2 ✓ (web + landing).
+
+**Commit:** `feat(backend): supabase sdk, prisma client singleton e helper with-workspace`
+
+**Entregas — M7#2 Schema inicial + RLS:**
+
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — 7 models declarados (`Workspace`, `User`, `WorkspaceMember`, `Invitation`, `AuditLog`, `NotificationPreference`, `WebhookEvent`) + 3 enums (`Role`, `InvitationStatus`, `AuditAction`) com FKs, índices (incluindo composto `[workspaceId, createdAt(sort: Desc)]` em `audit_logs` pra suportar timeline), `@unique` em `(workspace_id, user_id)`, `(workspace_id, email)` e `(source, external_id)`. `User.email` em `citext` (case-insensitive). `Workspace.settings` JSONB wide. `previewFeatures = ["postgresqlExtensions"]` ativo com `extensions = [pgcrypto, pg_trgm, vector, citext]` (vector reservado pra M11).
+- [x] [`docs/m7-2-migration.sql`](docs/m7-2-migration.sql) — SQL idempotente versionado (`CREATE … IF NOT EXISTS`, `DO $$ EXCEPTION WHEN duplicate_object THEN NULL $$`, `CREATE OR REPLACE FUNCTION`, `DROP POLICY IF EXISTS` antes de cada `CREATE POLICY`). Source of truth pra reproduzir o schema em outro projeto Supabase (preview, prod). Aplicado via MCP `apply_migration` (server-side, dispensa Prisma CLI local).
+- [x] **Funções SQL:** `public.current_workspace_id()` (lê `app.workspace_id` setado por `withWorkspace()`, cast UUID seguro, retorna NULL fora de transação), `public.touch_updated_at()` (trigger genérico em 4 tabelas com `updated_at`), `public.handle_new_auth_user()` SECURITY DEFINER (espelha `auth.users` → `public.users` no signup, `ON CONFLICT DO NOTHING`), `public.handle_auth_user_email_confirmed()` SECURITY DEFINER (sincroniza `email_verified_at` quando user confirma email). Todas com `SET search_path` fixo (hardening).
+- [x] **Triggers:** `on_auth_user_created` (AFTER INSERT em `auth.users`) e `on_auth_user_email_confirmed` (AFTER UPDATE OF `email_confirmed_at`) — padrão Supabase oficial.
+- [x] **RLS habilitada nas 7 tabelas + 19 policies.** Padrão de filtro: `workspace_id = public.current_workspace_id()` em tabelas de domínio, `id IN (SELECT workspace_id FROM workspace_members WHERE user_id = auth.uid())` em `workspaces`, e `id = auth.uid()` + acesso a membros do mesmo workspace em `users`. `audit_logs` e `webhook_events` são append-only (sem policies UPDATE/DELETE — escrita administrativa via service role). Service role bypassa RLS por padrão (CLAUDE.md §7.1).
+- [x] **Hardening (advisors Supabase = 0 lints):** extensions `pg_trgm`, `citext`, `pgcrypto` em schema `extensions` (não `public`), `SET search_path = pg_catalog, public` em `current_workspace_id` e `touch_updated_at` (já tinha em handle\_\*), `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` nas duas SECURITY DEFINER pra fechar `/rest/v1/rpc/…`. supabase_auth_admin continua funcionando porque SECURITY DEFINER executa como o owner (postgres), não como o role chamador.
+- [x] [`apps/web/app/api/smoke-test/supabase/route.ts`](apps/web/app/api/smoke-test/supabase/route.ts) — endpoint expandido pra M7#2: além dos 4 checks de M7#1 (`with-workspace` plumbing), adicionou 2 checks de RLS — seed via `createSupabaseAdminClient` em 2 workspaces (WS_A, WS_B), verifica que SELECT com `SET LOCAL ROLE authenticated` dentro de `withWorkspace(WS_A_ID)` vê só `audit_logs` de WS_A, e que INSERT cross-tenant é rejeitado por policy `WITH CHECK`. Cleanup garantido em `finally`. Removido em M7#6 quando Playwright E2E entrar.
+- [x] **Projeto Supabase trocado.** Refs antigas `celuvzodbmobkigdoetm` e `ulmswswmriweyxkwelim` (deletadas/órfãs) substituídas por `iffmjydjeukozopxxitb` ("papo pro", sa-east-1, criado em 2026-05-11 via MCP). Atualizado em `apps/web/.env.local`, `.env.local`, [`.mcp.json`](.mcp.json), [`docs/mcp.json`](docs/mcp.json). `DIRECT_URL` aponta pra Supavisor session mode em `:5432` (não `db.<ref>.supabase.co` que é IPv6-only desde 2024).
+- [x] **Validação pós-migration:** advisors security = `lints: []`, `count(tables WHERE schema='public') = 7`, `count(pg_policies WHERE schemaname='public') = 19`, `count(user_triggers) = 6`, `current_workspace_id()` retorna NULL fora de tx (não crasha), `citext` continua resolvendo após mover de schema.
+
+**Commit:** `feat(backend): aplicar M7#2 schema + RLS + hardening`
+
+**Entregas — M7#3 Supabase Auth real (em 3 ondas, 3 commits):**
+
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — Server Actions: `signupAction`, `loginAction`, `forgotAction`, `logoutAction`, `resendVerificationAction`, `updatePasswordAction`. Retornam `AuthActionResult` (`{ok, redirectTo|error|message}`) em vez de `redirect()` direto — `NEXT_REDIRECT` throws atrapalham o handler de erro no RHF. Mensagens Supabase mapeadas pra pt-BR direto (CLAUDE.md §7.6). `forgotAction` sempre retorna `ok=true` (anti-enumeração de emails, LGPD).
+- [x] [`apps/web/app/auth/callback/route.ts`](apps/web/app/auth/callback/route.ts) — handler PKCE oficial `@supabase/ssr`. Troca `?code=` por sessão httpOnly e redireciona pro `?next=` validado (open-redirect guard — só paths relativos, sem `//`).
+- [x] [`apps/web/lib/auth/get-user.ts`](apps/web/lib/auth/get-user.ts) — `getCurrentUser` (React `cache()` + `auth.getUser()` que valida JWT contra forgery de cookie) + `getCurrentUserContext` (user + memberships via admin client pra contornar chicken-and-egg da policy `workspace_members_select`).
+- [x] [`apps/web/lib/auth/use-user.ts`](apps/web/lib/auth/use-user.ts) — hook client com `getUser` + `onAuthStateChange`. Shape `{ loading, user, displayName }` compatível com o antigo `useAuthMock` pra minimizar refactor nos consumidores.
+- [x] [`apps/web/lib/supabase/middleware.ts`](apps/web/lib/supabase/middleware.ts) — `createServerClient` pro Edge runtime, propaga cookies renovados pra req + response (refresh silencioso do JWT a cada hora).
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — gate Supabase: `/auth/callback` público; raiz redireciona conforme estado; rotas auth mandam logado pra dashboard ou `/verify-email`; `/verify-email` exige logado mas redireciona se já confirmado; demais exigem logado + `email_confirmed_at != null` (CLAUDE.md §7.8). Sem cookie mock.
+- [x] **Forms reais:** [`login-form`](apps/web/features/auth/components/login-form.tsx), [`signup-form`](apps/web/features/auth/components/signup-form.tsx), [`forgot-form`](apps/web/features/auth/components/forgot-form.tsx), [`verify-email-card`](apps/web/features/auth/components/verify-email-card.tsx) chamam as Server Actions correspondentes. `router.refresh() + router.push(redirectTo)` pra middleware re-rodar com sessão recém-criada.
+- [x] [`apps/web/components/app-shell/user-menu.tsx`](apps/web/components/app-shell/user-menu.tsx) — `useUser()` + `logoutAction` (server `redirect()` direto, sem `router.push`).
+- [x] **WorkspaceMockProvider temporário** ([`apps/web/features/workspace/workspace-mock-provider.tsx`](apps/web/features/workspace/workspace-mock-provider.tsx)) — extrai do antigo `AuthMockProvider` só `activeWorkspace`/`wizardCompleted`. Cookies próprios `papopro_workspace_mock_*` (separados pra não bagunçar com resíduo do mock antigo). **Sai inteiro em M7#4** quando workspaces reais entrarem.
+- [x] **`/settings/security`** ([`apps/web/app/(dashboard)/settings/security/`](<apps/web/app/(dashboard)/settings/security/>)) — page + view com form de troca de senha consumindo `updatePasswordAction`. Aterriza aqui via reset por email (`forgotAction → /auth/callback?next=/settings/security`) ou troca proativa pelo sub-nav. Item "Segurança" adicionado em [`settings-nav-config.ts`](apps/web/features/settings/components/settings-nav-config.ts).
+- [x] **DELETADOS:** `apps/web/lib/auth/auth-mock-provider.tsx` + `apps/web/lib/auth/cookies.ts` (substituídos por Supabase + `useUser` + WorkspaceMock).
+
+**Configuração Supabase pendente (Dashboard — operador faz uma vez):**
+
+- [ ] Authentication → URL Configuration → Site URL: `http://localhost:3000` (dev) e `https://app.pipeflow.com.br` (prod, quando deployarmos)
+- [ ] Authentication → URL Configuration → Redirect URLs allowlist: `http://localhost:3000/auth/callback` e `https://app.pipeflow.com.br/auth/callback`
+- [ ] Authentication → Email Templates: customizar em pt-BR (Confirm signup, Reset password) — opcional, default já vem em inglês
+
+**Validação local pendente:** signup → email → callback → /onboarding → login → /dashboard. Local bloqueado pelo postinstall do Prisma (TLS strict no `binaries.prisma.sh`). Validar via Vercel preview ou ambiente com rede limpa.
+
+**Commits:**
+
+- `feat(auth): server actions, callback PKCE e helper getCurrentUser (M7#3 onda 1)`
+- `feat(auth): middleware Supabase + UI consome sessao real (M7#3 onda 2)`
+- `feat(auth): tela /settings/security + updatePasswordAction (M7#3 onda 3)`
+
+**Entregas — M7#4 Onda 1 — Workspace real + middleware multi-tenant gate:**
+
+Primeira de 3 ondas do M7#4. Sai do fluxo mockado (`AuthMockProvider` legacy via `WorkspaceMockProvider`) pro caminho real de criação de workspace + gate de tenant no Edge.
+
+- [x] [`apps/web/lib/workspace/slugify.ts`](apps/web/lib/workspace/slugify.ts) — função pura `slugify(name)` (normaliza NFKD, remove combining marks, força `[a-z0-9-]`, trunca em 64) + `ensureUniqueSlug(base, isTaken)` com retry de sufixo numérico (até 50 tentativas; explode barulhento depois). `isTaken` injetável pra teste sem DB.
+- [x] [`apps/web/features/workspace/schemas.ts`](apps/web/features/workspace/schemas.ts) — `workspaceCreateSchema` (Zod) com `name` (2–60 chars, control-chars bloqueados via charCodeAt-loop em vez de regex hex pra não depender de escapes que sobrevivem mal a copy/paste entre LLM e disco), `segment?` opcional. Casa com `Workspace.name VARCHAR(60)` do schema.prisma.
+- [x] [`apps/web/lib/auth/workspace-cookie.ts`](apps/web/lib/auth/workspace-cookie.ts) — helpers httpOnly server-only pro cookie `papopro_workspace_id`. Quatro entry points: `setWorkspaceCookie` / `readWorkspaceCookie` (via `next/headers` — Server Actions/Components) e `setWorkspaceCookieOnResponse` / `readWorkspaceCookieFromRequest` (via `req`/`response` — Edge middleware). `secure: process.env.NODE_ENV === 'production'` evita o sintoma "cookie silenciosamente ignorado pelo browser" em dev HTTP.
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) — `'use server'` com `createWorkspaceAction(input)`:
+  1. Valida Zod;
+  2. `getCurrentUser` exige sessão + email confirmado (defense-in-depth — middleware já guarda);
+  3. **Idempotência**: se já tem WorkspaceMember, reaproveita (cobre dupliclick e refresh em `/onboarding`);
+  4. `ensureUniqueSlug` com fallback `'workspace'` quando o nome só tem caracteres não-ASCII;
+  5. `prisma.$transaction` insere Workspace + WorkspaceMember(Owner, joinedAt=now) + NotificationPreference(`prefs: {}` — matriz PRD §3.2 fica pra M7#5) + AuditLog(`workspace_created`, changes={name, slug}). Upsert defensivo em `public.users` antes da FK do member (cobre raro caso de trigger `on_auth_user_created` não ter rodado);
+  6. `setWorkspaceCookie` _fora_ da transação (cookies não são transacionais com Postgres).
+- [x] [`apps/web/features/workspace/queries.ts`](apps/web/features/workspace/queries.ts) — `getMembershipCountForUser(userId)` retornando `{count, firstWorkspaceId}`. **Não fica em `actions.ts`** porque `'use server'` transforma todo export em Server Action callable do client — vetor de probing de existência de user. Single query Supabase admin com `count: 'exact'` + `limit(1)` (traz contagem e primeira row no mesmo round-trip).
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — adiciona o gate multi-tenant ao gate de auth de M7#3. `resolveHasWorkspace(req, response, userId)` faz **fast path por cookie** (`readWorkspaceCookieFromRequest`) e **slow path por query** (`getMembershipCountForUser` quando cookie ausente; popula cookie na response). Regras novas: `/onboarding` redireciona pra `/dashboard` se já tem workspace; demais rotas protegidas redirecionam pra `/onboarding` se não tem. Edge runtime continua < 100 kB (82.7 kB no build).
+- [x] [`apps/web/features/auth/components/onboarding-form.tsx`](apps/web/features/auth/components/onboarding-form.tsx) — rewire pro `createWorkspaceAction` real. `router.refresh()` antes do `router.push` força middleware a re-rodar com cookie recém-setado, evitando race condition que mandaria de volta pra `/onboarding`. Schema migrado pra `workspaceCreateSchema` (mesmo shape, owner conceitual movido pro feature workspace).
+- [x] [`apps/web/app/(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) — virou **async Server Component**, fetches `getCurrentUserContext` (cached por request via `cache()`) e passa `hasWorkspace` pro `<WelcomeWizardController>`. Defense-in-depth: mesmo com middleware protegendo, controller só abre wizard se `hasWorkspace=true`.
+- [x] [`apps/web/features/onboarding/components/welcome-wizard-controller.tsx`](apps/web/features/onboarding/components/welcome-wizard-controller.tsx) — aceita prop `hasWorkspace: boolean`. `useWorkspaceMock` ainda usado pra `wizardCompleted` (cookie legacy) — sai inteiro em Onda 3.
+- [x] [`apps/web/lib/auth/get-user.ts`](apps/web/lib/auth/get-user.ts) — fix de typecheck: Supabase tipa relação FK aninhada como array quando schema generation não rodou contra a DB. `Array.isArray(row.workspaces) ? row.workspaces[0] : row.workspaces` normaliza; em runtime a relação 1:1 (workspace_members → workspaces) sempre devolve objeto único.
+
+**Decisões registradas:**
+
+- **Cookie httpOnly em vez de localStorage:** o middleware precisa ler antes do JS rodar, e XSS roubando o workspace ativo seria pivot pra outro tenant.
+- **`getMembershipCountForUser` em `queries.ts`, não `actions.ts`:** `'use server'` expõe RPC. Probing seria barato (1 chamada por uid candidato).
+- **Slow path Edge-safe:** admin client Supabase é fetch-based; query roda no Edge sem precisar de driver Postgres. 1 round-trip por sessão (cookie cacheia o resultado).
+- **`Prisma.TransactionClient` tipado, runtime errors duck-typed:** `prisma generate` não roda local (TLS strict bloqueia `binaries.prisma.sh` — herdado de M7#1). Tipos do client são `any` placeholder; classes de erro não exportadas. Solução: `isPrismaErrorCode(err, 'P2002')` em vez de `instanceof PrismaClientKnownRequestError`. Códigos `Pxxxx` são contrato público estável do Prisma.
+- **Wizard step 1 cosmético até Onda 3:** o WorkspaceStep do `welcome-wizard.tsx` ainda aceita input mas não persiste — o middleware redireciona pra `/onboarding` antes do dashboard montar, então usuários reais nunca chegam ao step 1. Cleanup em Onda 3 quando o `WorkspaceMockProvider` sair inteiro.
+- **`WorkspaceMockProvider` continua montado:** ainda alimenta o `WorkspaceSwitcher` na sidebar (lista fixtures) e a flag `wizardCompleted`. Onda 3 substitui ambos por dados reais e remove o provider.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓ (consertado de passagem o erro pré-existente no `getCurrentUserContext` causado por inferência de array do Supabase)
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 35/35 rotas, middleware Edge 82.7 kB
+- E2E manual via Vercel preview ou ambiente sem TLS strict pendente (Prisma engine roda nesses contextos)
+
+**Commit:** `feat(workspace): server action real + middleware multi-tenant gate (M7#4 onda 1)`
+
+**Entregas — M7#4 Onda 2 — Convite por email via Resend + aceite via magic link:**
+
+Segunda das 3 ondas do M7#4. Owner/Admin convida por email; convidado recebe link, aceita e cai no workspace como member.
+
+- [x] [`apps/web/lib/email/resend.ts`](apps/web/lib/email/resend.ts) — cliente Resend via `fetch` nativo (sem o SDK oficial `resend`, evitando dep adicional). **Decisão de fundo:** `pnpm add resend` falhou aqui por `UNABLE_TO_VERIFY_LEAF_SIGNATURE` no `registry.npmjs.org` — mesma classe de TLS strict que bloqueia `binaries.prisma.sh` em M7#1. Como o endpoint do Resend é um único `POST /emails`, 30 linhas de wrapper resolvem com timeout (AbortSignal 10s), retry único com backoff 500ms só em 5xx, parsing de erro com mensagem do servidor. Lazy-read das env vars dentro da função (em vez de top-level) pra não derrubar o bundle inteiro de Server Actions se `RESEND_API_KEY` faltar.
+- [x] [`apps/web/lib/email/templates/invite.ts`](apps/web/lib/email/templates/invite.ts) — `renderInviteEmail` retorna `{subject, html, text}`. HTML em string-template (não `@react-email/components`) — 1 template não justifica a dep. Padrão de email tradicional: tabelas + CSS inline, sem `<style>`/`<link>`/JS, fontes com fallback web-safe, largura 600px. Sem dark mode (Outlook não respeita prefers-color-scheme). Versão `text` separada melhora deliverability (anti-spam). Escape HTML mínimo (4 chars) defense-in-depth contra nome de workspace com caractere RTL/exótico.
+- [x] [`apps/web/features/invitations/schemas.ts`](apps/web/features/invitations/schemas.ts) — `invitationCreateSchema` (email + role com `INVITABLE_ROLES = ['Admin','Manager','Vendedor','Viewer']` — Owner propositalmente excluído; transferência de propriedade é fluxo separado em M7#5), `invitationAcceptSchema` (token UUID), `invitationRevokeSchema` (invitationId UUID).
+- [x] [`apps/web/features/invitations/actions.ts`](apps/web/features/invitations/actions.ts) — 3 Server Actions com idempotência e RBAC inline:
+  - `inviteMemberAction`: valida sessão + workspace ativo (cookie) + RBAC (Owner/Admin) + bloqueio de auto-convite + bloqueio se já é membro. **Upsert por `(workspaceId, email)`** reaproveita convite pending existente (atualiza `role`/`expiresAt`/reseta para `pending` se estava `revoked`/`expired`) — UX "convidei e o email não chegou, mando de novo" funciona sem duplicar. Email via Resend; se falha, **NÃO** deleta a row (convite existe, dá pra reenviar pelo /settings/team em M7#5). AuditLog `member_invited` fora da upsert (best-effort).
+  - `acceptInvitationAction`: valida sessão + email confirmado + token + status `pending` + não expirado + email do caller bate com o do convite (case-insensitive). Idempotência: se já é membro, marca convite como aceito e retorna sucesso silente. Senão, transação Member + invitation.status='accepted' + NotificationPreference + AuditLog. Seta cookie de workspace ativo no sucesso.
+  - `revokeInvitationAction`: RBAC Owner/Admin + filtro defense-in-depth no `updateMany` (id + workspaceId + status pending) — se nada bater, mensagem "convite não encontrado ou já processado".
+- [x] [`apps/web/features/invitations/queries.ts`](apps/web/features/invitations/queries.ts) — `getInvitationByToken` **server-only** (não em `actions.ts` pra não virar RPC callable do client — vetor de probing de tokens existentes). Validação regex UUID antes de bater no banco (curto-circuita ataques com strings malformadas). Admin client bypassa RLS — o token É a autorização (UUID single-use, 2^122 entropia).
+- [x] [`apps/web/app/invite/accept/page.tsx`](apps/web/app/invite/accept/page.tsx) — landing pública (semi-pública) com **4 variantes** decididas server-side via `getInvitationByToken` + `getCurrentUser`:
+  - **Inválido/expirado/revogado/já aceito** → mensagem específica + CTA voltar/login (não genérico "deu errado").
+  - **Token válido + não logado** → CTA pra `/signup?next=/invite/accept?token=…&email=<convidado>` ou `/login?next=…`. Link inclui email pré-preenchido pro signup.
+  - **Token válido + logado com email diferente** → "Saia e troque de conta" com botão sair.
+  - **Token válido + logado + email bate** → `<AcceptInvitationForm>` client component com botão de aceite.
+- [x] [`apps/web/app/invite/accept/accept-form.tsx`](apps/web/app/invite/accept/accept-form.tsx) — client component que chama `acceptInvitationAction(token)`; toast no sucesso + `router.refresh() + router.push('/dashboard')`. Erro inline com `role="alert"`.
+- [x] [`apps/web/middleware.ts`](apps/web/middleware.ts) — `/invite/accept` virou rota **semi-pública** (regra 1b nova, antes da regra raiz). Passa sem checagem se não logado; se logado mas email não confirmado, força `/verify-email`. Open-redirect guard `safeNextParam` extraído pra honrar `?next=` em redirects de auth routes pra users já logados — quem clica em "Já tenho conta" no invite landing volta certo após bater em `/login`.
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — `signupAction(input, options?: {next?})` aceita segundo argumento opcional. `safeNext` é validado (path relativo, sem `//`) e injetado no `emailRedirectTo` (`/auth/callback?next=<safe>`) — convidado novo confirma email e cai direto em `/invite/accept?token=…` em vez do `/onboarding` default.
+- [x] [`apps/web/features/auth/components/signup-form.tsx`](apps/web/features/auth/components/signup-form.tsx) — aceita props `next` + `prefilledEmail`. Email pré-preenchido fica `readOnly` (não `disabled` — `disabled` exclui do form data; queremos só não editável) + hint "Email do convite". Defense-in-depth: server-side check que `data.email === prefilledEmail` (DevTools pode alterar readonly). Link "Já tem conta?" propaga o `next`.
+- [x] [`apps/web/features/auth/components/login-form.tsx`](apps/web/features/auth/components/login-form.tsx) — aceita prop `next` e usa como destino após login bem-sucedido (override do `result.redirectTo`). Open-redirect guard local. Link "Criar conta grátis" propaga o `next`.
+- [x] [`apps/web/app/(auth)/signup/page.tsx`](<apps/web/app/(auth)/signup/page.tsx>) + [`apps/web/app/(auth)/login/page.tsx`](<apps/web/app/(auth)/login/page.tsx>) — Server Components leem `searchParams.next` (e `email` no signup) e passam pros forms.
+
+**Fluxo end-to-end de convite (novo user):**
+
+1. Owner em `/settings/team` (M7#5) → chama `inviteMemberAction` → row em `invitations` + email enviado.
+2. Convidado clica no link do email → `/invite/accept?token=…`.
+3. Não logado → variante "Crie sua conta" → `/signup?next=/invite/accept?token=…&email=convidado@x.com`.
+4. Cria conta (email travado) → recebe email de confirmação com `emailRedirectTo=/auth/callback?next=/invite/accept?token=…`.
+5. Confirma email → callback PKCE → redireciona pra `/invite/accept?token=…`.
+6. Logado + email confirmado + bate com convite → variante "Pronto pra entrar" → clica aceitar.
+7. `acceptInvitationAction` cria `workspace_members` + marca convite + seta cookie → `/dashboard` real do workspace.
+
+**Decisões registradas:**
+
+- **Resend via fetch nativo:** TLS strict no `registry.npmjs.org` impede `pnpm add resend` aqui (mesma raiz do bloqueio do Prisma engine). Wrapper com 30 linhas é simples; promovemos pro SDK oficial se passarmos de 5+ templates (M9 + M12 vão exigir).
+- **Email HTML string-template:** mesma lógica — `@react-email/components` é overkill pra 1 template e adiciona ~3 MB. Migração trivial quando crescer.
+- **Owner não convidável:** propriedade do workspace é singular. Transferência é fluxo dedicado (M7#5 ou Onda 3). `INVITABLE_ROLES` no schema bloqueia na fonte.
+- **Upsert idempotente por `(workspace, email)`:** dois usuários convidando o mesmo email simultaneamente é raro mas possível; reaproveitar a row é mais limpo que tratar erro de unique. Reativação de `revoked`/`expired` pelo upsert também é desejável (Owner pode "ressuscitar" convite cancelado sem código adicional).
+- **Email failure não rollback do convite:** se Resend cair, a row de convite continua válida. UX em M7#5: tela `/settings/team` mostra pending invites com "Reenviar email". Aqui na Onda 2 não temos UI de reenvio ainda — Owner pode reconvidar pelo mesmo email (upsert reaproveita).
+- **`next` propagação:** signup/login forms recebem `next` via props (page Server Components lêem search params). Middleware honra `next` em redirects de auth-route pra logged users. `signupAction` honra `next` em `emailRedirectTo`. Open-redirect guard repetido em 4 lugares (signupAction, loginForm, middleware, /auth/callback) — extrair pra util compartilhado se ficar 5+.
+- **`/settings/team` real fica pra M7#5:** UI de "convidar membro" + "lista de convites pending" + "remover member" usa `inviteMemberAction` e `revokeInvitationAction` já entregues. Onda 2 entrega só o fluxo de aceite porque ele é independente — invite pode ser disparado via smoke endpoint ou direto no banco até /settings/team chegar.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 36 rotas (`/invite/accept` nova), middleware Edge 82.8 kB (+0.1 da Onda 1, regra `/invite/accept` + `safeNextParam`)
+- E2E manual pendente (mesmo motivo da Onda 1 — Prisma engine + Resend env). Cadeia signup→email→callback→accept testável em Vercel preview.
+
+**Pendente de configuração (operador faz uma vez):**
+
+- `RESEND_API_KEY` e `RESEND_FROM_EMAIL` em `apps/web/.env.local` (templates já estão em `.env.example`).
+- Domínio verificado no Resend dashboard com SPF/DKIM (passo dos pré-requisitos M0; bloqueante pra emails saírem em produção).
+
+**Commit:** `feat(invitations): convite por email via resend + accept por magic link (M7#4 onda 2)`
+
+**Entregas — M7#4 Onda 3 — Switcher real + cleanup do mock + smoke endpoint:**
+
+Terceira e última onda do M7#4. Removemos o `WorkspaceMockProvider` legado (criado em M3 como ponte até backend real), trocamos o switcher por dados reais com Server Action validando RBAC, e adicionamos smoke endpoint cobrindo os helpers puros do feature.
+
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) ampliado com 3 actions novas:
+  - `setActiveWorkspaceAction(workspaceId)` — valida formato UUID + sessão + **membership** (defense-in-depth — devtools alterando cookie não pivota tenant, action retorna 403 antes do middleware liberar). Seta cookie `papopro_workspace_id`.
+  - `clearActiveWorkspaceAction()` — limpa cookie. Usado pelo `logoutAction` (M7#3 não limpava, gerava ricochete confuso quando user trocava de conta no mesmo browser).
+  - `markWizardCompletedAction()` — seta cookie `papopro_wizard_completed=1` (httpOnly, 1 ano). Substitui o `markWizardCompleted` do mock provider. Decisão: cookie em vez de coluna `users.first_run_completed_at` porque flag é "primeira visita neste dispositivo" — semântica local, sem necessidade de sync entre devices.
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — `logoutAction` agora chama `clearWorkspaceCookie()` antes do `redirect('/login')`. Sem isso, user logava com conta B no mesmo navegador e o middleware lia cookie de tenant A — `resolveHasWorkspace` retornava true por cookie stale, queries filtravam por workspaceId errado, RLS bloqueava, UX confusa.
+- [x] [`apps/web/lib/auth/workspace-cookie.ts`](apps/web/lib/auth/workspace-cookie.ts) — ganhou `WIZARD_COMPLETED_COOKIE_NAME`, `setWizardCookie()`, `readWizardCookie()`. Mesmo padrão httpOnly/SameSite Lax/secure-prod do cookie de workspace ativo.
+- [x] [`apps/web/components/app-shell/workspace-switcher.tsx`](apps/web/components/app-shell/workspace-switcher.tsx) — refatorado para receber `workspaces: WorkspaceSwitcherItem[]` + `activeWorkspaceId: string | null` via prop. Chama `setActiveWorkspaceAction(id)` + `router.refresh()` na seleção. **Otimismo controlado:** `pendingId` em state durante a transição mostra Check visualmente no item escolhido enquanto a action roda (rollback + toast em caso de falha). Item "Criar workspace" continua placeholder ("Em breve") — fluxo de criar 2º+ workspace pelo switcher fica pra Onda 4+ (precisa modal + reuso de `createWorkspaceAction` permitindo múltiplos por user).
+- [x] [`apps/web/features/workspace/presentation.ts`](apps/web/features/workspace/presentation.ts) (novo, server-only) — `workspaceInitials(name)` e `toSwitcherItem(membership, index)`. Centraliza derivações cosméticas (iniciais 2-letras pro avatar, `accent` determinístico por índice em `[primary, success, info, warning]`). Substitui o mapa hardcoded de fixtures.
+- [x] [`apps/web/components/app-shell/sidebar.tsx`](apps/web/components/app-shell/sidebar.tsx) — virou **async Server Component**. `loadSwitcherData()` exportado (helper compartilhado com Topbar) fetcha `getCurrentUserContext` (cached por request) + lê cookie e devolve `{workspaces, activeWorkspaceId}`. Cookie stale (workspace removida) cai pra primeiro item da lista.
+- [x] [`apps/web/components/app-shell/topbar.tsx`](apps/web/components/app-shell/topbar.tsx) + [`apps/web/components/app-shell/mobile-nav.tsx`](apps/web/components/app-shell/mobile-nav.tsx) — Topbar virou async Server Component, chama `loadSwitcherData()` (mesma cache da Sidebar — 1 round-trip total) e passa pro `<MobileNav workspaces activeWorkspaceId>` (que continua client por causa do `useState` do Sheet).
+- [x] [`apps/web/features/onboarding/components/welcome-wizard.tsx`](apps/web/features/onboarding/components/welcome-wizard.tsx) — **3 steps** agora (WhatsApp, Agent, CSV); step 1 "Confirme seu workspace" removido (workspace é criado em `/onboarding` antes do dashboard). `finish()` chama `markWizardCompletedAction()` em vez do mock.
+- [x] [`apps/web/features/onboarding/components/welcome-wizard-controller.tsx`](apps/web/features/onboarding/components/welcome-wizard-controller.tsx) — recebe `hasWorkspace` + `wizardCompleted` via prop do server.
+- [x] [`apps/web/app/(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) + [`apps/web/app/(dashboard)/dashboard/page.tsx`](<apps/web/app/(dashboard)/dashboard/page.tsx>) + [`apps/web/app/(dashboard)/dashboard/dashboard-content.tsx`](<apps/web/app/(dashboard)/dashboard/dashboard-content.tsx>) — fluxo de `wizardCompleted` 100% server-side via `readWizardCookie()`, sem cookie client read.
+- [x] [`apps/web/app/layout.tsx`](apps/web/app/layout.tsx) — `<WorkspaceMockProvider>` removido do `<ThemeProvider>`. Comentário documenta a remoção e o padrão "sem provider — cada consumer pega direto da fonte canônica (cookies + Supabase Auth)".
+- [x] **Deletados** (arquivos mortos): [`apps/web/features/workspace/workspace-mock-provider.tsx`](apps/web/features/workspace/workspace-mock-provider.tsx), [`apps/web/lib/fixtures/workspaces.ts`](apps/web/lib/fixtures/workspaces.ts), [`apps/web/features/onboarding/components/steps/workspace-step.tsx`](apps/web/features/onboarding/components/steps/workspace-step.tsx).
+- [x] [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) — smoke endpoint cobrindo **34 asserts em 5 grupos** (verificado ao vivo via `curl`: `HTTP 200 · 34/34 ✓`): **slugify** (10 — diacritics, casos limite Unicode, truncate 64, non-string fallback), **ensureUniqueSlug** (5 — append -2, iteração, base livre, fallback "workspace", throw após 50), **schema** (5 — válido, < 2 chars, > 60, control chars, emoji+acento aceito), **initials** (6 — 1/2 palavras, vazio, espaços, lowercase→uppercase), **switcher-item** (8 — propagação + accent determinístico em índices 0/3/5). Não toca no banco — Server Actions exigem sessão real, cobertura E2E vai pro Playwright M7#6.
+
+**Decisões registradas:**
+
+- **`setActiveWorkspaceAction` valida membership server-side:** confiamos no cookie como cache, mas a action que escreve o cookie chama Prisma pra confirmar acesso. Devtools trocando cookie diretamente → action devolve "Você não tem acesso a esse workspace" antes de qualquer query rodar com tenant errado.
+- **`Sidebar` e `Topbar` compartilham `loadSwitcherData()`:** evita 2 round-trips. `getCurrentUserContext` já é cached por request via React `cache()`, mas extrair o helper documenta a intenção e facilita reuso futuro (settings/team list em M7#5 vai reaproveitar).
+- **`presentation.ts` server-only:** o adaptador `MembershipSummary → WorkspaceSwitcherItem` tem `import 'server-only'` pra garantir que a derivação acontece no boundary correto. Se rodasse no client, `workspaceInitials` viraria duplicação e o `accent` determinístico (que vira coluna real em M8) precisaria sync.
+- **Switcher step 1 do wizard removido (não cosmético):** wizard tinha "Confirme seu workspace" como step 1 mockado em M3. Em M7#4 Onda 1, `/onboarding` virou a criação real → step 1 sobrou apenas como input cosmético. Onda 3 remove pra a UI alinhar com o fluxo real (3 steps: WhatsApp, Agent, CSV).
+- **`markWizardCompletedAction` como Server Action e não cliente:** cookie httpOnly só pode ser setado pelo server. Server Action devolve no header `Set-Cookie` da response; `router.refresh()` após a action garante que o próximo render do layout lê o cookie atualizado.
+- **`workspace_step.tsx` deletado mesmo sendo "ainda usável":** YAGNI — restaurar do git é trivial se mudarmos de ideia, ter o arquivo no repo confunde futuro reviewer que pensa "esse step é parte do fluxo?". Limpeza explícita > legado preservado.
+
+**Validação local:**
+
+- `pnpm -w run typecheck` 5/5 ✓
+- `pnpm -w run lint` 5/5 ✓
+- `pnpm -w run format:check` ✓
+- `pnpm --filter @papopro/web build` ✓ — 37 rotas (`/api/smoke-test/workspaces` nova), middleware Edge 82.8 kB (estável vs Onda 2 — sem regra nova no middleware)
+- E2E manual pendente (mesmo motivo das ondas anteriores; smoke endpoint roda local quando `pnpm dev` está ativo: `curl http://localhost:3000/api/smoke-test/workspaces`)
+
+**Commit:** `feat(workspace): switcher real + cleanup do mock provider + smoke endpoint (M7#4 onda 3)`
+
+**Entregas — M7#4 Pós-Onda 3 — Fixes do code review:**
+
+Após o merge das 3 ondas em local, code-reviewer agent revisou os ~4977 linhas adicionadas (61 arquivos) e levantou **4 CRÍTICO + 9 HIGH + 9 MEDIUM + 13 LOW**. Este commit endereça **2 CRÍTICO + 5 HIGH + 2 MEDIUM** mais impactantes — bloqueadores reais de produção. LOW + parte do MEDIUM ficam pra M7#5 (`requireRole` + audit log) ou M8+.
+
+| Severidade | ID  | Fix one-liner                                                                                                                                                                                                                           | Arquivo                                                     |
+| ---------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 🔴 CRÍTICO | #3  | Email enumeration leak em `inviteMemberAction` (2 queries timing-attackable → 1 query via relation filter `workspaceMember.findFirst({ user: { email } })`)                                                                             | `features/invitations/actions.ts`                           |
+| 🔴 CRÍTICO | #4  | Email header injection no subject (Resend repassa subject como header MIME — `\r\n` em `inviterName` permitiria adicionar `Bcc:`). Fix: `signupSchema.name` bloqueia control chars + template chama `stripControlChars` antes de compor | `features/auth/schemas.ts`, `lib/email/templates/invite.ts` |
+| 🟠 HIGH    | #5  | `AbortSignal.timeout(10_000)` não portável (Node 17.3+, alguns Edge runtimes não suportam) — trocado por `AbortController` + `setTimeout` manual com `clearTimeout` no `finally`                                                        | `lib/email/resend.ts`                                       |
+| 🟠 HIGH    | #6  | Race em `acceptInvitationAction` — duplo-clique disparava 2 transactions, segunda violava `@@unique([workspaceId, userId])` (P2002). Fix: catch P2002 e trata como sucesso silente — UX final idêntica                                  | `features/invitations/actions.ts`                           |
+| 🟠 HIGH    | #8  | `WorkspaceMember.invitedAt = now()` errado (igual a `joinedAt`); agora `invitation.createdAt` — diferença alimenta métrica "tempo até aceite" em M7#5                                                                                   | `features/invitations/actions.ts`                           |
+| 🟠 HIGH    | #9  | `safeNextParam` middleware sem length limit nem control-char guard — adicionado max 512 chars + bloqueio de `\r\n` (smuggling)                                                                                                          | `middleware.ts`                                             |
+| 🟠 HIGH    | #10 | Audit log de `member_invited` rodava ANTES do envio do email — se Resend falhasse, log dizia "convite enviado" mas convidado nunca recebia. Agora registra DEPOIS do email OK                                                           | `features/invitations/actions.ts`                           |
+| 🟡 MEDIUM  | #14 | Reinvite após `revoked`/`expired` reaproveitava token antigo (que podia ter vazado em logs/forwards) — agora gera novo via `crypto.randomUUID()` quando status anterior não era `pending`                                               | `features/invitations/actions.ts`                           |
+| 🟡 MEDIUM  | #18 | `escapeHtml` faltava `'` (apóstrofo) — adicionado escape pra `&#39;` (alinha com OWASP HTML escape)                                                                                                                                     | `lib/email/templates/invite.ts`                             |
+| 🟡 MEDIUM  | #19 | `inviteMemberAction` e `revokeInvitationAction` não validavam formato UUID do cookie de workspace antes de bater no Prisma — adicionado `isUuid()` guard como defense-in-depth contra cookie corrompido                                 | `features/invitations/actions.ts`                           |
+
+**Refatorações estruturais:**
+
+- [`apps/web/lib/utils/prisma-errors.ts`](apps/web/lib/utils/prisma-errors.ts) (novo) — `isPrismaErrorCode(err, code)` extraído de `workspace/actions.ts`. Era duplicado entre 2 actions; movido pra util **fora de `'use server'`** porque `'use server'` transforma exports em RPC callable do client (vetor de probing) — vale tanto pro próprio helper quanto pra qualquer função de utilidade futura.
+- [`apps/web/lib/utils/uuid.ts`](apps/web/lib/utils/uuid.ts) (novo) — `isUuid(value)` regex compartilhado; estava duplicado entre `features/workspace/actions.ts` e `features/invitations/queries.ts`.
+
+**Smoke endpoint ampliado:** [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) cresceu de **34 → 48 asserts em 8 grupos** (verificado ao vivo via `curl`: `HTTP 200 · 48/48 ✓`). Novos: `isUuid` (7 asserts: v4 lowercase/uppercase, empty, non-uuid, null, sql injection, extra chars), `signup-control` (3 asserts: clean name, `\r\n` header injection, bare `\n`), `invite-email` (5 asserts: subject sem `\r`/`\n`, subject sem `Bcc:`, HTML escapa `<script>`, HTML escapa `'` como `&#39;`).
+
+**Débitos do review que NÃO entraram aqui** (rolam pra M7#5 + M7#6):
+
+| Severidade | Origem    | Débito                                                                                                                                                                                                      | Vai pra |
+| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 🔴 CRÍTICO | #1        | Smoke test cobrindo `safeNextParam` com query-strings codificadas (falso-positivo do review confirmado por trace manual)                                                                                    | M7#5    |
+| 🔴 CRÍTICO | #2        | Wrap invitations actions (`inviteMember`, `accept`, `revoke`) em `withWorkspace` — hoje funciona porque Prisma roda como postgres superuser que bypassa RLS, mas em produção com role restrito vai precisar | M7#5    |
+| 🟠 HIGH    | #7 / #11  | `User.email` é `@db.Citext` — query Prisma fragmenta se normalize sumir; documentar invariante OU usar `mode: 'insensitive'`                                                                                | M7#5    |
+| 🟠 HIGH    | #12       | `createWorkspaceAction` silenciosamente reaproveita workspace existente — input do user é dropped (UX wart aceitável pra agora)                                                                             | M7#5    |
+| 🟠 HIGH    | #13       | `searchParams.token` pode vir como array; primeiro normalizar antes de validar (defesa em profundidade)                                                                                                     | M7#5    |
+| 🟡 MEDIUM  | #15       | `/verify-email` redirect deleta token — perde fluxo do convidado novo que clica antes de verificar email                                                                                                    | M7#5    |
+| 🟡 MEDIUM  | #16       | `users.email` upsert defensivo com `??''` mascara bug do trigger — falhar barulhento seria mais honesto                                                                                                     | M7#5    |
+| 🟡 MEDIUM  | #17       | Cookie TTL de 30d descasa com sessão Supabase (refresh token expira antes) — middleware deveria validar membership do cookie                                                                                | M7#5    |
+| 🟡 MEDIUM  | #20       | `getMembershipCountForUser` chamado em cold-start sem cache em memória — 1 query Supabase REST por request quando cookie ausente                                                                            | M7#5    |
+| 🟡 MEDIUM  | #21       | `resolveHasWorkspace` chamado 2x na mesma request em fluxos como `/dashboard` — vale memoize com `Map<userId, Promise>`                                                                                     | M7#5    |
+| 🟡 LOW     | múltiplos | Cast unsafe de `user.user_metadata`, fonte Poppins não web-safe no email, `accept-form.tsx` double-render com `refresh+push`, etc                                                                           | M7#5+   |
+
+**Decisões registradas:**
+
+- **`isPrismaErrorCode` e `isUuid` em `lib/utils/`:** fora de `'use server'` files pra evitar virar RPC callable do client. Padrão consistente com `lib/auth/get-membership-count.ts` (que vive em `features/workspace/queries.ts` com `'server-only'`).
+- **Token rotation em re-invite:** chave de segurança — link antigo não deve sobreviver a `revoke` + re-emit. `crypto.randomUUID()` (Web Crypto API, runtime universal) gera no app side; default DB (`gen_random_uuid()`) só cobre o `create` path.
+- **Audit log depois do email:** trade-off entre "audit é fonte de verdade de tudo que tentamos" vs "audit é fonte de verdade do que realmente aconteceu". Escolhemos o segundo — alinha com leitura de compliance LGPD (CLAUDE.md §7.5).
+- **CRÍTICO #1 falso-positivo:** o review apontou que `?token=` viraria `%3F` no path por dupla codificação. Trace manual mostra que `searchParams.get('next')` retorna valor já decodificado e `new URL(next, req.url)` parsea `?token=…` corretamente como query (não como path). Mantemos como `not a bug` mas adicionamos smoke test em M7#5.
+- **Wrap em `withWorkspace` (CRÍTICO #2) deferred:** o ambiente atual (Prisma com `DATABASE_URL` apontando pra Supavisor pooler como `postgres` superuser) bypassa RLS por design — não é falha real hoje. Vira bloqueador quando endurecermos a connection string em produção com role restrito; aí M7#5 wrap-a junto com `requireRole`.
+
+**Validação local final:**
+
+- `pnpm -w typecheck` 5/5 ✓
+- `pnpm -w lint` 5/5 ✓
+- `pnpm -w format:check` ✓
+- `pnpm --filter @papopro/web build` 37 rotas ✓
+- Smoke endpoint `/api/smoke-test/workspaces` **48/48 ✓** (ao vivo via `curl`)
+- Login Supabase + onboarding + dashboard testados em browser (`NODE_USE_SYSTEM_CA=1 pnpm dev` no Windows pra contornar TLS strict; ver `docs/SETUP.md`)
+
+**Commit:** `fix(m7-invites-workspaces): aplicar fixes do code review (CRITICO + HIGH + MEDIUM)`
+
+**Commit final do M7#4 (entregue só no último sub-PR):** já efetivado nos 4 commits (3 ondas + fixes do review) — não há squash separado.
 
 ---
 

@@ -21,7 +21,15 @@ import {
 } from '@papopro/ui/icons';
 
 import { PostWizardDashboard } from '@/features/dashboard/components/post-wizard-dashboard';
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { useUser } from '@/lib/auth/use-user';
+
+interface DashboardContentProps {
+  /**
+   * Vem do `readWizardCookie` no Server Component pai (M7#4 Onda 3).
+   * Substitui `useWorkspaceMock().wizardCompleted` legacy.
+   */
+  wizardCompleted: boolean;
+}
 
 /**
  * Dashboard com 2 variantes:
@@ -29,24 +37,19 @@ import { useAuthMock } from '@/lib/auth/auth-mock-provider';
  *    instruindo o próximo passo. Princípio CLAUDE.md §8: "Estado vazio
  *    sempre orienta o próximo passo. Sem tela em branco."
  *  - **pós-onboarding** (`wizardCompleted=true`): dashboard real com KPIs
- *    derivados das fixtures (Total Leads / Negócios Abertos / Pipeline /
- *    Conversão), funil Recharts e tabela de prazos. Vive em
- *    `features/dashboard/` como `<PostWizardDashboard>`.
+ *    derivados das fixtures (M8 troca por queries reais).
  *
- * Enquanto `loading=true` (cookie ainda hidratando) mostramos skeletons —
- * evita flash entre as duas variantes na 1ª render.
+ * `useUser` continua client — name vem do auth metadata hidratado runtime;
+ * skeleton mostra enquanto o user resolve.
  */
-export function DashboardContent() {
-  const { loading, user, wizardCompleted } = useAuthMock();
+export function DashboardContent({ wizardCompleted }: DashboardContentProps) {
+  const { loading: userLoading, displayName } = useUser();
 
-  if (loading) {
+  if (userLoading) {
     return <DashboardSkeleton />;
   }
 
-  // `user` sempre existe aqui (o middleware bloqueia o acesso sem login),
-  // mas mantemos o fallback pra TypeScript não reclamar e proteger contra
-  // race conditions em dev (cookie removido manual no DevTools).
-  const greeting = user?.name ? `Bem-vindo, ${user.name.split(' ')[0]}` : 'Bem-vindo de volta';
+  const greeting = displayName ? `Bem-vindo, ${displayName.split(' ')[0]}` : 'Bem-vindo de volta';
 
   if (!wizardCompleted) {
     return <PreOnboardingDashboard greeting={greeting} />;

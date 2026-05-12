@@ -1,9 +1,13 @@
-// PapoPro — schema Prisma (placeholder de M1).
+// PapoPro — schema Prisma.
 //
-// M7 introduz: users, workspaces, workspace_members, invitations, audit_logs,
-// notification_preferences, webhook_events. M8 acrescenta o domínio de leads,
-// deals, pipelines e tarefas. RLS aplicada no Postgres antes de cada migration.
-// Ver [docs/PLAN.md] §M7 e §M8.
+// M7#2 introduz o esqueleto multi-tenant + auditoria: users (espelha auth.users
+// via trigger on_auth_user_created), workspaces, workspace_members, invitations,
+// audit_logs, notification_preferences, webhook_events. RLS habilitada em todas
+// as tabelas pelo SQL aplicado via MCP apply_migration (init_auth_and_multi_tenant).
+//
+// Source of truth: este arquivo. SQL DDL/RLS é gerado manualmente espelhando os
+// models e aplicado no Supabase via MCP. M8 acrescenta o domínio de leads, deals,
+// pipelines e tarefas. Ver [docs/PLAN.md] §M7 e §M8.
 
 generator client {
   provider        = "prisma-client-js"
@@ -14,5 +18,200 @@ datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
   directUrl  = env("DIRECT_URL")
-  extensions = [pgcrypto, pg_trgm, vector]
+  extensions = [pgcrypto, pg_trgm, vector, citext]
+}
+
+// =============================================================================
+// Enums
+// =============================================================================
+
+enum Role {
+  Owner
+  Admin
+  Manager
+  Vendedor
+  Viewer
+
+  @@map("role")
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  expired
+  revoked
+
+  @@map("invitation_status")
+}
+
+enum AuditAction {
+  workspace_created
+  workspace_updated
+  member_invited
+  member_joined
+  member_role_changed
+  member_removed
+  invitation_revoked
+  user_logged_in
+  user_logged_out
+  export_started
+  data_deleted
+
+  @@map("audit_action")
+}
+
+// =============================================================================
+// Tenant + identidade
+// =============================================================================
+
+/// Tenant isolado. Toda tabela de domínio referencia workspaces.id.
+model Workspace {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String    @db.VarChar(60)
+  slug      String    @unique @db.VarChar(80)
+  logoUrl   String?   @map("logo_url")
+  segment   String?   @db.VarChar(32)
+  plan      String    @default("Pro") @db.VarChar(32)
+  timezone  String    @default("America/Sao_Paulo") @db.VarChar(64)
+  locale    String    @default("pt-BR") @db.VarChar(8)
+  settings  Json      @default("{}")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  members                 WorkspaceMember[]
+  invitations             Invitation[]
+  auditLogs               AuditLog[]
+  notificationPreferences NotificationPreference[]
+  webhookEvents           WebhookEvent[]
+
+  @@index([deletedAt])
+  @@map("workspaces")
+}
+
+/// Espelha auth.users via trigger on_auth_user_created.
+/// Não inserir diretamente — Supabase Auth gerencia. id é o mesmo UUID de auth.users.id.
+model User {
+  id              String    @id @db.Uuid
+  email           String    @unique @db.Citext
+  name            String?   @db.VarChar(120)
+  avatarUrl       String?   @map("avatar_url")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships             WorkspaceMember[]
+  auditLogs               AuditLog[]
+  notificationPreferences NotificationPreference[]
+  invitationsCreated      Invitation[]             @relation("InvitationCreatedBy")
+
+  @@map("users")
+}
+
+/// Relação usuário ↔ workspace com papel RBAC.
+model WorkspaceMember {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  role        Role
+  invitedAt   DateTime? @map("invited_at") @db.Timestamptz(6)
+  joinedAt    DateTime? @map("joined_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+/// Convite por email com magic link. TTL 7 dias (gerenciado no app).
+model Invitation {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String           @map("workspace_id") @db.Uuid
+  email       String           @db.Citext
+  role        Role
+  token       String           @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  expiresAt   DateTime         @map("expires_at") @db.Timestamptz(6)
+  status      InvitationStatus @default(pending)
+  createdById String           @map("created_by_id") @db.Uuid
+  acceptedAt  DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User      @relation("InvitationCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId])
+  @@index([token])
+  @@map("invitations")
+}
+
+// =============================================================================
+// Auditoria + preferências + webhooks
+// =============================================================================
+
+/// Log de auditoria (LGPD). Append-only — nenhuma policy de UPDATE/DELETE.
+/// Cleanup futuro via pg_cron com retenção 12m (Pro) / 24m (Enterprise).
+model AuditLog {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String      @map("workspace_id") @db.Uuid
+  userId      String?     @map("user_id") @db.Uuid
+  action      AuditAction
+  entityType  String?     @map("entity_type") @db.VarChar(64)
+  entityId    String?     @map("entity_id") @db.VarChar(64)
+  changes     Json?
+  ipAddress   String?     @map("ip_address") @db.Inet
+  userAgent   String?     @map("user_agent")
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, userId])
+  @@map("audit_logs")
+}
+
+/// Preferências de notificação por (workspace, user). JSONB wide.
+/// Eventos administrativos (workspace_invite_received, payment_failed) NÃO ficam aqui
+/// — são forçados na camada de envio (PRD §3.2 "não podem ser desligados").
+model NotificationPreference {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  prefs       Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+/// Idempotência de webhooks externos. (source, externalId) único.
+/// Append-only — nenhuma policy de UPDATE/DELETE.
+model WebhookEvent {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  source         String    @db.VarChar(32)
+  externalId     String    @map("external_id") @db.VarChar(128)
+  payload        Json
+  signatureValid Boolean   @default(false) @map("signature_valid")
+  processedAt    DateTime? @map("processed_at") @db.Timestamptz(6)
+  error          String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([workspaceId, source, createdAt(sort: Desc)])
+  @@map("webhook_events")
 }

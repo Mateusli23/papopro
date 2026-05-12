@@ -1,16 +1,27 @@
 import { LogoFull } from '@papopro/ui';
 
+import { toSwitcherItem } from '@/features/workspace/presentation';
+import { getCurrentUserContext } from '@/lib/auth/get-user';
+import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+
 import { SidebarFooter } from './sidebar-footer';
 import { SidebarNav } from './sidebar-nav';
-import { WorkspaceSwitcher } from './workspace-switcher';
+import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switcher';
 
 /**
  * Sidebar fixa de 240px (CLAUDE.md §8). Visível em ≥1024px; abaixo disso vira
  * drawer no `MobileNav`.
  *
+ * **Server Component** — fetch de `getCurrentUserContext` (cached por
+ * request via `cache()`) + leitura do cookie `papopro_workspace_id` aqui pra
+ * popular o switcher real. `WorkspaceSwitcher` continua client por causa do
+ * dropdown + transição otimista.
+ *
  * Estrutura: marca → workspace switcher → navegação → rodapé com status.
  */
-export function Sidebar() {
+export async function Sidebar() {
+  const { workspaces, activeWorkspaceId } = await loadSwitcherData();
+
   return (
     <aside
       className="bg-sidebar text-sidebar-foreground border-sidebar-border w-sidebar hidden h-screen shrink-0 flex-col border-r lg:flex"
@@ -20,10 +31,30 @@ export function Sidebar() {
         <LogoFull />
       </div>
       <div className="border-sidebar-border border-b p-2">
-        <WorkspaceSwitcher />
+        <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
       </div>
       <SidebarNav />
       <SidebarFooter />
     </aside>
   );
+}
+
+/**
+ * Helper exportado pra reuso pelo `MobileNav` server wrapper. Centraliza a
+ * busca pra evitar 2 round-trips na mesma request — `getCurrentUserContext`
+ * é cached por request via React `cache()`, então a chamada dupla é grátis.
+ */
+export async function loadSwitcherData(): Promise<{
+  workspaces: WorkspaceSwitcherItem[];
+  activeWorkspaceId: string | null;
+}> {
+  const context = await getCurrentUserContext();
+  const memberships = context?.memberships ?? [];
+  const workspaces = memberships.map((m, i) => toSwitcherItem(m, i));
+  const cookieValue = readWorkspaceCookie();
+  const activeWorkspaceId =
+    cookieValue && workspaces.some((w) => w.workspaceId === cookieValue)
+      ? cookieValue
+      : (workspaces[0]?.workspaceId ?? null);
+  return { workspaces, activeWorkspaceId };
 }
