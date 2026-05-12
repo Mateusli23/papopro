@@ -59,6 +59,31 @@ interface TeamViewProps {
   callerUserId: string;
 }
 
+// =============================================================================
+// Confirm Dialog Context (HIGH #3 do review M7#5)
+// =============================================================================
+
+/**
+ * Toda action destrutiva (remover membro, cancelar convite, rebaixar role)
+ * deve passar por confirmação. Context evita prop drilling 3 níveis abaixo
+ * (TeamView → MembersSection → MemberRow → MemberActions).
+ */
+interface ConfirmRequest {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  destructive: boolean;
+  onConfirm: () => Promise<void> | void;
+}
+
+const ConfirmContext = React.createContext<((req: ConfirmRequest) => void) | null>(null);
+
+function useConfirm() {
+  const ctx = React.useContext(ConfirmContext);
+  if (!ctx) throw new Error('useConfirm precisa estar dentro de <ConfirmContext.Provider>');
+  return ctx;
+}
+
 /**
  * `/settings/team` — gestão de membros e convites do workspace (M7#5).
  *
@@ -72,6 +97,11 @@ interface TeamViewProps {
  * "Remover", "Reenviar"). Manager/Vendedor/Viewer veem só leitura. As
  * Server Actions revalidam permissões server-side — UI esconder não é
  * segurança, é UX.
+ *
+ * **Confirm dialogs (M7#5 HIGH #3 fix).** Ações destrutivas (remover, cancelar
+ * convite, rebaixar role) passam por confirmação via `useConfirm()` antes
+ * de executar a Server Action. Promover/Convidar/Reenviar seguem direto —
+ * são reversíveis ou repetíveis.
  */
 export function TeamView({
   initialMembers,
@@ -81,8 +111,30 @@ export function TeamView({
 }: TeamViewProps) {
   const [inviteOpen, setInviteOpen] = React.useState(false);
   const [search, setSearch] = React.useState('');
+  const [confirmReq, setConfirmReq] = React.useState<ConfirmRequest | null>(null);
+  const [confirmPending, setConfirmPending] = React.useState(false);
 
   const canManage = callerRole === 'Owner' || callerRole === 'Admin';
+
+  const requestConfirm = React.useCallback((req: ConfirmRequest) => {
+    setConfirmReq(req);
+  }, []);
+
+  async function handleConfirm() {
+    if (!confirmReq) return;
+    setConfirmPending(true);
+    try {
+      await confirmReq.onConfirm();
+    } finally {
+      setConfirmPending(false);
+      setConfirmReq(null);
+    }
+  }
+
+  function handleCancel() {
+    if (confirmPending) return; // não cancela durante a ação
+    setConfirmReq(null);
+  }
 
   const filteredMembers = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -93,58 +145,87 @@ export function TeamView({
   }, [initialMembers, search]);
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Time"
-        description="Gerencie membros, papéis e convites pendentes do workspace."
-        actions={
-          canManage ? (
-            <Button onClick={() => setInviteOpen(true)}>
-              <UserPlus /> Convidar membro
-            </Button>
-          ) : null
-        }
-      />
+    <ConfirmContext.Provider value={requestConfirm}>
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          title="Time"
+          description="Gerencie membros, papéis e convites pendentes do workspace."
+          actions={
+            canManage ? (
+              <Button onClick={() => setInviteOpen(true)}>
+                <UserPlus /> Convidar membro
+              </Button>
+            ) : null
+          }
+        />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="default" className="gap-1">
-          <span className="tabular-nums">{initialMembers.length}</span>
-          <span>{initialMembers.length === 1 ? 'membro' : 'membros'}</span>
-        </Badge>
-        {initialPendingInvitations.length > 0 && (
-          <Badge variant="warning" className="gap-1">
-            <span className="tabular-nums">{initialPendingInvitations.length}</span>
-            <span>
-              {initialPendingInvitations.length === 1 ? 'convite pendente' : 'convites pendentes'}
-            </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="default" className="gap-1">
+            <span className="tabular-nums">{initialMembers.length}</span>
+            <span>{initialMembers.length === 1 ? 'membro' : 'membros'}</span>
           </Badge>
+          {initialPendingInvitations.length > 0 && (
+            <Badge variant="warning" className="gap-1">
+              <span className="tabular-nums">{initialPendingInvitations.length}</span>
+              <span>
+                {initialPendingInvitations.length === 1 ? 'convite pendente' : 'convites pendentes'}
+              </span>
+            </Badge>
+          )}
+        </div>
+
+        {initialPendingInvitations.length > 0 && (
+          <PendingInvitesSection invitations={initialPendingInvitations} canManage={canManage} />
         )}
-      </div>
 
-      {initialPendingInvitations.length > 0 && (
-        <PendingInvitesSection invitations={initialPendingInvitations} canManage={canManage} />
-      )}
+        <div className="flex flex-col gap-4">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por nome ou e-mail"
+              className="pl-9"
+            />
+          </div>
 
-      <div className="flex flex-col gap-4">
-        <div className="relative w-full sm:max-w-sm">
-          <Search className="text-muted-foreground pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nome ou e-mail"
-            className="pl-9"
+          <MembersSection
+            members={filteredMembers}
+            canManage={canManage}
+            callerUserId={callerUserId}
           />
         </div>
 
-        <MembersSection
-          members={filteredMembers}
-          canManage={canManage}
-          callerUserId={callerUserId}
-        />
-      </div>
+        <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} />
 
-      <InviteMemberDialog open={inviteOpen} onOpenChange={setInviteOpen} />
-    </div>
+        <Dialog open={confirmReq !== null} onOpenChange={(open) => !open && handleCancel()}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{confirmReq?.title ?? ''}</DialogTitle>
+              <DialogDescription>{confirmReq?.description ?? ''}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleCancel}
+                disabled={confirmPending}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant={confirmReq?.destructive ? 'destructive' : 'default'}
+                onClick={handleConfirm}
+                disabled={confirmPending}
+              >
+                {confirmPending ? 'Processando…' : (confirmReq?.confirmLabel ?? 'Confirmar')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </ConfirmContext.Provider>
   );
 }
 
@@ -191,6 +272,7 @@ function PendingInviteRowItem({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [pending, setPending] = React.useState(false);
 
   async function handleResend() {
@@ -205,19 +287,33 @@ function PendingInviteRowItem({
     router.refresh();
   }
 
-  async function handleRevoke() {
-    setPending(true);
-    // `revokeInvitationAction` está em features/invitations — import dinâmico
-    // evita ciclo de import e mantém o bundle do team-view enxuto.
-    const { revokeInvitationAction } = await import('@/features/invitations/actions');
-    const r = await revokeInvitationAction({ invitationId: invite.id });
-    setPending(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return;
-    }
-    toast.success(`Convite para ${invite.email} cancelado`);
-    router.refresh();
+  /**
+   * Cancelar convite é destrutivo — link mágico anterior é invalidado e o
+   * convidado precisa receber novo convite. Confirmação obrigatória (M7#5
+   * HIGH #3 fix). Executar a action fica no `onConfirm` do dialog.
+   */
+  function handleRevoke() {
+    confirm({
+      title: `Cancelar convite para ${invite.email}?`,
+      description:
+        'O link mágico atual será invalidado. Pra deixar entrar depois, você precisa convidar de novo.',
+      confirmLabel: 'Cancelar convite',
+      destructive: true,
+      onConfirm: async () => {
+        setPending(true);
+        // `revokeInvitationAction` está em features/invitations — import dinâmico
+        // evita ciclo de import e mantém o bundle do team-view enxuto.
+        const { revokeInvitationAction } = await import('@/features/invitations/actions');
+        const r = await revokeInvitationAction({ invitationId: invite.id });
+        setPending(false);
+        if (!r.ok) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success(`Convite para ${invite.email} cancelado`);
+        router.refresh();
+      },
+    });
   }
 
   return (
@@ -410,6 +506,17 @@ function MemberCard({
 
 const CHANGEABLE_ROLES: Role[] = ['Admin', 'Manager', 'Vendedor', 'Viewer'];
 
+// Ranking pra detectar promoção vs rebaixamento (M7#5 HIGH #3 — UX
+// confirmação só pra rebaixar). Owner fica de fora porque a UI não oferece
+// promover a Owner (transferência é fluxo dedicado).
+const ROLE_RANK: Record<Role, number> = {
+  Owner: 5,
+  Admin: 4,
+  Manager: 3,
+  Vendedor: 2,
+  Viewer: 1,
+};
+
 function MemberActions({
   member,
   canManage,
@@ -420,6 +527,7 @@ function MemberActions({
   isSelf: boolean;
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [pending, setPending] = React.useState(false);
 
   // Owner do workspace nunca aparece como alvo de remoção/role-change pela
@@ -432,7 +540,7 @@ function MemberActions({
     return <span className="text-muted-foreground text-caption">—</span>;
   }
 
-  async function onChangeRole(role: Role) {
+  async function doChangeRole(role: Role) {
     setPending(true);
     const r = await changeRoleAction({ memberId: member.id, role });
     setPending(false);
@@ -444,16 +552,50 @@ function MemberActions({
     router.refresh();
   }
 
-  async function onRemove() {
-    setPending(true);
-    const r = await removeMemberAction({ memberId: member.id });
-    setPending(false);
-    if (!r.ok) {
-      toast.error(r.error);
+  /**
+   * Promove direto; rebaixa via confirmação (M7#5 HIGH #3). Rebaixar reduz
+   * acesso operacional do membro — erro de clique custa caro (membro perde
+   * leads visíveis, mensagens, etc).
+   */
+  function onChangeRole(role: Role) {
+    const isDemote = ROLE_RANK[role] < ROLE_RANK[member.role];
+    if (!isDemote) {
+      void doChangeRole(role);
       return;
     }
-    toast.success(`${memberDisplayName(member)} removido do workspace`);
-    router.refresh();
+    confirm({
+      title: `Rebaixar ${memberDisplayName(member)} para ${role}?`,
+      description: `O membro perde os acessos de ${member.role} imediatamente. Você pode reverter mudando o papel de novo.`,
+      confirmLabel: `Rebaixar para ${role}`,
+      destructive: true,
+      onConfirm: () => doChangeRole(role),
+    });
+  }
+
+  /**
+   * Remover é destrutivo — confirmação obrigatória (M7#5 HIGH #3). Os leads
+   * do membro NÃO são deletados; permanecem no workspace (FK onDelete: Restrict
+   * mantém a row em `users`). Documentar isso no dialog ajuda o caller.
+   */
+  function onRemove() {
+    confirm({
+      title: `Remover ${memberDisplayName(member)} do workspace?`,
+      description:
+        'O membro perde acesso imediato. Os leads e conversas dele continuam no workspace — só o membership é removido. Convide de novo se quiser que ele volte.',
+      confirmLabel: 'Remover',
+      destructive: true,
+      onConfirm: async () => {
+        setPending(true);
+        const r = await removeMemberAction({ memberId: member.id });
+        setPending(false);
+        if (!r.ok) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success(`${memberDisplayName(member)} removido do workspace`);
+        router.refresh();
+      },
+    });
   }
 
   return (
