@@ -21,6 +21,15 @@
 > `pnpm install` pode falhar com `UNABLE_TO_VERIFY_LEAF_SIGNATURE`. Não desabilite
 > `strict-ssl` global. O CI no GitHub Actions roda sem proxy e funciona normal.
 
+> **Heads-up 2 (Windows + Node 22+):** se o `pnpm dev` subir mas chamadas HTTPS
+> do servidor (Supabase Auth via `@supabase/ssr`, Resend) falharem com
+> `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — sintoma típico: tela de login mostra "Não
+> foi possível entrar agora" — exporte `NODE_USE_SYSTEM_CA=1` no shell antes de
+> subir. Faz o Node confiar no cert store do Windows em vez do bundle interno
+> (que pode estar faltando intermediário do Supabase/Cloudflare). Linux/Mac/Vercel
+> ignoram a flag, então é seguro habilitar como default no Windows. Comando:
+> `NODE_USE_SYSTEM_CA=1 pnpm dev`. Descoberta operacional do M7#4.
+
 ---
 
 ## 1. Já está pronto (M1) ✅

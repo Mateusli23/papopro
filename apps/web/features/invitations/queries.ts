@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { isUuid } from '@/lib/utils/uuid';
 
 /**
  * Queries server-only do feature `invitations` (M7#4 Onda 2).
@@ -39,8 +40,10 @@ export interface InvitationByToken {
  */
 export async function getInvitationByToken(token: string): Promise<InvitationByToken | null> {
   // Validação de formato — invitation.token é UUID. Curto-circuita probing
-  // com strings malformadas antes de bater no banco.
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)) {
+  // com strings malformadas antes de bater no banco. `isUuid` é o util
+  // compartilhado de `lib/utils/uuid.ts` (M7#4 — antes regex duplicado em 2
+  // arquivos).
+  if (!isUuid(token)) {
     return null;
   }
 

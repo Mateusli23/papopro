@@ -61,11 +61,21 @@ const DEFAULT_LOGGED_IN = '/dashboard';
  * Helper: o destino `next` em redirects de auth (login/signup) só é
  * preservado se for um path relativo seguro (sem `//` que pula domínio).
  * Open-redirect guard equivalente ao do callback PKCE.
+ *
+ * **Fix M7#4 review HIGH #9:** rejeita também strings > 512 chars (defesa
+ * contra DoS de URL gigante) e qualquer control char (`\r\n` smuggling).
+ * 512 cabe `/invite/accept?token=<36>` + folga; convites são o uso
+ * legítimo mais longo do `next=`.
  */
 function safeNextParam(next: string | null): string | null {
   if (!next) return null;
+  if (next.length > 512) return null;
   if (!next.startsWith('/')) return null;
   if (next.startsWith('//')) return null;
+  for (let i = 0; i < next.length; i++) {
+    const code = next.charCodeAt(i);
+    if (code < 32 || code === 127) return null;
+  }
   return next;
 }
 

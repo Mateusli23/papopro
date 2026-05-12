@@ -79,6 +79,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   };
 
   const attempt = async (): Promise<SendEmailResult> => {
+    // **Fix M7#4 review HIGH #5:** `AbortSignal.timeout(...)` exige Node
+    // 17.3+ e nem todos os runtimes Edge suportam. `AbortController` + manual
+    // `setTimeout` é portátil pra Node 16+ e Edge Workers. O `finally`
+    // garante que o timer não vaza se o fetch resolve antes do timeout.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
     try {
       const res = await fetch(RESEND_API_URL, {
         method: 'POST',
@@ -87,8 +94,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-        // Timeout via AbortController — Resend SLA é < 1s, 10s já é defensivo.
-        signal: AbortSignal.timeout(10_000),
+        signal: controller.signal,
       });
 
       const body = (await res.json().catch(() => null)) as { id?: string; message?: string } | null;
@@ -106,6 +112,8 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro desconhecido ao enviar email';
       return { ok: false, error: message };
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
 

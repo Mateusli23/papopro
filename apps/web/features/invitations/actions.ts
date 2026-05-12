@@ -26,9 +26,11 @@
 import { prisma, type Prisma } from '@papopro/db';
 
 import { getCurrentUser } from '@/lib/auth/get-user';
-import { setWorkspaceCookie, readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { readWorkspaceCookie, setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { sendEmail } from '@/lib/email/resend';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
+import { isUuid } from '@/lib/utils/uuid';
 
 import {
   invitationAcceptSchema,
@@ -88,8 +90,11 @@ export async function inviteMemberAction(
     return { ok: false, error: 'Sessão expirada — faça login novamente.' };
   }
 
+  // **Fix do review M7#4 MEDIUM #19:** valida formato UUID do cookie antes de
+  // usar como filtro Prisma. O cookie é httpOnly server-only, mas defense-in-
+  // depth: bug do middleware ou cookie corrompido não vaza pro query path.
   const workspaceId = readWorkspaceCookie();
-  if (!workspaceId) {
+  if (!workspaceId || !isUuid(workspaceId)) {
     return { ok: false, error: 'Nenhum workspace ativo. Recarregue a página.' };
   }
 
@@ -109,26 +114,37 @@ export async function inviteMemberAction(
     return { ok: false, error: 'Você já está no workspace — não dá pra se autoconvidar.' };
   }
 
-  // Se o email já tem conta E já é membro, evita criar convite "fantasma".
-  // Lookup user → membership. Defense-in-depth: filtros explícitos.
-  const existingUser = await prisma.user.findUnique({
-    where: { email: targetEmail },
+  // **Defense-in-depth + anti-enumeration (fix do review M7#4 CRÍTICO #3):**
+  // antes faziamos 2 queries (`user.findUnique` → `workspaceMember.findUnique`)
+  // — diferença de timing entre "email global existe" e "não existe" permitia
+  // Owner/Admin enumerar contas PapoPro. Agora 1 query via relation filter:
+  // mesmo path independente de o email ter conta global.
+  const existingMember = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, user: { email: targetEmail } },
     select: { id: true },
   });
-  if (existingUser) {
-    const existingMember = await prisma.workspaceMember.findUnique({
-      where: { workspaceId_userId: { workspaceId, userId: existingUser.id } },
-      select: { id: true },
-    });
-    if (existingMember) {
-      return { ok: false, error: 'Esse email já é membro do workspace.' };
-    }
+  if (existingMember) {
+    return { ok: false, error: 'Esse email já é membro do workspace.' };
   }
 
-  // Upsert do convite (idempotente por `(workspace_id, email)`). Reusa token
-  // existente se houver — link enviado antes continua funcionando. Atualiza
-  // role/expires_at/status pra "pending" (caso estivesse "revoked" ou
-  // "expired") pra um reconvite limpo.
+  // Upsert do convite (idempotente por `(workspace_id, email)`).
+  //
+  // **Fix do review M7#4 MEDIUM #14:** quando o status anterior era `revoked`
+  // ou `expired`, geramos token novo pra invalidar links antigos que
+  // possam ter vazado em logs/forwards. Em `create` (caso de primeira
+  // emissão), o default do DB (`gen_random_uuid()`) atribui token.
+  //
+  // O Prisma client de M7#1 placeholder não expõe `Prisma.raw`, então o
+  // novo token é gerado via `crypto.randomUUID()` no app side — mesma
+  // entropia, sem dependência de schema generation.
+  const existingByEmail = await prisma.invitation.findUnique({
+    where: { workspaceId_email: { workspaceId, email: targetEmail } },
+    select: { id: true, status: true, token: true },
+  });
+  const shouldRotateToken =
+    existingByEmail &&
+    (existingByEmail.status === 'revoked' || existingByEmail.status === 'expired');
+
   const invitation = await prisma.invitation.upsert({
     where: { workspaceId_email: { workspaceId, email: targetEmail } },
     create: {
@@ -145,26 +161,15 @@ export async function inviteMemberAction(
       status: 'pending',
       acceptedAt: null,
       createdById: user.id,
+      ...(shouldRotateToken ? { token: crypto.randomUUID() } : {}),
     },
-    select: { id: true, token: true, workspace: { select: { name: true } } },
+    select: {
+      id: true,
+      token: true,
+      createdAt: true,
+      workspace: { select: { name: true } },
+    },
   });
-
-  // Audit log fora da upsert (não precisa ser transacional com ela — perder
-  // a row de audit em raríssimo crash é aceitável; perder o convite não).
-  try {
-    await prisma.auditLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        action: 'member_invited',
-        entityType: 'invitation',
-        entityId: invitation.id,
-        changes: { email: targetEmail, role: parsed.data.role },
-      },
-    });
-  } catch (err) {
-    console.error('[inviteMemberAction] audit log failed (non-fatal)', err);
-  }
 
   // Email. Resolução do nome do convidador: prefere `users.name` (espelhado
   // do auth metadata); cai pro email se vazio.
@@ -199,6 +204,25 @@ export async function inviteMemberAction(
       error:
         'Convite criado, mas o email não pôde ser enviado. Tente reenviar pelas configurações do time.',
     };
+  }
+
+  // **Audit log DEPOIS do envio do email (fix do review M7#4 HIGH #10):**
+  // antes registrávamos audit antes — se email falhasse, ficava "fantasma"
+  // dizendo "convite enviado" no log mas o convidado nunca recebia. Agora
+  // só audita quando o convite efetivamente saiu do servidor.
+  try {
+    await prisma.auditLog.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        action: 'member_invited',
+        entityType: 'invitation',
+        entityId: invitation.id,
+        changes: { email: targetEmail, role: parsed.data.role },
+      },
+    });
+  } catch (err) {
+    console.error('[inviteMemberAction] audit log failed (non-fatal)', err);
   }
 
   return { ok: true, invitationId: invitation.id };
@@ -240,6 +264,10 @@ export async function acceptInvitationAction(
       role: true,
       status: true,
       expiresAt: true,
+      // **Fix do review M7#4 HIGH #8:** `WorkspaceMember.invitedAt` deve ser
+      // o momento da emissão do convite (não do aceite — `joinedAt` cobre
+      // isso). Carregamos pra setar corretamente no `create` mais abaixo.
+      createdAt: true,
       workspace: { select: { name: true } },
     },
   });
@@ -282,6 +310,14 @@ export async function acceptInvitationAction(
 
   // Transação: cria member + marca convite + audit. Inclui upsert defensivo
   // de users — mesmo argumento da Onda 1 (raro caso de trigger falhando).
+  //
+  // **Fix do review M7#4 HIGH #6:** duplo-clique em "Aceitar" pode disparar
+  // duas requests concorrentes; a primeira passa pelo `findUnique` (=null),
+  // entra na transaction, cria member; a segunda também passa (=null antes
+  // do commit) e tenta criar → viola `@@unique([workspaceId, userId])` (P2002).
+  // Tratamos P2002 como sucesso silente: o aceite já foi processado em outra
+  // request da mesma sessão — UX final é "entrei no workspace", que é o que
+  // o user esperava.
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.upsert({
@@ -289,7 +325,7 @@ export async function acceptInvitationAction(
         create: {
           id: user.id,
           email: user.email!,
-          name: (user.user_metadata as Record<string, unknown>)?.name as string | undefined,
+          name: typeof user.user_metadata?.name === 'string' ? user.user_metadata.name : undefined,
           emailVerifiedAt: user.email_confirmed_at ? new Date(user.email_confirmed_at) : null,
         },
         update: {},
@@ -300,7 +336,10 @@ export async function acceptInvitationAction(
           workspaceId: invitation.workspaceId,
           userId: user.id,
           role: invitation.role,
-          invitedAt: new Date(),
+          // Semântica correta (M7#4 HIGH #8): `invitedAt` é quando o convite
+          // foi emitido, `joinedAt` quando aceito. Diferença alimenta métrica
+          // "tempo até aceite" no painel de admin em M7#5.
+          invitedAt: invitation.createdAt,
           joinedAt: new Date(),
         },
       });
@@ -329,6 +368,13 @@ export async function acceptInvitationAction(
       });
     });
   } catch (err) {
+    // P2002 = unique constraint. Cenário: duplo-clique perdeu a corrida.
+    // O member já foi criado pela outra request; UX correta = sucesso silente.
+    if (isPrismaErrorCode(err, 'P2002')) {
+      console.warn('[acceptInvitationAction] race detected (P2002) — already a member');
+      setWorkspaceCookie(invitation.workspaceId);
+      return { ok: true, workspaceId: invitation.workspaceId, redirectTo: '/dashboard' };
+    }
     console.error('[acceptInvitationAction] transaction failed', err);
     return { ok: false, error: 'Não foi possível aceitar o convite agora. Tente em instantes.' };
   }
@@ -360,7 +406,7 @@ export async function revokeInvitationAction(
   }
 
   const workspaceId = readWorkspaceCookie();
-  if (!workspaceId) {
+  if (!workspaceId || !isUuid(workspaceId)) {
     return { ok: false, error: 'Nenhum workspace ativo. Recarregue a página.' };
   }
 

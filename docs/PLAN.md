@@ -736,7 +736,7 @@ Terceira e última onda do M7#4. Removemos o `WorkspaceMockProvider` legado (cri
 - [x] [`apps/web/app/(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) + [`apps/web/app/(dashboard)/dashboard/page.tsx`](<apps/web/app/(dashboard)/dashboard/page.tsx>) + [`apps/web/app/(dashboard)/dashboard/dashboard-content.tsx`](<apps/web/app/(dashboard)/dashboard/dashboard-content.tsx>) — fluxo de `wizardCompleted` 100% server-side via `readWizardCookie()`, sem cookie client read.
 - [x] [`apps/web/app/layout.tsx`](apps/web/app/layout.tsx) — `<WorkspaceMockProvider>` removido do `<ThemeProvider>`. Comentário documenta a remoção e o padrão "sem provider — cada consumer pega direto da fonte canônica (cookies + Supabase Auth)".
 - [x] **Deletados** (arquivos mortos): [`apps/web/features/workspace/workspace-mock-provider.tsx`](apps/web/features/workspace/workspace-mock-provider.tsx), [`apps/web/lib/fixtures/workspaces.ts`](apps/web/lib/fixtures/workspaces.ts), [`apps/web/features/onboarding/components/steps/workspace-step.tsx`](apps/web/features/onboarding/components/steps/workspace-step.tsx).
-- [x] [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) — smoke endpoint cobrindo 33 asserts em 5 grupos: **slugify** (10 — diacritics, casos limite Unicode, truncate 64, non-string fallback), **ensureUniqueSlug** (5 — append -2, iteração, base livre, fallback "workspace", throw após 50), **schema** (5 — válido, < 2 chars, > 60, control chars, emoji+acento aceito), **initials** (6 — 1/2 palavras, vazio, espaços, lowercase→uppercase), **switcher-item** (8 — propagação + accent determinístico em índices 0/3/5). Não toca no banco — Server Actions exigem sessão real, cobertura E2E vai pro Playwright M7#6.
+- [x] [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) — smoke endpoint cobrindo **34 asserts em 5 grupos** (verificado ao vivo via `curl`: `HTTP 200 · 34/34 ✓`): **slugify** (10 — diacritics, casos limite Unicode, truncate 64, non-string fallback), **ensureUniqueSlug** (5 — append -2, iteração, base livre, fallback "workspace", throw após 50), **schema** (5 — válido, < 2 chars, > 60, control chars, emoji+acento aceito), **initials** (6 — 1/2 palavras, vazio, espaços, lowercase→uppercase), **switcher-item** (8 — propagação + accent determinístico em índices 0/3/5). Não toca no banco — Server Actions exigem sessão real, cobertura E2E vai pro Playwright M7#6.
 
 **Decisões registradas:**
 
@@ -757,7 +757,66 @@ Terceira e última onda do M7#4. Removemos o `WorkspaceMockProvider` legado (cri
 
 **Commit:** `feat(workspace): switcher real + cleanup do mock provider + smoke endpoint (M7#4 onda 3)`
 
-**Commit final do M7#4 (entregue só no último sub-PR):** já efetivado nos commits das 3 ondas — não há squash separado.
+**Entregas — M7#4 Pós-Onda 3 — Fixes do code review:**
+
+Após o merge das 3 ondas em local, code-reviewer agent revisou os ~4977 linhas adicionadas (61 arquivos) e levantou **4 CRÍTICO + 9 HIGH + 9 MEDIUM + 13 LOW**. Este commit endereça **2 CRÍTICO + 5 HIGH + 2 MEDIUM** mais impactantes — bloqueadores reais de produção. LOW + parte do MEDIUM ficam pra M7#5 (`requireRole` + audit log) ou M8+.
+
+| Severidade | ID  | Fix one-liner                                                                                                                                                                                                                           | Arquivo                                                     |
+| ---------- | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 🔴 CRÍTICO | #3  | Email enumeration leak em `inviteMemberAction` (2 queries timing-attackable → 1 query via relation filter `workspaceMember.findFirst({ user: { email } })`)                                                                             | `features/invitations/actions.ts`                           |
+| 🔴 CRÍTICO | #4  | Email header injection no subject (Resend repassa subject como header MIME — `\r\n` em `inviterName` permitiria adicionar `Bcc:`). Fix: `signupSchema.name` bloqueia control chars + template chama `stripControlChars` antes de compor | `features/auth/schemas.ts`, `lib/email/templates/invite.ts` |
+| 🟠 HIGH    | #5  | `AbortSignal.timeout(10_000)` não portável (Node 17.3+, alguns Edge runtimes não suportam) — trocado por `AbortController` + `setTimeout` manual com `clearTimeout` no `finally`                                                        | `lib/email/resend.ts`                                       |
+| 🟠 HIGH    | #6  | Race em `acceptInvitationAction` — duplo-clique disparava 2 transactions, segunda violava `@@unique([workspaceId, userId])` (P2002). Fix: catch P2002 e trata como sucesso silente — UX final idêntica                                  | `features/invitations/actions.ts`                           |
+| 🟠 HIGH    | #8  | `WorkspaceMember.invitedAt = now()` errado (igual a `joinedAt`); agora `invitation.createdAt` — diferença alimenta métrica "tempo até aceite" em M7#5                                                                                   | `features/invitations/actions.ts`                           |
+| 🟠 HIGH    | #9  | `safeNextParam` middleware sem length limit nem control-char guard — adicionado max 512 chars + bloqueio de `\r\n` (smuggling)                                                                                                          | `middleware.ts`                                             |
+| 🟠 HIGH    | #10 | Audit log de `member_invited` rodava ANTES do envio do email — se Resend falhasse, log dizia "convite enviado" mas convidado nunca recebia. Agora registra DEPOIS do email OK                                                           | `features/invitations/actions.ts`                           |
+| 🟡 MEDIUM  | #14 | Reinvite após `revoked`/`expired` reaproveitava token antigo (que podia ter vazado em logs/forwards) — agora gera novo via `crypto.randomUUID()` quando status anterior não era `pending`                                               | `features/invitations/actions.ts`                           |
+| 🟡 MEDIUM  | #18 | `escapeHtml` faltava `'` (apóstrofo) — adicionado escape pra `&#39;` (alinha com OWASP HTML escape)                                                                                                                                     | `lib/email/templates/invite.ts`                             |
+| 🟡 MEDIUM  | #19 | `inviteMemberAction` e `revokeInvitationAction` não validavam formato UUID do cookie de workspace antes de bater no Prisma — adicionado `isUuid()` guard como defense-in-depth contra cookie corrompido                                 | `features/invitations/actions.ts`                           |
+
+**Refatorações estruturais:**
+
+- [`apps/web/lib/utils/prisma-errors.ts`](apps/web/lib/utils/prisma-errors.ts) (novo) — `isPrismaErrorCode(err, code)` extraído de `workspace/actions.ts`. Era duplicado entre 2 actions; movido pra util **fora de `'use server'`** porque `'use server'` transforma exports em RPC callable do client (vetor de probing) — vale tanto pro próprio helper quanto pra qualquer função de utilidade futura.
+- [`apps/web/lib/utils/uuid.ts`](apps/web/lib/utils/uuid.ts) (novo) — `isUuid(value)` regex compartilhado; estava duplicado entre `features/workspace/actions.ts` e `features/invitations/queries.ts`.
+
+**Smoke endpoint ampliado:** [`apps/web/app/api/smoke-test/workspaces/route.ts`](apps/web/app/api/smoke-test/workspaces/route.ts) cresceu de **34 → 48 asserts em 8 grupos** (verificado ao vivo via `curl`: `HTTP 200 · 48/48 ✓`). Novos: `isUuid` (7 asserts: v4 lowercase/uppercase, empty, non-uuid, null, sql injection, extra chars), `signup-control` (3 asserts: clean name, `\r\n` header injection, bare `\n`), `invite-email` (5 asserts: subject sem `\r`/`\n`, subject sem `Bcc:`, HTML escapa `<script>`, HTML escapa `'` como `&#39;`).
+
+**Débitos do review que NÃO entraram aqui** (rolam pra M7#5 + M7#6):
+
+| Severidade | Origem    | Débito                                                                                                                                                                                                      | Vai pra |
+| ---------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 🔴 CRÍTICO | #1        | Smoke test cobrindo `safeNextParam` com query-strings codificadas (falso-positivo do review confirmado por trace manual)                                                                                    | M7#5    |
+| 🔴 CRÍTICO | #2        | Wrap invitations actions (`inviteMember`, `accept`, `revoke`) em `withWorkspace` — hoje funciona porque Prisma roda como postgres superuser que bypassa RLS, mas em produção com role restrito vai precisar | M7#5    |
+| 🟠 HIGH    | #7 / #11  | `User.email` é `@db.Citext` — query Prisma fragmenta se normalize sumir; documentar invariante OU usar `mode: 'insensitive'`                                                                                | M7#5    |
+| 🟠 HIGH    | #12       | `createWorkspaceAction` silenciosamente reaproveita workspace existente — input do user é dropped (UX wart aceitável pra agora)                                                                             | M7#5    |
+| 🟠 HIGH    | #13       | `searchParams.token` pode vir como array; primeiro normalizar antes de validar (defesa em profundidade)                                                                                                     | M7#5    |
+| 🟡 MEDIUM  | #15       | `/verify-email` redirect deleta token — perde fluxo do convidado novo que clica antes de verificar email                                                                                                    | M7#5    |
+| 🟡 MEDIUM  | #16       | `users.email` upsert defensivo com `??''` mascara bug do trigger — falhar barulhento seria mais honesto                                                                                                     | M7#5    |
+| 🟡 MEDIUM  | #17       | Cookie TTL de 30d descasa com sessão Supabase (refresh token expira antes) — middleware deveria validar membership do cookie                                                                                | M7#5    |
+| 🟡 MEDIUM  | #20       | `getMembershipCountForUser` chamado em cold-start sem cache em memória — 1 query Supabase REST por request quando cookie ausente                                                                            | M7#5    |
+| 🟡 MEDIUM  | #21       | `resolveHasWorkspace` chamado 2x na mesma request em fluxos como `/dashboard` — vale memoize com `Map<userId, Promise>`                                                                                     | M7#5    |
+| 🟡 LOW     | múltiplos | Cast unsafe de `user.user_metadata`, fonte Poppins não web-safe no email, `accept-form.tsx` double-render com `refresh+push`, etc                                                                           | M7#5+   |
+
+**Decisões registradas:**
+
+- **`isPrismaErrorCode` e `isUuid` em `lib/utils/`:** fora de `'use server'` files pra evitar virar RPC callable do client. Padrão consistente com `lib/auth/get-membership-count.ts` (que vive em `features/workspace/queries.ts` com `'server-only'`).
+- **Token rotation em re-invite:** chave de segurança — link antigo não deve sobreviver a `revoke` + re-emit. `crypto.randomUUID()` (Web Crypto API, runtime universal) gera no app side; default DB (`gen_random_uuid()`) só cobre o `create` path.
+- **Audit log depois do email:** trade-off entre "audit é fonte de verdade de tudo que tentamos" vs "audit é fonte de verdade do que realmente aconteceu". Escolhemos o segundo — alinha com leitura de compliance LGPD (CLAUDE.md §7.5).
+- **CRÍTICO #1 falso-positivo:** o review apontou que `?token=` viraria `%3F` no path por dupla codificação. Trace manual mostra que `searchParams.get('next')` retorna valor já decodificado e `new URL(next, req.url)` parsea `?token=…` corretamente como query (não como path). Mantemos como `not a bug` mas adicionamos smoke test em M7#5.
+- **Wrap em `withWorkspace` (CRÍTICO #2) deferred:** o ambiente atual (Prisma com `DATABASE_URL` apontando pra Supavisor pooler como `postgres` superuser) bypassa RLS por design — não é falha real hoje. Vira bloqueador quando endurecermos a connection string em produção com role restrito; aí M7#5 wrap-a junto com `requireRole`.
+
+**Validação local final:**
+
+- `pnpm -w typecheck` 5/5 ✓
+- `pnpm -w lint` 5/5 ✓
+- `pnpm -w format:check` ✓
+- `pnpm --filter @papopro/web build` 37 rotas ✓
+- Smoke endpoint `/api/smoke-test/workspaces` **48/48 ✓** (ao vivo via `curl`)
+- Login Supabase + onboarding + dashboard testados em browser (`NODE_USE_SYSTEM_CA=1 pnpm dev` no Windows pra contornar TLS strict; ver `docs/SETUP.md`)
+
+**Commit:** `fix(m7-invites-workspaces): aplicar fixes do code review (CRITICO + HIGH + MEDIUM)`
+
+**Commit final do M7#4 (entregue só no último sub-PR):** já efetivado nos 4 commits (3 ondas + fixes do review) — não há squash separado.
 
 ---
 

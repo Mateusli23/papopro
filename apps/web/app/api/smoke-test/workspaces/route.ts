@@ -12,9 +12,12 @@
  */
 import { NextResponse } from 'next/server';
 
+import { signupSchema } from '@/features/auth/schemas';
 import { toSwitcherItem, workspaceInitials } from '@/features/workspace/presentation';
 import { workspaceCreateSchema } from '@/features/workspace/schemas';
 import type { MembershipSummary } from '@/lib/auth/get-user';
+import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { isUuid } from '@/lib/utils/uuid';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
 
 interface CheckResult {
@@ -212,6 +215,117 @@ export async function GET(): Promise<NextResponse> {
 
   const item5 = toSwitcherItem(sampleMembership, 5);
   assert(results, 'switcher-item', 'accent wraps mod 4', item5.accent === 'success');
+
+  // ===========================================================================
+  // 6) isUuid — util compartilhado de validação UUID (M7#4 review)
+  // ===========================================================================
+  assert(results, 'isUuid', 'accepts v4 lowercase', isUuid('11111111-1111-4111-8111-111111111111'));
+  assert(results, 'isUuid', 'accepts uppercase', isUuid('AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'));
+  assert(results, 'isUuid', 'rejects empty', !isUuid(''));
+  assert(results, 'isUuid', 'rejects non-uuid string', !isUuid('not-a-uuid'));
+  assert(results, 'isUuid', 'rejects null', !isUuid(null));
+  assert(results, 'isUuid', 'rejects sql injection', !isUuid("'; DROP TABLE--"));
+  assert(
+    results,
+    'isUuid',
+    'rejects extra chars',
+    !isUuid('11111111-1111-1111-1111-111111111111-extra'),
+  );
+
+  // ===========================================================================
+  // 7) signupSchema control chars (M7#4 CRÍTICO #4 — email header injection)
+  // ===========================================================================
+  const cleanSignup = signupSchema.safeParse({
+    name: 'Maria Silva',
+    email: 'maria@example.com',
+    password: 'senha1234',
+    acceptTerms: true,
+  });
+  assert(results, 'signup-control', 'accepts clean name', cleanSignup.success);
+
+  const headerInjection = signupSchema.safeParse({
+    name: 'Maria\r\nBcc: attacker@evil.com',
+    email: 'maria@example.com',
+    password: 'senha1234',
+    acceptTerms: true,
+  });
+  assert(
+    results,
+    'signup-control',
+    'rejects \\r\\n in name (email header injection)',
+    !headerInjection.success &&
+      Boolean(headerInjection.error.issues.find((i) => /inválidos/i.test(i.message))),
+  );
+
+  const newlineOnly = signupSchema.safeParse({
+    name: 'Foo\nBar',
+    email: 'maria@example.com',
+    password: 'senha1234',
+    acceptTerms: true,
+  });
+  assert(
+    results,
+    'signup-control',
+    'rejects bare \\n in name',
+    !newlineOnly.success,
+    `expected fail, got ${JSON.stringify(newlineOnly)}`,
+  );
+
+  // ===========================================================================
+  // 8) renderInviteEmail — subject sanitiza control chars (CRÍTICO #4)
+  // ===========================================================================
+  const rendered = renderInviteEmail({
+    workspaceName: 'Acme Vendas',
+    inviterName: 'Maria\r\nBcc: attacker@evil.com',
+    role: 'Vendedor',
+    acceptUrl: 'http://localhost:3000/invite/accept?token=abc',
+    expiresInDays: 7,
+  });
+  assert(
+    results,
+    'invite-email',
+    'subject sem \\r ou \\n',
+    !rendered.subject.includes('\r') && !rendered.subject.includes('\n'),
+    `subject=${JSON.stringify(rendered.subject)}`,
+  );
+  assert(
+    results,
+    'invite-email',
+    'subject sem Bcc:',
+    !/\bBcc:/i.test(rendered.subject),
+    `subject=${JSON.stringify(rendered.subject)}`,
+  );
+
+  const xssInvite = renderInviteEmail({
+    workspaceName: '<script>alert(1)</script>',
+    inviterName: 'Maria',
+    role: 'Vendedor',
+    acceptUrl: 'http://localhost:3000/invite/accept?token=abc',
+    expiresInDays: 7,
+  });
+  assert(
+    results,
+    'invite-email',
+    'html escapa <script>',
+    !xssInvite.html.includes('<script>') && xssInvite.html.includes('&lt;script&gt;'),
+  );
+  assert(
+    results,
+    'invite-email',
+    "html escapa ' como &#39;",
+    !renderInviteEmail({
+      workspaceName: "O'Brien",
+      inviterName: 'Maria',
+      role: 'Vendedor',
+      acceptUrl: 'http://localhost:3000/invite/accept?token=abc',
+    }).html.includes("'O'Brien'") &&
+      renderInviteEmail({
+        workspaceName: "O'Brien",
+        inviterName: 'Maria',
+        role: 'Vendedor',
+        acceptUrl: 'http://localhost:3000/invite/accept?token=abc',
+      }).html.includes('O&#39;Brien'),
+  );
 
   // ===========================================================================
   // Resultado

@@ -62,13 +62,23 @@ export function renderInviteEmail(params: InviteEmailParams): InviteEmailRendere
   const { workspaceName, inviterName, role, acceptUrl, expiresInDays = 7 } = params;
   const roleLabel = ROLE_DESCRIPTIONS[role] ?? role.toLowerCase();
 
-  // Encoding de entidades HTML pra não vazar `<script>` se algum nome tiver
-  // caractere inválido. O escape é minimalista — só os 4 chars que importam.
+  // **Fix do review M7#4 CRÍTICO #4 — sanitização do subject:** Resend repassa
+  // o subject como header MIME, então `\r\n` no `inviterName` permitiria header
+  // injection (adicionar `Bcc:` arbitrário). Strip control chars antes de
+  // interpolar. `signupSchema` já bloqueia control chars no nome (M7#4
+  // hardening), mas duplicamos aqui — `workspaceName` vinha de `Workspace.name`
+  // que tem o mesmo guard, mas o template não deve depender disso.
+  const subjectInviter = stripControlChars(inviterName);
+  const subjectWorkspace = stripControlChars(workspaceName);
+
+  // Encoding de entidades HTML — defense-in-depth contra nome com `<script>`,
+  // emoji exótico ou caractere RTL que possa confundir parser de cliente de
+  // email.
   const safeWorkspace = escapeHtml(workspaceName);
   const safeInviter = escapeHtml(inviterName);
   const safeRole = escapeHtml(role);
 
-  const subject = `${inviterName} convidou você para o workspace ${workspaceName} no PapoPro`;
+  const subject = `${subjectInviter} convidou você para o workspace ${subjectWorkspace} no PapoPro`;
 
   const text = [
     `Olá!`,
@@ -150,17 +160,33 @@ export function renderInviteEmail(params: InviteEmailParams): InviteEmailRendere
 }
 
 /**
- * Escape mínimo de HTML — só os 4 chars que podem virar tag/atributo.
+ * Escape de HTML — 5 chars que podem virar tag/atributo (OWASP HTML escape).
  *
- * Não usamos `DOMPurify` ou similar porque os inputs vêm de campos
- * controlados (nome do workspace já validado pelo Zod, nome do convidador
- * vem do `users.name`). É defense-in-depth contra emoji exótico ou caractere
- * RTL que poderia confundir o parser do cliente de email.
+ * **Fix M7#4 review MEDIUM #18:** apóstrofo (`'`) também escapado pra cobrir
+ * atributos em aspas simples (não usamos no template hoje, mas defense-in-
+ * depth contra mudanças futuras + alinhamento com OWASP).
  */
 function escapeHtml(input: string): string {
   return input
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Remove control chars (incluindo `\r\n`) — usado pra sanitizar valores que
+ * vão pro subject do email (header MIME — `\n` separa headers). `signupSchema`
+ * e `workspaceCreateSchema` já bloqueiam na entrada, mas duplicamos aqui pra
+ * o template não confiar em invariantes externos (CLAUDE.md §7.2 — defense-
+ * in-depth aplicado a sanitização também).
+ */
+function stripControlChars(input: string): string {
+  let out = '';
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    if (code >= 32 && code !== 127) out += input[i];
+  }
+  return out;
 }

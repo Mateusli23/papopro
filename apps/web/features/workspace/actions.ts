@@ -28,6 +28,8 @@ import {
   setWizardCookie,
   setWorkspaceCookie,
 } from '@/lib/auth/workspace-cookie';
+import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
+import { isUuid } from '@/lib/utils/uuid';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
 
 import { workspaceCreateSchema, type WorkspaceCreateInput } from './schemas';
@@ -190,28 +192,9 @@ export async function createWorkspaceAction(
   return { ok: true, workspaceId, redirectTo: '/dashboard' };
 }
 
-/**
- * Duck-type check pra códigos de erro do Prisma (P2002 unique, P2003 FK, ...).
- *
- * Evita `instanceof Prisma.PrismaClientKnownRequestError` porque a classe não
- * está exportada no client placeholder gerado sem `prisma generate` (cenário
- * documentado em M7#1). Os códigos `Pxxxx` são parte do contrato público do
- * Prisma — checagem por código é estável.
- */
-function isPrismaErrorCode(err: unknown, code: string): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === code
-  );
-}
-
 // =============================================================================
 // Onda 3 — switcher real + flag de wizard
 // =============================================================================
-
-const WORKSPACE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type SetActiveWorkspaceResult =
   | { ok: true; workspaceId: string }
@@ -235,7 +218,7 @@ export type SetActiveWorkspaceResult =
 export async function setActiveWorkspaceAction(
   workspaceId: string,
 ): Promise<SetActiveWorkspaceResult> {
-  if (typeof workspaceId !== 'string' || !WORKSPACE_ID_REGEX.test(workspaceId)) {
+  if (!isUuid(workspaceId)) {
     return { ok: false, error: 'Workspace inválido.' };
   }
 
