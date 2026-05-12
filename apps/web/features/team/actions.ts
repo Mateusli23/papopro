@@ -247,7 +247,10 @@ type ResendInviteTxResult =
       workspaceName: string;
       inviterName: string;
     }
-  | { ok: false; code: 'not_found' };
+  | { ok: false; code: 'not_found' | 'cooldown'; cooldownSeconds?: number };
+
+/** Tempo mínimo entre dois reenvios do MESMO convite (HIGH #2 do review M7#5). */
+const RESEND_COOLDOWN_SECONDS = 60;
 
 /**
  * `resendInviteAction` — Owner/Admin reenvia email do convite pending.
@@ -256,6 +259,18 @@ type ResendInviteTxResult =
  * `inviteMemberAction` (que gera token novo pra invalidar links vazados), aqui
  * o link continua o mesmo — UX "o email não chegou, manda de novo o mesmo
  * link". Só atualiza `expires_at` pra estender o TTL.
+ *
+ * **Rate-limit (fix do review M7#5 HIGH #2):** cooldown server-side de 60s
+ * entre reenvios do MESMO convite. Sem isso, Owner click-spam dispara N
+ * emails via Resend — spam pro convidado + consumo de cota Resend
+ * cross-tenant (a API key Resend é compartilhada entre todos os workspaces
+ * do projeto).
+ *
+ * **Proxy do "lastSentAt" via `expiresAt`:** o schema atual não tem coluna
+ * `last_sent_at` (evitamos migration neste PR). Como `expiresAt = lastSentAt
+ * + INVITATION_TTL_DAYS` em todo `upsert`/`update` que envia email, o
+ * `lastSentAt` é derivável retroativamente. Em M8+ quando uma coluna
+ * dedicada entrar, trocar a aritmética por leitura direta.
  *
  * **Sem audit log.** Re-envio é UX repetível, não altera estado de
  * autorização. O envio original já foi logado como `member_invited`.
@@ -282,10 +297,24 @@ export async function resendInviteAction(input: ResendInviteInput): Promise<Team
           email: true,
           role: true,
           token: true,
+          expiresAt: true,
           workspace: { select: { name: true } },
         },
       });
       if (!invite) return { ok: false, code: 'not_found' };
+
+      // Cooldown check (HIGH #2): "última vez que foi enviado" = `expiresAt`
+      // (que sempre é setado em `now + TTL` no envio) menos TTL. Janela
+      // de 60s impede click-spam server-side.
+      const lastSentAt = invite.expiresAt.getTime() - INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000;
+      const secondsSinceLastSent = Math.floor((Date.now() - lastSentAt) / 1000);
+      if (secondsSinceLastSent < RESEND_COOLDOWN_SECONDS) {
+        return {
+          ok: false,
+          code: 'cooldown',
+          cooldownSeconds: RESEND_COOLDOWN_SECONDS - secondsSinceLastSent,
+        };
+      }
 
       await tx.invitation.update({
         where: { id: invite.id },
@@ -311,6 +340,13 @@ export async function resendInviteAction(input: ResendInviteInput): Promise<Team
   );
 
   if (!result.ok) {
+    if (result.code === 'cooldown') {
+      const sec = result.cooldownSeconds ?? RESEND_COOLDOWN_SECONDS;
+      return {
+        ok: false,
+        error: `Aguarde ${sec}s antes de reenviar esse convite.`,
+      };
+    }
     return { ok: false, error: 'Convite não encontrado ou já foi processado.' };
   }
 
