@@ -89,6 +89,15 @@ export function setWorkspaceCookieOnResponse(response: NextResponse, workspaceId
 }
 
 /**
+ * Edge middleware limpa o cookie (M7#5 fix MEDIUM #17) — usado quando o
+ * cookie aponta pra workspace que o user não é mais membro. Equivalente Edge
+ * do `clearWorkspaceCookie` que usa `cookies()` de `next/headers`.
+ */
+export function clearWorkspaceCookieOnResponse(response: NextResponse): void {
+  response.cookies.delete(WORKSPACE_COOKIE_NAME);
+}
+
+/**
  * Cookie de "primeira visita ao dashboard" — flag de UX local (M7#4 Onda 3).
  *
  * Substitui o `papopro_workspace_mock_wizard_completed` do legado mock. Vive
