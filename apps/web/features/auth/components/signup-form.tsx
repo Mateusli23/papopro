@@ -11,23 +11,32 @@ import { Controller, useForm } from 'react-hook-form';
 import { Button, Checkbox } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
-
+import { signupAction } from '../actions';
 import { signupSchema, type SignupInput } from '../schemas';
 
 import { FormField } from './form-field';
 
+interface SignupFormProps {
+  /** Path relativo pra retomar após confirmação de email (ex: `/invite/accept?token=…`). */
+  next?: string;
+  /** Email pré-preenchido (UX de convite — trava o campo pra não desviar do fluxo). */
+  prefilledEmail?: string;
+}
+
 /**
- * Form de cadastro (signup). Validação Zod + RHF, mesma forma do login.
+ * Form de cadastro (signup). Validação Zod + RHF, submit via Server Action
+ * `signupAction` (M7#3, ampliado em M7#4 Onda 2 com `next` opcional).
  *
- * Submit mockado (M3): cria nada, só redireciona para `/onboarding`, onde o
- * usuário nomeia o primeiro workspace. Em M7 vira `supabase.auth.signUp` +
- * envio de email de confirmação via Resend; o redirect passa a ser para
- * `/verify-email` antes do onboarding.
+ * Fluxo:
+ *  1. RHF valida (Zod) → submit chamado
+ *  2. `signupAction(data, { next })` → Supabase signUp + email de confirmação
+ *     + cookies httpOnly. `next` vai pro `emailRedirectTo` (volta pro convite
+ *     depois de confirmar email).
+ *  3. Sucesso: redirect pra `/verify-email`.
+ *  4. Erro: `setSubmitError(result.error)` — pt-BR já traduzido na action.
  */
-export function SignupForm() {
+export function SignupForm({ next, prefilledEmail }: SignupFormProps = {}) {
   const router = useRouter();
-  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -37,21 +46,37 @@ export function SignupForm() {
     formState: { errors, isSubmitting },
   } = useForm<SignupInput>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { name: '', email: '', password: '', acceptTerms: false },
+    defaultValues: {
+      name: '',
+      email: prefilledEmail ?? '',
+      password: '',
+      acceptTerms: false,
+    },
     mode: 'onTouched',
   });
 
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
-    // Mock: simula latência da rede. Em M7, troca por Server Action real.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Bloqueia divergência entre email pré-preenchido (do convite) e o que
+    // veio submetido. Defense-in-depth: o input pode estar `readOnly` mas
+    // DevTools consegue alterar — server-side garante.
+    if (prefilledEmail && data.email.toLowerCase() !== prefilledEmail.toLowerCase()) {
+      setSubmitError(
+        'Para aceitar o convite, crie a conta com o email convidado. Para outro email, peça um novo convite.',
+      );
+      return;
+    }
 
-    // Marca como "logado" pra destravar /onboarding (middleware libera). Em
-    // M7 quem vai entrar primeiro é o /verify-email, mas a UX intermediária
-    // (signup → onboarding) já vale como mock pra fechar o fluxo de M3.
-    signIn(data.email);
-    router.push('/onboarding');
+    const result = await signupAction(data, next ? { next } : undefined);
+
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+
+    router.refresh();
+    router.push(result.redirectTo ?? '/verify-email');
   });
 
   return (
@@ -94,6 +119,11 @@ export function SignupForm() {
           autoCorrect="off"
           spellCheck={false}
           placeholder="voce@empresa.com"
+          // `readOnly` em vez de `disabled`: campo continua submetido pelo
+          // form (disabled exclui do form data), só não é editável. UX clara
+          // que esse é o email do convite — usuário não confunde.
+          readOnly={Boolean(prefilledEmail)}
+          hint={prefilledEmail ? 'Email do convite — crie a conta com esse endereço.' : undefined}
           error={errors.email?.message}
           {...register('email')}
         />
@@ -173,7 +203,10 @@ export function SignupForm() {
 
       <p className="text-muted-foreground text-body text-center">
         Já tem conta?{' '}
-        <Link href="/login" className="text-primary font-medium hover:underline">
+        <Link
+          href={next ? `/login?next=${encodeURIComponent(next)}` : '/login'}
+          className="text-primary font-medium hover:underline"
+        >
           Entrar
         </Link>
       </p>

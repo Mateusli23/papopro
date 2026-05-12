@@ -4,15 +4,19 @@ import * as React from 'react';
 
 import Link from 'next/link';
 
+import toast from 'react-hot-toast';
+
 import { Button } from '@papopro/ui';
 import { ArrowLeft, CheckCircle2, Loader2, Mail } from '@papopro/ui/icons';
 
+import { resendVerificationAction } from '@/features/auth/actions';
+
 interface VerifyEmailCardProps {
   /**
-   * Email exibido no texto. Em M3 vem opcionalmente do `searchParams`
-   * (ex: `/verify-email?email=ana@empresa.com`); quando ausente, mostramos
-   * mensagem genérica. Em M7 a Server Action de signup já redireciona com
-   * o email no query.
+   * Email exibido no texto. Vem opcionalmente do `searchParams`. Em M7#3
+   * o `signupAction` redireciona pra `/verify-email` sem query (mantém URL
+   * limpa) — o card mostra a mensagem genérica e o `resendVerificationAction`
+   * descobre o email a partir da sessão (já criada no signUp).
    */
   email?: string;
 }
@@ -22,12 +26,14 @@ const RESEND_COOLDOWN_SECONDS = 60;
 /**
  * Tela de espera por confirmação de email. UX:
  *  - Estado inicial: explica que enviamos o email, oferece "Reenviar" com
- *    countdown de 60s pra evitar abuso.
- *  - Após clicar em "Reenviar": estado loading rápido (mock), depois mostra
- *    confirmação "email reenviado" e reinicia o countdown.
+ *    countdown de 60s pra evitar abuso (alinhado ao rate-limit do Supabase).
+ *  - Após "Reenviar": loading, depois confirmação "email reenviado" e
+ *    countdown reinicia.
  *
- * Em M7, o handler do reenviar vira Server Action chamando
- * `supabase.auth.resend({ type: 'signup', email })`. Hoje é mockado.
+ * **Handler real (M7#3):** chama `resendVerificationAction` que lê o email
+ * da sessão atual e dispara `supabase.auth.resend({ type: 'signup' })`. Se
+ * Supabase devolver rate limit, mostramos via toast e mantemos o countdown
+ * (não reinicia o timer).
  */
 export function VerifyEmailCard({ email }: VerifyEmailCardProps) {
   const [secondsLeft, setSecondsLeft] = React.useState(RESEND_COOLDOWN_SECONDS);
@@ -54,8 +60,16 @@ export function VerifyEmailCard({ email }: VerifyEmailCardProps) {
 
   async function handleResend() {
     setResending(true);
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const result = await resendVerificationAction();
     setResending(false);
+
+    if (!result.ok) {
+      toast.error(result.error);
+      // Sem reset do countdown: usuário pode tentar de novo após o tempo
+      // restante ou ajustar caixa de spam.
+      return;
+    }
+
     setResentAt(Date.now());
     setSecondsLeft(RESEND_COOLDOWN_SECONDS);
   }

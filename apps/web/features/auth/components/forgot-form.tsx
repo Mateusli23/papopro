@@ -10,19 +10,18 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@papopro/ui';
 import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, Loader2 } from '@papopro/ui/icons';
 
+import { forgotAction } from '../actions';
 import { forgotPasswordSchema, type ForgotPasswordInput } from '../schemas';
 
 import { FormField } from './form-field';
 
 /**
- * Form de "esqueci a senha". Pede o email e mostra estado de confirmação
- * ("se existe conta com esse email, enviamos um link") — propositalmente
- * agnóstico sobre existência da conta para não vazar quais emails têm conta
- * (boa prática anti-enumeração de usuários).
+ * Form de "esqueci a senha". Submit via Server Action `forgotAction` (M7#3).
  *
- * Mockado em M3: submit espera 600 ms e troca pra tela de confirmação. Em M7
- * vira Server Action `supabase.auth.resetPasswordForEmail` + dispatch de
- * email via Resend.
+ * **Anti-enumeração**: a action sempre retorna `ok: true` mesmo quando o
+ * email não está cadastrado — não dá pra usar essa tela pra descobrir quem
+ * tem conta no produto (LGPD §7.5). A UX correspondente mostra "se existir
+ * uma conta com esse email, enviamos um link" no estado pós-envio.
  */
 export function ForgotForm() {
   const [submittedEmail, setSubmittedEmail] = React.useState<string | null>(null);
@@ -32,17 +31,23 @@ export function ForgotForm() {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
-    getValues,
   } = useForm<ForgotPasswordInput>({
     resolver: zodResolver(forgotPasswordSchema),
     defaultValues: { email: '' },
     mode: 'onTouched',
   });
 
-  const onSubmit = handleSubmit(async () => {
+  const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    setSubmittedEmail(getValues('email'));
+
+    const result = await forgotAction(data);
+
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+
+    setSubmittedEmail(data.email);
   });
 
   // Estado pós-envio: confirmação genérica (não revela se a conta existe).

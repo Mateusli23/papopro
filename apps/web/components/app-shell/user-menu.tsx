@@ -14,22 +14,25 @@ import {
 } from '@papopro/ui';
 import { LifeBuoy, LogOut, Settings, User } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { logoutAction } from '@/features/auth/actions';
+import { useUser } from '@/lib/auth/use-user';
 import { FAKE_USER } from '@/lib/fixtures/user';
 
 /**
  * Avatar do topbar com menu de perfil.
  *
- * Identidade exibida: prioriza o `AuthMockProvider` (email digitado no
- * login/signup) e cai pro `FAKE_USER` se a sessão ainda não hidratou ou
- * se algum dev forçou estado vazio. Em M7 troca por `useUser()` Supabase.
+ * **Identidade real (M7#3):** `useUser()` lê a sessão Supabase httpOnly via
+ * `@supabase/ssr`. Enquanto `loading`, mostra `FAKE_USER` como skeleton —
+ * evita o flash "Avatar?? · @??" durante hidratação. Sem dado real, segue
+ * mostrando fixture (dev-only — em prod o middleware bloqueia antes).
  *
- * O item "Sair" chama `signOut` — limpa cookies, manda pra `/login`. O
- * middleware impede revisita ao dashboard sem novo login.
+ * "Sair" chama a Server Action `logoutAction` (revalida cache + redirect
+ * pra /login). Não precisa `router.push` — a action faz `redirect()` no
+ * server, encerrando a navegação atual.
  */
 export function UserMenu() {
-  const { user, signOut } = useAuthMock();
-  const displayName = user?.name ?? FAKE_USER.name;
+  const { loading, user, displayName: real } = useUser();
+  const displayName = real ?? FAKE_USER.name;
   const displayEmail = user?.email ?? FAKE_USER.email;
   const initials =
     (displayName.match(/\b([A-Za-zÀ-ÿ])/g) ?? []).slice(0, 2).join('').toUpperCase() ||
@@ -68,7 +71,13 @@ export function UserMenu() {
           <LifeBuoy /> Suporte
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={signOut} className="text-destructive focus:text-destructive">
+        <DropdownMenuItem
+          onSelect={() => {
+            void logoutAction();
+          }}
+          className="text-destructive focus:text-destructive"
+          disabled={loading}
+        >
           <LogOut /> Sair
         </DropdownMenuItem>
       </DropdownMenuContent>

@@ -11,26 +11,29 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@papopro/ui';
 import { AlertCircle, ArrowRight, Loader2 } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
-
+import { loginAction } from '../actions';
 import { loginSchema, type LoginInput } from '../schemas';
 
 import { FormField } from './form-field';
 
+interface LoginFormProps {
+  /** Path relativo pra retomar após login (ex: `/invite/accept?token=…`). */
+  next?: string;
+}
+
 /**
- * Form de login. Validação client-side com Zod + React Hook Form.
+ * Form de login. Validação client-side com Zod + RHF, submit via Server
+ * Action `loginAction` (M7#3, ampliado em M7#4 Onda 2 pra honrar `next`).
  *
- * Estado da navegação **mockado** (M3): o submit espera ~600 ms para mostrar
- * o loading no botão e redireciona pro dashboard sem checar credenciais. Em
- * M7 esse handler vira Server Action chamando `supabase.auth.signInWithPassword`,
- * mas a forma do componente não muda — o RHF e os schemas continuam.
- *
- * O slot `submitError` já está pronto para renderizar erros vindos do servidor
- * (ex: "Email ou senha incorretos") — basta setar via `setSubmitError`.
+ * Fluxo:
+ *  1. RHF valida (Zod) → submit chamado
+ *  2. `loginAction(data)` → Supabase signInWithPassword + cookies httpOnly
+ *  3. Sucesso: redireciona pra `next` (se safe) ou `result.redirectTo`.
+ *     Middleware corrige rota se for o caso (sem workspace → /onboarding).
+ *  4. Erro: `setSubmitError(result.error)` — pt-BR já traduzido na action.
  */
-export function LoginForm() {
+export function LoginForm({ next }: LoginFormProps = {}) {
   const router = useRouter();
-  const { signIn } = useAuthMock();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const {
@@ -43,17 +46,26 @@ export function LoginForm() {
     mode: 'onTouched',
   });
 
+  // Open-redirect guard (mesmo padrão do middleware/callback). Em raros
+  // casos `next` chega como string absoluta ou `//evil.com` — rebaixamos
+  // pro default. Só aceita path relativo começando com `/` sem `//`.
+  const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+
   const onSubmit = handleSubmit(async (data) => {
     setSubmitError(null);
 
-    // Mock: simula latência da rede pra mostrar o loading do botão.
-    // Em M7, troca por Server Action real.
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    const result = await loginAction(data);
 
-    // Marca o cookie de "logado" antes de navegar — o middleware checa esse
-    // cookie no próximo render e libera /dashboard sem redirect pra /login.
-    signIn(data.email);
-    router.push('/dashboard');
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+
+    // `router.refresh()` antes do push força o middleware a re-rodar com a
+    // sessão recém-criada — sem isso, o primeiro render do destino pode
+    // ainda enxergar `user=null`.
+    router.refresh();
+    router.push(safeNext ?? result.redirectTo ?? '/dashboard');
   });
 
   return (
@@ -124,7 +136,10 @@ export function LoginForm() {
 
       <p className="text-muted-foreground text-body text-center">
         Ainda não tem conta?{' '}
-        <Link href="/signup" className="text-primary font-medium hover:underline">
+        <Link
+          href={safeNext ? `/signup?next=${encodeURIComponent(safeNext)}` : '/signup'}
+          className="text-primary font-medium hover:underline"
+        >
           Criar conta grátis
         </Link>
       </p>

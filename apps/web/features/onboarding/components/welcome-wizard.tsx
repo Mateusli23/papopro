@@ -7,20 +7,25 @@ import toast from 'react-hot-toast';
 import { Button, Dialog, DialogContent, DialogDescription, DialogTitle } from '@papopro/ui';
 import { ArrowLeft, ArrowRight, Check, Loader2, Sparkles } from '@papopro/ui/icons';
 
-import { useAuthMock } from '@/lib/auth/auth-mock-provider';
+import { markWizardCompletedAction } from '@/features/workspace/actions';
 
 import { AgentStep } from './steps/agent-step';
 import { CsvStep } from './steps/csv-step';
 import { WhatsappStep } from './steps/whatsapp-step';
-import { WorkspaceStep } from './steps/workspace-step';
 
 interface WelcomeWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * **M7#4 Onda 3:** o step "Confirme seu workspace" saiu — a criação de
+ * workspace acontece em `/onboarding` (form dedicado) antes do user chegar
+ * no dashboard. O wizard aqui é a "first-run experience" *pós-workspace*
+ * com os 3 setups iniciais (WhatsApp, agente, CSV). Reduzir o número de
+ * steps é UX win — usuário foca no que ainda falta configurar.
+ */
 const STEPS = [
-  { id: 'workspace', title: 'Confirme seu workspace' },
   { id: 'whatsapp', title: 'Conecte o WhatsApp' },
   { id: 'agent', title: 'Crie seu primeiro agente IA' },
   { id: 'csv', title: 'Importe seus leads' },
@@ -29,7 +34,6 @@ const STEPS = [
 type StepId = (typeof STEPS)[number]['id'];
 
 export interface WizardState {
-  workspaceName: string;
   whatsappConnected: boolean;
   agentTemplate: string | null;
   agentName: string;
@@ -37,7 +41,6 @@ export interface WizardState {
 }
 
 const INITIAL_STATE: WizardState = {
-  workspaceName: '',
   whatsappConnected: false,
   agentTemplate: null,
   agentName: '',
@@ -54,18 +57,17 @@ const INITIAL_STATE: WizardState = {
  *    e expõe seu próprio botão "Continuar"/"Pular" via `onAdvance`/`onSkip`.
  *
  * Conclusão (qualquer combinação):
- *  - Concluir o último passo → `markWizardCompleted()` no AuthMockProvider
+ *  - Concluir o último passo → `markWizardCompleted()` no WorkspaceMockProvider
  *  - "Pular este passo" no último → mesmo efeito (wizard não reabre)
  *  - Fechar pelo X / Esc → mesmo efeito (decisão de UX: o usuário viu uma
  *    vez, não enchemos a vista de novo)
  *
- * Em marcos posteriores (M7 onboarding real, M9 QR real, M11 agentes reais)
- * cada step troca o stub por chamadas reais — a forma `state ↔ onChange`
- * permanece.
+ * Em M7#4 o WorkspaceMockProvider sai e este wizard vira o caminho real de
+ * criação de workspace (insert em `workspaces` + `workspace_members` com role
+ * Owner). A forma `state ↔ onChange` permanece.
  */
 export function WelcomeWizard({ open, onOpenChange }: WelcomeWizardProps) {
-  const { markWizardCompleted } = useAuthMock();
-  const [currentStep, setCurrentStep] = React.useState<StepId>('workspace');
+  const [currentStep, setCurrentStep] = React.useState<StepId>('whatsapp');
   const [state, setState] = React.useState<WizardState>(INITIAL_STATE);
   const [finishing, setFinishing] = React.useState(false);
 
@@ -89,10 +91,11 @@ export function WelcomeWizard({ open, onOpenChange }: WelcomeWizardProps) {
 
   async function finish(skipped: boolean) {
     setFinishing(true);
-    // Pequeno delay pra mostrar o estado de "concluindo" — UX honesta:
-    // dá tempo do usuário entender que algo foi salvo.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    markWizardCompleted();
+    // `markWizardCompletedAction` seta cookie httpOnly `papopro_wizard_completed=1`
+    // (1 ano). Substitui o `markWizardCompleted` do `WorkspaceMockProvider` que
+    // gravava cookie via document.cookie no client (M7#4 Onda 3 — backend
+    // verdadeiro pro flag).
+    await markWizardCompletedAction();
     setFinishing(false);
     onOpenChange(false);
     toast.success(skipped ? 'Você pode voltar quando quiser.' : 'Tudo pronto pra começar.');
@@ -125,7 +128,7 @@ export function WelcomeWizard({ open, onOpenChange }: WelcomeWizardProps) {
                   Bem-vindo ao PapoPro
                 </DialogTitle>
                 <DialogDescription className="text-muted-foreground text-body">
-                  Em 4 passos rápidos a gente deixa seu workspace operacional.
+                  Em 3 passos rápidos a gente deixa seu workspace operacional.
                 </DialogDescription>
               </div>
             </div>
@@ -140,12 +143,6 @@ export function WelcomeWizard({ open, onOpenChange }: WelcomeWizardProps) {
         </header>
 
         <div className="flex flex-col gap-6 p-6">
-          {currentStep === 'workspace' && (
-            <WorkspaceStep
-              value={state.workspaceName}
-              onChange={(v) => patchState({ workspaceName: v })}
-            />
-          )}
           {currentStep === 'whatsapp' && (
             <WhatsappStep
               connected={state.whatsappConnected}
