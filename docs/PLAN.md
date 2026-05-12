@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                         | PR                                                   |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------- | ---------------------------------------------------- |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits)  | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | `m7-rbac-audit-team`    | ✅ entregue (7 commits, fechou débitos PR #39) | _aberto após merge local_                            |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                    | —                                                    |
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                         | PR                                                   |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits)                  | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | `m7-rbac-audit-team`    | ✅ entregue (onda 1: 7 commits + onda 2: 4 commits pós-review) | _aberto após merge local_                            |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                    | —                                                    |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -871,7 +871,7 @@ Branch `m7-rbac-audit-team`. PR único monolítico fechando 4 frentes coesas + 9
   5. Logout — `audit_logs.user_logged_out` com workspaceId correto
   6. Login com Vendedor — `/settings/team` mostra read-only (sem botões de ação)
 
-**Commits (7 na branch, em ordem):**
+**Commits onda 1 (7 commits, em ordem):**
 
 1. `feat(rbac): require-role helper + refactor invitations actions (M7#5 frente A)`
 2. `fix(m7#5): débitos rápidos do review — token array, citext invariant, user.email throw`
@@ -880,6 +880,23 @@ Branch `m7-rbac-audit-team`. PR único monolítico fechando 4 frentes coesas + 9
 5. `feat(team): features/team backend + audit member_role_changed/removed`
 6. `feat(settings/team): UI real consumindo features/team (Server Component + Client)`
 7. `fix(middleware): preserve ?token= em verify-email + valida cookie + cache TTL + safeNextParam smoke`
+
+**Entregas — M7#5 Onda 2 — fixes pós-review do PR #39:**
+
+Após onda 1 ser revisada, mais 3 débitos HIGH foram identificados (todos comportamento real de produção, não estético). Onda 2 fecha eles na mesma branch antes do PR ir pro `dev`.
+
+- [x] **HIGH #1 — `logLoginEvent` confiava no cookie de workspace de outra sessão** ([apps/web/features/auth/actions.ts](apps/web/features/auth/actions.ts)). Cenário: user A logado em workspace W1 → troca de conta no mesmo browser → user B faz login. Cookie `papopro_workspace_id` ainda é W1 (do user A), mas userId do request é B. Gravava audit `(workspaceId=W1, userId=B)` em tenant que B não pertence. Em produção com RLS restritiva, INSERT é rejeitado e login deixa de ser auditado. Em dev (superuser bypassa RLS), polui W1 com evento órfão. **Solução:** `logLoginEvent` sempre busca via `firstMembership` ordenado por `createdAt asc` do user que acabou de entrar — heurística simples até o switcher persistir "última seleção" em coluna do banco. Multi-workspace: audit vai sempre pro mais antigo (aceitável porque é login, não ação de domínio).
+- [x] **HIGH #2 — `resendInviteAction` sem rate-limit** ([apps/web/features/team/actions.ts](apps/web/features/team/actions.ts)). Owner click-spam disparava N emails Resend pro mesmo convidado, consumindo cota Resend cross-tenant (a API key é compartilhada entre todos os workspaces). **Solução:** cooldown server-side de 60s entre reenvios do MESMO convite, proxy do `lastSentAt` via aritmética `expiresAt - INVITATION_TTL_DAYS` (evita migration nova). Erro retornado em pt-BR ("Aguarde Xs antes de reenviar esse convite.") cai no toast genérico do team-view — sem mudança de UI necessária. Em M8+ quando uma coluna `last_sent_at` dedicada entrar, trocar a aritmética por leitura direta.
+- [x] **HIGH #3 — Ações destrutivas em /settings/team sem confirmação** ([apps/web/app/(dashboard)/settings/team/team-view.tsx](<apps/web/app/(dashboard)/settings/team/team-view.tsx>)). Clique acidental no dropdown removia membro / cancelava convite / rebaixava papel sem aviso, sem desfazer. **Solução:** ConfirmContext + `useConfirm()` hook evita prop drilling 3 níveis abaixo (TeamView → MembersSection → MemberRow → MemberActions). Cada ação destrutiva chama `useConfirm({ title, description, confirmLabel, destructive: true, onConfirm })`. Ações que NÃO passam por confirm (são reversíveis ou repetíveis): Promover, Convidar novo, Reenviar convite. Ações que passam: Remover membro, Cancelar convite, Rebaixar papel. `confirmPending` trava o cancelar enquanto a Server Action roda — evita fechar o dialog no meio da request.
+
+**Commits onda 2 (4 commits, em ordem):**
+
+8. `fix(m7-rbac-audit-team): logLoginEvent resolve workspaceId via firstMembership (HIGH #1)` (`ddb8f3a`)
+9. `fix(m7-rbac-audit-team): cooldown 60s em resendInviteAction (HIGH #2)` (`f9538a8`)
+10. `feat(m7-rbac-audit-team): confirm dialogs em ações destrutivas de /settings/team (HIGH #3)` (`b153da3`)
+11. `chore(claude): ajustar permissões locais de Bash + Read sob WSL` (`06a870c`)
+
+**Validação local pós-onda 2:** `pnpm -w typecheck` 5/5 ✓, `pnpm --filter @papopro/web lint` ✓ (lint-staged em cada commit já garantiu prettier + eslint --fix).
 
 **Commit:** `feat(m7-rbac-audit-team): rbac + audit + /settings/team + débitos PR #39 (M7#5)`
 
