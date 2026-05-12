@@ -19,8 +19,12 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { clearWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { prisma } from '@papopro/db';
+
+import { getRequestAuditContext } from '@/lib/audit/context';
+import { clearWorkspaceCookie, readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { isUuid } from '@/lib/utils/uuid';
 
 import {
   forgotPasswordSchema,
@@ -138,7 +142,7 @@ export async function loginAction(input: LoginInput): Promise<AuthActionResult> 
   }
 
   const supabase = createSupabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email.toLowerCase().trim(),
     password: parsed.data.password,
   });
@@ -159,7 +163,57 @@ export async function loginAction(input: LoginInput): Promise<AuthActionResult> 
     return { ok: false, error: 'Não foi possível entrar agora. Tente de novo em instantes.' };
   }
 
+  // Audit log `user_logged_in` (M7#5). Resolve workspaceId via cookie ativo OU
+  // primeiro membership do user. Se nenhum dos dois retorna (user sem
+  // workspace, pré-onboarding), skip silente — não polui audit_logs com
+  // rows órfãs sem workspace.
+  await logLoginEvent(data.user?.id);
+
   return { ok: true, redirectTo: '/dashboard' };
+}
+
+/**
+ * Helper interno — não exportado. Resolve workspaceId pra associar o evento
+ * `user_logged_in` e grava na `audit_logs`. Non-fatal: falha de audit nunca
+ * bloqueia login (UX: "consegui logar mas algo no banco quebrou" = sessão
+ * útil; o audit é guardrail, não gating).
+ */
+async function logLoginEvent(userId: string | undefined): Promise<void> {
+  if (!userId) return;
+
+  const cookieWs = readWorkspaceCookie();
+  let workspaceId: string | null = cookieWs && isUuid(cookieWs) ? cookieWs : null;
+
+  if (!workspaceId) {
+    try {
+      const firstMembership = await prisma.workspaceMember.findFirst({
+        where: { userId },
+        select: { workspaceId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      workspaceId = firstMembership?.workspaceId ?? null;
+    } catch (err) {
+      console.error('[loginAction] workspace lookup failed (non-fatal)', err);
+      return;
+    }
+  }
+
+  if (!workspaceId) return; // user sem workspace — login pré-onboarding
+
+  const { ipAddress, userAgent } = getRequestAuditContext();
+  try {
+    await prisma.auditLog.create({
+      data: {
+        workspaceId,
+        userId,
+        action: 'user_logged_in',
+        ipAddress,
+        userAgent,
+      },
+    });
+  } catch (err) {
+    console.error('[loginAction] audit log failed (non-fatal)', err);
+  }
 }
 
 /**
@@ -200,6 +254,13 @@ export async function forgotAction(input: ForgotPasswordInput): Promise<AuthActi
  */
 export async function logoutAction(): Promise<void> {
   const supabase = createSupabaseServerClient();
+
+  // **Audit ANTES do signOut** (M7#5). Capturamos user + workspace ativo
+  // enquanto a sessão ainda existe — depois de `signOut()` o `getUser()` volta
+  // null e perdemos o vínculo. Non-fatal: falha de audit não impede o logout
+  // (UX: "click em sair → estou no login" é o que importa).
+  await logLogoutEvent();
+
   await supabase.auth.signOut();
   // Limpa o cookie de workspace ativo (M7#4 Onda 3). Sem isso, o user
   // loga com outra conta no mesmo navegador e o middleware ainda enxerga
@@ -210,6 +271,32 @@ export async function logoutAction(): Promise<void> {
   clearWorkspaceCookie();
   revalidatePath('/', 'layout');
   redirect('/login');
+}
+
+async function logLogoutEvent(): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const cookieWs = readWorkspaceCookie();
+  if (!cookieWs || !isUuid(cookieWs)) return; // sem workspace ativo, skip
+
+  const { ipAddress, userAgent } = getRequestAuditContext();
+  try {
+    await prisma.auditLog.create({
+      data: {
+        workspaceId: cookieWs,
+        userId: user.id,
+        action: 'user_logged_out',
+        ipAddress,
+        userAgent,
+      },
+    });
+  } catch (err) {
+    console.error('[logoutAction] audit log failed (non-fatal)', err);
+  }
 }
 
 /**
