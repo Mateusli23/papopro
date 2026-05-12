@@ -5,3 +5,8 @@
 out/
 next-env.d.ts.bak
 .env*.local
+
+# Playwright E2E (M7#6)
+playwright-report/
+test-results/
+e2e/.tmp/

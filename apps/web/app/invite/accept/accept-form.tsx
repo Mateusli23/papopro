@@ -78,7 +78,7 @@ export function AcceptInvitationForm({ invitation, token }: AcceptInvitationForm
         </div>
       )}
 
-      <Button onClick={onAccept} disabled={submitting} size="lg">
+      <Button onClick={onAccept} disabled={submitting} size="lg" data-testid="accept-submit">
         {submitting ? (
           <>
             <Loader2 className="animate-spin" />

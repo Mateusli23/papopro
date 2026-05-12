@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                                       |
-| -------- | ------- | --------------- | ---------------------------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                 |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                 |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                 |
-| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                   |
-| Sprint 5 | 61–75   | M6, M7          | ⚠️ em andamento — M6 ✅ (3 / 3 sub-PRs entregues); M7 ⏳ (1 sub-PR entregue) |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                  |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                  |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                  |
+| Sprint   | Dias    | Marcos cobertos | Status                                                                                              |
+| -------- | ------- | --------------- | --------------------------------------------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                                        |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                                        |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                                        |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                                          |
+| Sprint 5 | 61–75   | M6, M7          | ✅ concluída — M6 (3/3) + M7 (6/6 — 2 releases: M7#1-#5 em 12-mai-26 parcial, M7#6 fecha milestone) |
+| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                                         |
+| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                                         |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                                         |
 
 **Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Gitflow strict ativado** (ver CLAUDE.md §10): `dev` é a nova default branch e integration trunk; `main` recebe só releases (`PR dev → main`). Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                         | PR                                                   |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits)                  | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | `m7-rbac-audit-team`    | ✅ entregue (onda 1: 7 commits + onda 2: 4 commits pós-review) | _aberto após merge local_                            |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                    | —                                                    |
+| Sub-PR | Escopo                                                                                                                                                              | Branch                  | Status                                                                        | PR                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------- |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                                         | `feat/supabase-core`    | ✅ entregue                                                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`)                        | `m7-schema-rls`         | ✅ entregue                                                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                                             | `m7-schema-rls`         | ✅ entregue                                                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                                          | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits)                                 | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                                          | `m7-rbac-audit-team`    | ✅ entregue (13 commits — onda 1: 7 + onda 2: 4 + docs + ci) + ✅ em produção | [#40](https://github.com/Mateusli23/papopro/pull/40) |
+| M7#6   | Playwright E2E (3 specs cobrindo signup→verify→login→onboarding, invite→accept, team mgmt) + Sentry server-side cirúrgico (11 reportNonFatal swaps + scrubber LGPD) | `m7-e2e-sentry`         | ✅ entregue (11 commits — 7 frente A + 2 frente B + 2 docs)                   | _aberto após merge local_                            |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -896,9 +896,117 @@ Após onda 1 ser revisada, mais 3 débitos HIGH foram identificados (todos compo
 10. `feat(m7-rbac-audit-team): confirm dialogs em ações destrutivas de /settings/team (HIGH #3)` (`b153da3`)
 11. `chore(claude): ajustar permissões locais de Bash + Read sob WSL` (`06a870c`)
 
-**Validação local pós-onda 2:** `pnpm -w typecheck` 5/5 ✓, `pnpm --filter @papopro/web lint` ✓ (lint-staged em cada commit já garantiu prettier + eslint --fix).
+**Bônus pós-push — fix de CI:** PR #40 caiu vermelho na primeira tentativa porque pnpm 9.15+ parou silenciosamente de rodar o postinstall do `@prisma/client` (`PR #39 ainda mostrava o postinstall executando no log; PR #40 só mostrou `husky prepare`). Sem postinstall, `prisma generate`não corre e`@papopro/db:typecheck`quebra com`Module '@prisma/client' has no exported member 'PrismaClient'`. Fix: step explícito `pnpm --filter @papopro/db db:generate` antes de Lint no [.github/workflows/ci.yml](.github/workflows/ci.yml) — determinístico, alinha com SETUP.md.
+
+12. `docs(plan): registrar onda 2 do M7#5 (fixes HIGH #1 + #2 + #3 pós-review)` (`0f5d39f`)
+13. `ci: gerar prisma client explicitamente antes de lint/typecheck` (`f0e1aea`)
+
+**Validação local pós-onda 2:** `pnpm -w typecheck` 5/5 ✓, `pnpm -w lint` 5/5 ✓, `pnpm -w build` 2/2 ✓ (37 rotas em apps/web), `pnpm -w run format:check` ✓.
+
+**PR #40** (`m7-rbac-audit-team → dev`) — squash merged como [`c006556`](https://github.com/Mateusli23/papopro/commit/c006556) em 12-mai-26.
+
+**Débitos LOW abertos pra M8+:**
+
+- **`INVITATION_TTL_DAYS = 7` duplicado** em [`apps/web/features/team/actions.ts:48`](apps/web/features/team/actions.ts#L48) e [`apps/web/features/invitations/actions.ts:55`](apps/web/features/invitations/actions.ts#L55). A matemática do cooldown HIGH #2 (`lastSentAt = expiresAt - INVITATION_TTL_DAYS`) assume que ambos sempre concordam — se alguém mudar uma e esquecer a outra, o cooldown quebra silenciosamente (lastSentAt computado dias antes do envio real → cooldown sempre passa). Fix em M8: extrair pra módulo compartilhado tipo `apps/web/features/invitations/constants.ts` ou `apps/web/lib/invitations/constants.ts`.
 
 **Commit:** `feat(m7-rbac-audit-team): rbac + audit + /settings/team + débitos PR #39 (M7#5)`
+
+---
+
+## Release: M7#1–#5 → main (parcial — 12-mai-26)
+
+**PR de release:** `dev → main` aberto pós-merge do PR #40. **M7#6 (Playwright E2E + Sentry) fica fora desse release** — decisão de baixar batch size pra acelerar feedback de produção em M7#1-#5 antes de empilhar mais escopo.
+
+**Conteúdo da release:**
+
+| Sub-PR | Branch (já deletada)    | PR                                                   | Resumo                                                    |
+| ------ | ----------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
+| M7#1   | `feat/supabase-core`    | [#39](https://github.com/Mateusli23/papopro/pull/39) | Setup Supabase + SDK + `with-workspace` helper            |
+| M7#2   | `m7-schema-rls`         | [#39](https://github.com/Mateusli23/papopro/pull/39) | Schema (7 tabelas) + RLS (19 policies) + hardening        |
+| M7#3   | `m7-schema-rls`         | [#39](https://github.com/Mateusli23/papopro/pull/39) | Supabase Auth real + middleware com `getUser()`           |
+| M7#4   | `m7-invites-workspaces` | [#39](https://github.com/Mateusli23/papopro/pull/39) | Convites Resend + aceite magic link + switcher real       |
+| M7#5   | `m7-rbac-audit-team`    | [#40](https://github.com/Mateusli23/papopro/pull/40) | RBAC + audit log + `/settings/team` real + débitos review |
+
+**Por que release parcial:** lower batch size aproxima validação ao deploy. Se algo quebrar (Supabase config, RLS, Resend, RBAC), debug fica focado em M7#1-#5 — sem ruído de E2E/Sentry novos. M7#6 entra na próxima release.
+
+**Configuração pendente do operador pós-release** (Vercel env vars + Supabase Dashboard) — listadas no body do PR de release. Sem essas, `/login` cai em erro de Supabase config.
+
+---
+
+## Entregas — M7#6 — Playwright E2E + Sentry (cirúrgico)
+
+Branch `m7-e2e-sentry`. Último sub-PR do M7. Substitui smoke tests `/api/smoke-test/supabase` por testes E2E reais cobrindo o fluxo crítico via browser + middleware + Server Actions + RLS, e instrumenta erros server-side com Sentry sem mexer no build pipeline.
+
+**Frente A — Playwright E2E (7 commits):**
+
+- [x] [`apps/web/playwright.config.ts`](apps/web/playwright.config.ts) — chromium-only, `pnpm dev` como webServer auto-iniciado (reuseExistingServer fora do CI), `fullyParallel: false` + `workers: 1` (specs compartilham banco), retries 0 CI / 1 local, timeout 60s/teste, reporters `list` + `html`, trace `on-first-retry`, screenshot `only-on-failure`, video `retain-on-failure`.
+- [x] Scripts em [`apps/web/package.json`](apps/web/package.json): `e2e`, `e2e:ui`, `e2e:install`. `@playwright/test@^1.60.0` em `devDependencies`.
+- [x] [`apps/web/lib/email/outbox.ts`](apps/web/lib/email/outbox.ts) + branch em [`apps/web/lib/email/resend.ts`](apps/web/lib/email/resend.ts) — `RESEND_MODE=outbox` desvia `sendEmail()` pra `e2e/.tmp/outbox.jsonl` (gitignored). Path hardcoded propositalmente (defense in depth contra leak de tokens). Em prod (`RESEND_MODE` unset), comportamento idêntico.
+- [x] `data-testid` em 7 forms críticos: [`login-form`](apps/web/features/auth/components/login-form.tsx), [`signup-form`](apps/web/features/auth/components/signup-form.tsx), [`forgot-form`](apps/web/features/auth/components/forgot-form.tsx), [`verify-email-card`](apps/web/features/auth/components/verify-email-card.tsx), [`onboarding-form`](apps/web/features/auth/components/onboarding-form.tsx), [`accept-form`](apps/web/app/invite/accept/accept-form.tsx), [`team-view`](<apps/web/app/(dashboard)/settings/team/team-view.tsx>). Padrão `<feature>-<element>`. Linhas/menus que se repetem por entidade incluem ID (`member-row-{userId}`, `invitation-menu-{id}`).
+- [x] 4 helpers em [`apps/web/e2e/helpers/`](apps/web/e2e/helpers/):
+  - `supabase-admin.ts` — singleton admin client com **guard rail**: trava se `E2E_SUPABASE_URL` apontar pra `iffmjydjeukozopxxitb` (projeto de prod).
+  - `test-users.ts` — `createTestUser` (idempotent em 422 already-registered), `confirmTestUser` (força `email_confirmed_at`), `cleanupTestUser`, `cleanupTestWorkspace` (FK CASCADE redundante).
+  - `outbox.ts` — `waitForEmail(predicate)`, `waitForEmailTo(email)`, `extractInviteToken(html)` (regex tolerante a `&amp;`), `extractInviteUrl(html)`. Polling 100ms até timeout 10s default; diagnóstico no fail lista outbox atual.
+  - `fixtures.ts` — `freshUser` (user confirmado sem workspace) e `loggedInOwner` (user + workspace + Owner membership + login via UI). Teardown automático: workspace + cascade → user → outbox clear.
+- [x] 3 specs em [`apps/web/e2e/`](apps/web/e2e/):
+  - **`01-auth-flow.spec.ts`** (~10 asserts): signup → verify (admin force) → login → onboarding → dashboard. DB assertions: workspace_members[1] com role Owner, audit `user_logged_in` + `workspace_created`. **Cobre HIGH #1** indiretamente (workspaceId resolvido via firstMembership).
+  - **`02-invite-flow.spec.ts`** (~12 asserts em 2 contexts): Owner → invite UI → outbox → extract magic link → context2 (browser limpo) → opens link (LoggedOutState) → CTA "Criar conta e aceitar" → signup com email pré-fillado → /verify-email → admin confirm → reabre magic link → AcceptInvitationForm → /dashboard. DB: workspace_members[2], invitations.status=accepted, audit `member_joined`, outbox=1 email (não duplicou).
+  - **`03-team-management.spec.ts`** (~15 asserts em 3 sub-tests): (1) promote sem confirm + resend success + **resend < 60s = cooldown HIGH #2** + remove com confirm dialog HIGH #3; (2) **HIGH #1 cross-context** — Owner em browser limpo loga, audit grava com workspaceId correto; (3) **RBAC visual** — Vendedor logado vê `/settings/team` sem `invite-button` e sem `member-menu-*`.
+
+**Frente B — Sentry server-side cirúrgico (2 commits):**
+
+Escopo intencionalmente menor que o plano original (sem `withSentryConfig` em `next.config.mjs`, sem `withServerActionInstrumentation` em 14 actions, sem client/edge configs, sem source map upload).
+
+- [x] `@sentry/nextjs@^10.53.1` em `apps/web/dependencies`.
+- [x] [`apps/web/instrumentation.ts`](apps/web/instrumentation.ts) — Next 14 hook oficial. `register()` carrega `sentry.server.config.ts` via dynamic import só em `NEXT_RUNTIME=nodejs`. Re-exporta `captureRequestError` como `onRequestError` (hook obrigatório do Sentry 9+ pra erros em RSCs).
+- [x] [`apps/web/sentry.server.config.ts`](apps/web/sentry.server.config.ts) — `Sentry.init` condicional ao DSN setado (no-op silente em dev). `tracesSampleRate: 0` (só error capture, sem custo de tracing). `release: VERCEL_GIT_COMMIT_SHA`, `environment: VERCEL_ENV`. `beforeSend: scrubPiiFromEvent`.
+- [x] [`apps/web/lib/observability/scrubber.ts`](apps/web/lib/observability/scrubber.ts) — strip recursivo de 19 chaves sensíveis (password, secret, api_key, service_role_key, token, inviteToken, code, email, phone, cpf, cnpj, rg…) em `event.{request, extra, contexts, tags, breadcrumbs}` + `event.user.email`. WeakSet evita ciclos. **Strip > mask** (mask permitiria cross-reference de eventos similares).
+- [x] [`apps/web/lib/observability/report.ts`](apps/web/lib/observability/report.ts) — `reportNonFatal(scope, err, ctx)` preserva `console.error` E chama `Sentry.captureException` com tags `{ scope, severity }`. Convenção de scope: `<feature>.<action>.<step>` (ex: `auth.login.audit`).
+- [x] **11 swaps** dos `console.error('[scope] msg', err)` em Server Actions por `reportNonFatal`: auth (3) + invitations (4) + team (1) + workspace (3). `console.warn` do P2002 race em `acceptInvitationAction` mantido (não é erro). Queries `console.error` NÃO trocadas (escopo da PR é actions).
+
+**Decisão Frente B "cirúrgica":**
+
+- **Sem `withSentryConfig`** → zero acoplamento de build, zero risco de quebrar `pnpm build`, sem `SENTRY_AUTH_TOKEN` necessário (sem upload de source maps).
+- **Sem `withServerActionInstrumentation`** → contrato das actions inalterado; cobertura suficiente via swap dos `console.error` que já cobrem todos os caminhos non-fatal críticos.
+- **Sem client/edge configs** → M7 é server-side; forms já têm error states locais; middleware errors aparecem nos logs do Vercel.
+- **Reusa `NEXT_PUBLIC_SENTRY_DSN_WEB`** já provisionado em `.env.example` desde M2.
+
+**Docs (2 commits):**
+
+- [x] [`docs/SETUP.md`](docs/SETUP.md) — nova seção 4.5 "Rodar E2E Playwright localmente" (operador cria projeto Supabase E2E `papopro-e2e`, popula `E2E_SUPABASE_*` + `RESEND_MODE=outbox` no `.env.local`, roda `pnpm e2e:install` + `pnpm e2e`); seção Sentry atualizada pra refletir M7#6 real (1 DSN, sem AUTH_TOKEN, scopes de scrubber).
+- [x] Este registro no PLAN.md.
+
+**Commits (11 na branch, em ordem):**
+
+1. `chore(e2e): playwright config + scripts + gitignore` (`a4963b9`)
+2. `feat(e2e): resend outbox file-based pra RESEND_MODE=outbox` (`bd39cbe`)
+3. `chore(ui): data-testid em forms críticos do fluxo auth + team` (`d8875a1`)
+4. `feat(e2e): helpers de teste (supabase-admin, test-users, outbox, fixtures)` (`e23b117`)
+5. `test(e2e): spec 01 — auth flow` (`ac3fe10`)
+6. `test(e2e): spec 02 — invite flow` (`9e9b65a`)
+7. `test(e2e): spec 03 — team management` (`9be3799`)
+8. `feat(observability): sentry server-side + instrumentation + scrubber LGPD` (`0cf0341`)
+9. `feat(observability): reportNonFatal + swap 11 console.error em Server Actions` (`61c4843`)
+10. `docs(setup): rodar E2E + Sentry config atualizada` (`b239a4a`)
+11. `docs(plan): registrar M7#6 entregue + release notes M7#1-#5 + débito INVITATION_TTL_DAYS` (este commit)
+
+**Validação local:** `pnpm -w typecheck` 5/5 ✓, `pnpm --filter @papopro/web build` ✓ (37 rotas, Middleware 81.5kB).
+**Execução dos specs:** pendente operador criar projeto Supabase E2E (`E2E_SUPABASE_*` no `.env.local`). Specs typecheck/lint passam — execução real fica pós-merge quando operador rodar.
+
+**Débitos NÃO entram aqui (rolam pra polimento pós-M7 ou M8):**
+
+- LGPD IP masking em `getRequestAuditContext` (último octeto IPv4 / últimos 80 bits IPv6, com flag Enterprise pra gravar completo).
+- Cast seguro de `user.user_metadata` (hoje `as any` em alguns lugares).
+- Fonte Poppins não web-safe no email (Outlook não renderiza).
+- `accept-form.tsx` `router.refresh() + router.push()` double-render.
+- CI rodando Playwright (job `e2e` em [.github/workflows/ci.yml](.github/workflows/ci.yml)) — fica pra polimento subsequente; M7#6 entrega specs **runnable localmente**.
+- Remover smoke endpoint `/api/smoke-test/supabase` (mantém por valor incremental em CI atual).
+- Vitest setup pra unit tests (pipeline `test` do turbo.json segue vazio até primeira necessidade real, provavelmente M8).
+- Coverage de firefox/webkit (Chromium-only pra MVP).
+- `withSentryConfig` + source maps + client/edge configs Sentry (escopo cirúrgico desta PR).
+- Swap dos `console.error` em queries (escopo cirúrgico — só actions trocadas).
+
+**Commit:** `feat(m7-e2e-sentry): Playwright E2E (3 specs) + Sentry server-side cirúrgico (M7#6)`
 
 ---
 

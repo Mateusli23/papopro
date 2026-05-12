@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { isOutboxMode, writeOutbox } from './outbox';
+
 /**
  * Cliente Resend — implementação via `fetch` nativo (M7#4 Onda 2).
  *
@@ -21,6 +23,12 @@ import 'server-only';
  * **Configuração:** `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, opcionalmente
  * `RESEND_REPLY_TO`. Sem `RESEND_API_KEY` o cliente lança no boot — fail-fast
  * é melhor que silenciosamente não enviar email.
+ *
+ * **Modo teste (M7#6):** quando `RESEND_MODE=outbox`, `sendEmail()` desvia
+ * o payload pra `apps/web/e2e/.tmp/outbox.jsonl` em vez de tocar HTTP.
+ * Playwright specs leem o outbox e extraem magic links pro fluxo de
+ * aceite de convite. Em prod (`RESEND_MODE` unset), comportamento idêntico
+ * ao anterior. Ver [./outbox.ts](./outbox.ts).
  */
 
 const RESEND_API_URL = 'https://api.resend.com/emails';
@@ -53,6 +61,23 @@ export type SendEmailResult =
  * Lazy-read no ato da chamada concentra o erro no caller específico.
  */
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+  // **Modo teste (M7#6):** se `RESEND_MODE=outbox`, desvia pro outbox local
+  // e retorna sucesso sintético. Salta o check de `RESEND_API_KEY` —
+  // ambiente E2E não precisa ter Resend configurado.
+  if (isOutboxMode()) {
+    const result = await writeOutbox({
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+    });
+    if (!result.ok) {
+      // Falha de I/O no outbox = falha de envio (spec vai investigar).
+      return { ok: false, error: `outbox write failed: ${result.error}` };
+    }
+    return { ok: true, id: result.id };
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.RESEND_FROM_EMAIL;
 

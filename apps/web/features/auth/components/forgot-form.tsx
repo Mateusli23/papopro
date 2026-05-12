@@ -108,6 +108,7 @@ export function ForgotForm() {
 
         <FormField
           id="forgot-email"
+          data-testid="forgot-email"
           label="Email da conta"
           type="email"
           inputMode="email"
@@ -121,7 +122,13 @@ export function ForgotForm() {
           {...register('email')}
         />
 
-        <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={isSubmitting}
+          data-testid="forgot-submit"
+          className="w-full"
+        >
           {isSubmitting ? (
             <>
               <Loader2 className="animate-spin" />

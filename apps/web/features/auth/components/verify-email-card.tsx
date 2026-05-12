@@ -130,6 +130,7 @@ export function VerifyEmailCard({ email }: VerifyEmailCardProps) {
           size="lg"
           disabled={!canResend}
           onClick={handleResend}
+          data-testid="verify-resend"
           className="w-full"
         >
           {resending ? (
