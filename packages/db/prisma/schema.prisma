@@ -91,6 +91,15 @@ model Workspace {
 
 /// Espelha auth.users via trigger on_auth_user_created.
 /// Não inserir diretamente — Supabase Auth gerencia. id é o mesmo UUID de auth.users.id.
+///
+/// **Invariante de `email` (M7#5 HIGH #11):** a coluna é `@db.Citext` —
+/// comparação case-insensitive *no Postgres*. Mas o Prisma client recebe e
+/// retorna o valor literal como veio, sem normalizar. Toda escrita no app
+/// (signup, upsert defensivo em workspace/invitations actions) deve passar
+/// por `.toLowerCase().trim()` antes — caso contrário, dois "Foo@bar.com" e
+/// "foo@bar.com" produzem 1 linha em SELECT (citext) mas o cache da app vê
+/// strings diferentes em dois callsites. Convenção: normalizar na borda
+/// (Server Action), confiar no tipo internamente.
 model User {
   id              String    @id @db.Uuid
   email           String    @unique @db.Citext
