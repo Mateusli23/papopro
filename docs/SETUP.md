@@ -70,12 +70,13 @@ abrir cedo pra começar a instrumentar.
    ```
    _(arquivo `branch-protection.json` ainda não existe; criamos quando ativar)_
 
-### 🟡 Sentry — free tier
+### 🟡 Sentry — free tier (wired up em M7#6)
 
-**Por quê:** dá pra wire-up no M2 e capturar erros desde já.
+**Por quê:** captura non-fatal de Server Actions (audit log fail, email fail, transaction fail) em prod. Em dev sem DSN é no-op silente (console.error preservado).
 **Onde:** [sentry.io/signup](https://sentry.io/signup/)
-**O que pegar:** 2 DSNs (um por projeto: `papopro-web` e `papopro-landing`) + `SENTRY_AUTH_TOKEN` (Settings → Account → API → Auth Tokens, escopo `project:releases`).
-**Onde colar:** `apps/web/.env.local` e `apps/landing/.env.local`.
+**O que pegar:** 1 DSN do projeto `papopro-web` (o `papopro-landing` fica pra quando a landing tiver mais lógica). Não precisamos de `SENTRY_AUTH_TOKEN` por enquanto — M7#6 NÃO usa `withSentryConfig`, então não há upload de source maps.
+**Onde colar:** `NEXT_PUBLIC_SENTRY_DSN_WEB` em `apps/web/.env.local` (e nas Environment Variables da Vercel pra preview/prod).
+**Sentry em ação:** os 11 `reportNonFatal(scope, err, ctx)` em Server Actions enviam pra Sentry. Scopes seguem convenção `<feature>.<action>.<step>` (ex: `auth.login.audit`, `invitations.invite.email-send`) — agrupe alerts no dashboard por isso. Scrubber LGPD remove password/token/email/etc antes do envio (ver `apps/web/lib/observability/scrubber.ts`).
 
 ### 🟡 PostHog — free tier (1M eventos/mês)
 
@@ -168,6 +169,63 @@ abrir cedo pra começar a instrumentar.
 3. Aguardar verificação (5min–24h dependendo do TTL do DNS).
 4. Pegar `API Key` (Settings → API Keys, escopo `Sending access`).
 5. Colar em `RESEND_API_KEY`.
+
+---
+
+## 4.5 Rodar E2E Playwright localmente (M7#6 — opcional)
+
+**Por quê:** os 3 specs Playwright em `apps/web/e2e/*.spec.ts` cobrem o fluxo crítico (signup→verify→login→onboarding, invite→accept, team management incluindo HIGH #1 + #2 + #3). Rodar local antes de PR confirma que não quebramos nada.
+
+**O que precisa:**
+
+### 🔴 Projeto Supabase dedicado a E2E
+
+**NUNCA usar o projeto de produção** (`iffmjydjeukozopxxitb`). O helper `apps/web/e2e/helpers/supabase-admin.ts` tem guard rail que trava se você apontar pro projeto de prod, mas mesmo assim crie um separado:
+
+1. Em [supabase.com](https://supabase.com) clica "New project". Sugiro nome `papopro-e2e`, região `sa-east-1` (São Paulo, mesma de prod), plano Free.
+2. Aplica a migration inicial de M7#2: `psql $E2E_DATABASE_URL -f docs/m7-2-migration.sql` (ou cola o SQL no SQL Editor do Dashboard).
+3. Pega `URL` (Project Settings → API → Project URL) e `service_role secret` (Project Settings → API → Project API keys → service_role).
+4. Cola em `apps/web/.env.local`:
+
+```
+E2E_SUPABASE_URL=https://<ref>.supabase.co
+E2E_SUPABASE_SERVICE_ROLE_KEY=<service_role_secret>
+```
+
+### 🔴 RESEND_MODE=outbox
+
+Pra Playwright interceptar emails sem disparar Resend real, ativa o modo outbox:
+
+```
+RESEND_MODE=outbox
+```
+
+Em modo outbox, `sendEmail()` escreve em `apps/web/e2e/.tmp/outbox.jsonl` (gitignored) em vez de tocar HTTP. Specs leem do arquivo. **Deixa `RESEND_MODE` vazio em prod** — modo outbox em produção significaria emails de convite NÃO saindo (mas ficando no filesystem do servidor 😱).
+
+### 🔴 Instalar browser Chromium do Playwright
+
+```
+pnpm --filter @papopro/web e2e:install
+```
+
+Baixa Chromium (~150MB) na primeira vez. Subsequentes runs reusam.
+
+### Rodar
+
+```bash
+# Headless (CI-like):
+pnpm --filter @papopro/web e2e
+
+# UI interativo (debug, time-travel, network inspector):
+pnpm --filter @papopro/web e2e:ui
+
+# Spec específico:
+pnpm --filter @papopro/web e2e e2e/01-auth-flow.spec.ts
+```
+
+O `playwright.config.ts` sobe `pnpm dev` automaticamente como webServer (timeout 120s pra primeira compilação do Next). Em CI (`process.env.CI`), força instância fresca; local reusa se já tiver `pnpm dev` rodando.
+
+**Reports:** `apps/web/playwright-report/index.html` abre o relatório HTML após o run. Traces (`test-results/<spec>/trace.zip`) só ficam em failure — abrir via [trace.playwright.dev](https://trace.playwright.dev/).
 
 ---
 
