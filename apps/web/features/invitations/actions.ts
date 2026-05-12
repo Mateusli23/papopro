@@ -1,12 +1,12 @@
 'use server';
 
 /**
- * Server Actions de convites (M7#4 Onda 2).
+ * Server Actions de convites (M7#4 Onda 2 + M7#5 refactor).
  *
  * Três operações: convidar (Owner/Admin), aceitar (qualquer user logado com
- * email batendo) e revogar (Owner/Admin). RBAC enforce é inline aqui — o
- * helper genérico `requireRole(ctx, ['Owner','Admin'])` entra em M7#5 quando
- * domain actions começarem a aparecer em volume.
+ * email batendo) e revogar (Owner/Admin). RBAC via helper canônico
+ * `requireRole` ([lib/auth/require-role.ts]) — substituiu os 4 blocos inline
+ * duplicados de M7#4 em M7#5.
  *
  * **Por que `admin client` na leitura por token:** o token É a autorização.
  * O caller pode estar logado como qualquer email, e a policy RLS de
@@ -26,11 +26,12 @@
 import { prisma, type Prisma } from '@papopro/db';
 
 import { getCurrentUser } from '@/lib/auth/get-user';
-import { readWorkspaceCookie, setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { requireRole } from '@/lib/auth/require-role';
+import { setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { sendEmail } from '@/lib/email/resend';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
-import { isUuid } from '@/lib/utils/uuid';
 
 import {
   invitationAcceptSchema,
@@ -52,7 +53,6 @@ export type InvitationAcceptResult =
 export type InvitationRevokeResult = { ok: true } | { ok: false; error: string };
 
 const INVITATION_TTL_DAYS = 7;
-const ADMIN_ROLES = new Set(['Owner', 'Admin']);
 
 function appUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -68,8 +68,9 @@ function ttlDate(days = INVITATION_TTL_DAYS): Date {
  * `inviteMemberAction` — Owner/Admin convida alguém pra workspace ativo.
  *
  * Fluxo:
- *  1. Valida Zod + sessão + workspace ativo (cookie).
- *  2. RBAC: caller tem que ser Owner/Admin do workspace.
+ *  1. Valida Zod.
+ *  2. `requireRole(['Owner','Admin'])` — sessão + email + cookie UUID + role
+ *     (M7#5: substituiu 4 blocos inline do M7#4 — ver [lib/auth/require-role.ts]).
  *  3. Bloqueia auto-convite (caller convidando o próprio email).
  *  4. Verifica se já é membro (idempotente: retorna sucesso silente).
  *  5. Idempotência de convite: upsert por `(workspaceId, email)` pending —
@@ -85,102 +86,122 @@ export async function inviteMemberAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
   }
 
-  const user = await getCurrentUser();
-  if (!user || !user.email) {
-    return { ok: false, error: 'Sessão expirada — faça login novamente.' };
-  }
-
-  // **Fix do review M7#4 MEDIUM #19:** valida formato UUID do cookie antes de
-  // usar como filtro Prisma. O cookie é httpOnly server-only, mas defense-in-
-  // depth: bug do middleware ou cookie corrompido não vaza pro query path.
-  const workspaceId = readWorkspaceCookie();
-  if (!workspaceId || !isUuid(workspaceId)) {
-    return { ok: false, error: 'Nenhum workspace ativo. Recarregue a página.' };
-  }
-
-  // RBAC inline (helper genérico em M7#5).
-  const caller = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId, userId: user.id } },
-    select: { role: true },
+  const auth = await requireRole(['Owner', 'Admin'], {
+    forbiddenMessage: 'Apenas Owner e Admin podem convidar membros.',
   });
-  if (!caller || !ADMIN_ROLES.has(caller.role)) {
-    return { ok: false, error: 'Apenas Owner e Admin podem convidar membros.' };
-  }
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const { userId, userEmail, workspaceId } = auth.ctx;
 
   const targetEmail = parsed.data.email.toLowerCase().trim();
-  const callerEmail = user.email.toLowerCase().trim();
+  const callerEmail = userEmail.toLowerCase().trim();
 
   if (targetEmail === callerEmail) {
     return { ok: false, error: 'Você já está no workspace — não dá pra se autoconvidar.' };
   }
 
-  // **Defense-in-depth + anti-enumeration (fix do review M7#4 CRÍTICO #3):**
-  // antes faziamos 2 queries (`user.findUnique` → `workspaceMember.findUnique`)
-  // — diferença de timing entre "email global existe" e "não existe" permitia
-  // Owner/Admin enumerar contas PapoPro. Agora 1 query via relation filter:
-  // mesmo path independente de o email ter conta global.
-  const existingMember = await prisma.workspaceMember.findFirst({
-    where: { workspaceId, user: { email: targetEmail } },
-    select: { id: true },
+  // **Fix do review M7#4 CRÍTICO #2 (M7#5):** wrap em `withWorkspace` pra
+  // aplicar `SET LOCAL app.workspace_id` antes das operações. Hoje funcionaria
+  // sem isso porque Prisma roda como `postgres` superuser que bypassa RLS;
+  // em produção com role restrito a policy bloquearia o INSERT/UPDATE sem o
+  // contexto setado.
+  //
+  // **Por que tudo numa tx só:** existingMember check + invitation upsert
+  // precisam ser atômicos pra evitar race entre "verifico que não é membro" e
+  // "crio convite". inviterRecord vai junto porque é leitura barata.
+  //
+  // **Discriminated union no retorno** em vez de throw sentinel: TypeScript
+  // narrowing funciona limpo (`if (!result.ok) return ...`).
+  type InviteWorkspaceResult =
+    | {
+        ok: true;
+        invitation: {
+          id: string;
+          token: string;
+          workspaceName: string;
+        };
+        inviterName: string;
+      }
+    | { ok: false; code: 'already_member' };
+
+  const wsResult = await withWorkspace<InviteWorkspaceResult>(workspaceId, async (tx) => {
+    // Defense-in-depth + anti-enumeration (M7#4 CRÍTICO #3): 1 query via
+    // relation filter (não 2 separadas), pra path indistinguível entre
+    // "email tem conta global" e "não tem".
+    const existingMember = await tx.workspaceMember.findFirst({
+      where: { workspaceId, user: { email: targetEmail } },
+      select: { id: true },
+    });
+    if (existingMember) {
+      return { ok: false, code: 'already_member' };
+    }
+
+    // Upsert do convite (idempotente por `(workspace_id, email)`).
+    //
+    // **Fix do review M7#4 MEDIUM #14:** quando o status anterior era `revoked`
+    // ou `expired`, gera token novo pra invalidar links antigos que possam ter
+    // vazado em logs/forwards. Em `create` o default do DB
+    // (`gen_random_uuid()`) atribui token.
+    const existingByEmail = await tx.invitation.findUnique({
+      where: { workspaceId_email: { workspaceId, email: targetEmail } },
+      select: { id: true, status: true, token: true },
+    });
+    const shouldRotateToken =
+      existingByEmail &&
+      (existingByEmail.status === 'revoked' || existingByEmail.status === 'expired');
+
+    const invitation = await tx.invitation.upsert({
+      where: { workspaceId_email: { workspaceId, email: targetEmail } },
+      create: {
+        workspaceId,
+        email: targetEmail,
+        role: parsed.data.role,
+        expiresAt: ttlDate(),
+        status: 'pending',
+        createdById: userId,
+      },
+      update: {
+        role: parsed.data.role,
+        expiresAt: ttlDate(),
+        status: 'pending',
+        acceptedAt: null,
+        createdById: userId,
+        ...(shouldRotateToken ? { token: crypto.randomUUID() } : {}),
+      },
+      select: {
+        id: true,
+        token: true,
+        createdAt: true,
+        workspace: { select: { name: true } },
+      },
+    });
+
+    // Resolução do nome do convidador na mesma tx — `users` não tem
+    // workspace_id, mas o SET LOCAL não afeta queries em tabelas sem policy
+    // de tenant (a row do user já existe — espelhada pelo trigger).
+    const inviterRecord = await tx.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true },
+    });
+    const inviterName = inviterRecord?.name?.trim() || inviterRecord?.email || 'Um membro do time';
+
+    return {
+      ok: true,
+      invitation: {
+        id: invitation.id,
+        token: invitation.token,
+        workspaceName: invitation.workspace.name,
+      },
+      inviterName,
+    };
   });
-  if (existingMember) {
+
+  if (!wsResult.ok) {
     return { ok: false, error: 'Esse email já é membro do workspace.' };
   }
-
-  // Upsert do convite (idempotente por `(workspace_id, email)`).
-  //
-  // **Fix do review M7#4 MEDIUM #14:** quando o status anterior era `revoked`
-  // ou `expired`, geramos token novo pra invalidar links antigos que
-  // possam ter vazado em logs/forwards. Em `create` (caso de primeira
-  // emissão), o default do DB (`gen_random_uuid()`) atribui token.
-  //
-  // O Prisma client de M7#1 placeholder não expõe `Prisma.raw`, então o
-  // novo token é gerado via `crypto.randomUUID()` no app side — mesma
-  // entropia, sem dependência de schema generation.
-  const existingByEmail = await prisma.invitation.findUnique({
-    where: { workspaceId_email: { workspaceId, email: targetEmail } },
-    select: { id: true, status: true, token: true },
-  });
-  const shouldRotateToken =
-    existingByEmail &&
-    (existingByEmail.status === 'revoked' || existingByEmail.status === 'expired');
-
-  const invitation = await prisma.invitation.upsert({
-    where: { workspaceId_email: { workspaceId, email: targetEmail } },
-    create: {
-      workspaceId,
-      email: targetEmail,
-      role: parsed.data.role,
-      expiresAt: ttlDate(),
-      status: 'pending',
-      createdById: user.id,
-    },
-    update: {
-      role: parsed.data.role,
-      expiresAt: ttlDate(),
-      status: 'pending',
-      acceptedAt: null,
-      createdById: user.id,
-      ...(shouldRotateToken ? { token: crypto.randomUUID() } : {}),
-    },
-    select: {
-      id: true,
-      token: true,
-      createdAt: true,
-      workspace: { select: { name: true } },
-    },
-  });
-
-  // Email. Resolução do nome do convidador: prefere `users.name` (espelhado
-  // do auth metadata); cai pro email se vazio.
-  const inviterRecord = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { name: true, email: true },
-  });
-  const inviterName = inviterRecord?.name?.trim() || inviterRecord?.email || 'Um membro do time';
+  const { invitation, inviterName } = wsResult;
 
   const { subject, html, text } = renderInviteEmail({
-    workspaceName: invitation.workspace.name,
+    workspaceName: invitation.workspaceName,
     inviterName,
     role: parsed.data.role,
     acceptUrl: `${appUrl()}/invite/accept?token=${invitation.token}`,
@@ -209,17 +230,20 @@ export async function inviteMemberAction(
   // **Audit log DEPOIS do envio do email (fix do review M7#4 HIGH #10):**
   // antes registrávamos audit antes — se email falhasse, ficava "fantasma"
   // dizendo "convite enviado" no log mas o convidado nunca recebia. Agora
-  // só audita quando o convite efetivamente saiu do servidor.
+  // só audita quando o convite efetivamente saiu do servidor. Em tx
+  // separada com `withWorkspace` (M7#5 CRÍTICO #2), non-fatal.
   try {
-    await prisma.auditLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        action: 'member_invited',
-        entityType: 'invitation',
-        entityId: invitation.id,
-        changes: { email: targetEmail, role: parsed.data.role },
-      },
+    await withWorkspace(workspaceId, async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          userId,
+          action: 'member_invited',
+          entityType: 'invitation',
+          entityId: invitation.id,
+          changes: { email: targetEmail, role: parsed.data.role },
+        },
+      });
     });
   } catch (err) {
     console.error('[inviteMemberAction] audit log failed (non-fatal)', err);
@@ -254,7 +278,19 @@ export async function acceptInvitationAction(
   if (!user.email_confirmed_at) {
     return { ok: false, error: 'Confirme seu email antes de aceitar o convite.' };
   }
+  // Const local pra preservar narrowing dentro da `$transaction` callback
+  // (fix do review M7#4 MEDIUM #16: substituiu o `user.email!` que mascarava
+  // o narrowing perdido na closure async — falha barulhento pelo guard acima
+  // se trigger handle_new_auth_user não populou email).
+  const userEmail = user.email;
 
+  // **Chicken-and-egg da leitura do convite (documentado no header):** o
+  // caller AINDA não é membro do workspace; a policy RLS de `invitations`
+  // filtra por `current_workspace_id()` setado por `withWorkspace`. Pra essa
+  // leitura inicial ainda usamos `prisma.` direto — em produção com role
+  // restrito (M9+) isso vai precisar do admin client (mesmo padrão de
+  // `features/invitations/queries.ts:getInvitationByToken`). Hoje funciona
+  // porque Prisma roda como superuser que bypassa RLS.
   const invitation = await prisma.invitation.findUnique({
     where: { token: parsed.data.token },
     select: {
@@ -276,7 +312,7 @@ export async function acceptInvitationAction(
     return { ok: false, error: 'Convite inválido ou já usado.' };
   }
 
-  // Validações na ordem que dá UX mais informativa:
+  // Validações na ordem que dá UX mais informativa (não dependem do DB):
   if (invitation.status === 'accepted') {
     return { ok: false, error: 'Esse convite já foi aceito.' };
   }
@@ -293,38 +329,40 @@ export async function acceptInvitationAction(
     };
   }
 
-  // Idempotência: já é membro? Marca convite como aceito e segue.
-  const existingMember = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId: invitation.workspaceId, userId: user.id } },
-    select: { id: true },
-  });
-
-  if (existingMember) {
-    await prisma.invitation.update({
-      where: { id: invitation.id },
-      data: { status: 'accepted', acceptedAt: new Date() },
-    });
-    setWorkspaceCookie(invitation.workspaceId);
-    return { ok: true, workspaceId: invitation.workspaceId, redirectTo: '/dashboard' };
-  }
-
-  // Transação: cria member + marca convite + audit. Inclui upsert defensivo
-  // de users — mesmo argumento da Onda 1 (raro caso de trigger falhando).
+  // **Fix do review M7#4 CRÍTICO #2 (M7#5):** tudo daqui pra baixo passa por
+  // `withWorkspace(invitation.workspaceId, …)` — aplica `SET LOCAL
+  // app.workspace_id` antes de cada INSERT/UPDATE. O caller ainda não é
+  // membro, mas o `SET LOCAL` é apenas setting de transação, não exige
+  // membership. As policies RLS de `workspace_members` e `audit_logs`
+  // permitem `INSERT WITH CHECK (current_workspace_id() = workspace_id)` —
+  // o member é criado dentro do contexto certo.
   //
-  // **Fix do review M7#4 HIGH #6:** duplo-clique em "Aceitar" pode disparar
-  // duas requests concorrentes; a primeira passa pelo `findUnique` (=null),
-  // entra na transaction, cria member; a segunda também passa (=null antes
-  // do commit) e tenta criar → viola `@@unique([workspaceId, userId])` (P2002).
-  // Tratamos P2002 como sucesso silente: o aceite já foi processado em outra
-  // request da mesma sessão — UX final é "entrei no workspace", que é o que
-  // o user esperava.
+  // **Fix do review M7#4 HIGH #6 (duplo-clique race):** mesma semântica de
+  // antes — P2002 fora da tx é tratado como sucesso silente.
   try {
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await withWorkspace(invitation.workspaceId, async (tx: Prisma.TransactionClient) => {
+      // Idempotência intra-tx: já é membro? Marca convite como aceito e sai
+      // sem criar duplicata (cobre replay do link na mesma sessão).
+      const existingMember = await tx.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: invitation.workspaceId, userId: user.id } },
+        select: { id: true },
+      });
+
+      if (existingMember) {
+        await tx.invitation.update({
+          where: { id: invitation.id },
+          data: { status: 'accepted', acceptedAt: new Date() },
+        });
+        return;
+      }
+
+      // Não é membro ainda — cria tudo (upsert user defensivo + member +
+      // invitation update + notification pref + audit).
       await tx.user.upsert({
         where: { id: user.id },
         create: {
           id: user.id,
-          email: user.email!,
+          email: userEmail,
           name: typeof user.user_metadata?.name === 'string' ? user.user_metadata.name : undefined,
           emailVerifiedAt: user.email_confirmed_at ? new Date(user.email_confirmed_at) : null,
         },
@@ -363,7 +401,7 @@ export async function acceptInvitationAction(
           action: 'member_joined',
           entityType: 'invitation',
           entityId: invitation.id,
-          changes: { email: user.email, role: invitation.role },
+          changes: { email: userEmail, role: invitation.role },
         },
       });
     });
@@ -400,48 +438,49 @@ export async function revokeInvitationAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Dados inválidos.' };
   }
 
-  const user = await getCurrentUser();
-  if (!user) {
-    return { ok: false, error: 'Sessão expirada — faça login novamente.' };
-  }
-
-  const workspaceId = readWorkspaceCookie();
-  if (!workspaceId || !isUuid(workspaceId)) {
-    return { ok: false, error: 'Nenhum workspace ativo. Recarregue a página.' };
-  }
-
-  const caller = await prisma.workspaceMember.findUnique({
-    where: { workspaceId_userId: { workspaceId, userId: user.id } },
-    select: { role: true },
+  const auth = await requireRole(['Owner', 'Admin'], {
+    forbiddenMessage: 'Apenas Owner e Admin podem cancelar convites.',
   });
-  if (!caller || !ADMIN_ROLES.has(caller.role)) {
-    return { ok: false, error: 'Apenas Owner e Admin podem cancelar convites.' };
-  }
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const { userId, workspaceId } = auth.ctx;
 
+  // **Fix do review M7#4 CRÍTICO #2 (M7#5):** wrap em `withWorkspace` pra
+  // aplicar `SET LOCAL app.workspace_id` antes da operação. Hoje funcionaria
+  // sem isso porque Prisma roda como `postgres` superuser que bypassa RLS;
+  // em produção com role restrito (planejado pra M9+) a policy bloquearia
+  // o UPDATE sem o contexto setado.
+  //
   // updateMany com filtro defense-in-depth: id + workspaceId + status pending.
   // Se nada bater (já aceito, de outro workspace, inexistente), `count = 0`.
-  const result = await prisma.invitation.updateMany({
-    where: {
-      id: parsed.data.invitationId,
-      workspaceId,
-      status: 'pending',
-    },
-    data: { status: 'revoked' },
+  const updateCount = await withWorkspace(workspaceId, async (tx) => {
+    const result = await tx.invitation.updateMany({
+      where: {
+        id: parsed.data.invitationId,
+        workspaceId,
+        status: 'pending',
+      },
+      data: { status: 'revoked' },
+    });
+    return result.count;
   });
 
-  if (result.count === 0) {
+  if (updateCount === 0) {
     return { ok: false, error: 'Convite não encontrado ou já foi processado.' };
   }
 
+  // Audit em tx separada (non-fatal): falha de audit não rollbacka o revoke.
+  // UX importa mais que o guardrail aqui — convite cancelado é o objetivo.
   try {
-    await prisma.auditLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        action: 'invitation_revoked',
-        entityType: 'invitation',
-        entityId: parsed.data.invitationId,
-      },
+    await withWorkspace(workspaceId, async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          userId,
+          action: 'invitation_revoked',
+          entityType: 'invitation',
+          entityId: parsed.data.invitationId,
+        },
+      });
     });
   } catch (err) {
     console.error('[revokeInvitationAction] audit log failed (non-fatal)', err);

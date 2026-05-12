@@ -44,6 +44,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `prisma generate` precisa rodar explicitamente. Em pnpm 9.15+ o
+      # postinstall do @prisma/client é pulado quando não está em
+      # `pnpm.onlyBuiltDependencies` — sem o client gerado, `tsc --noEmit`
+      # em packages/db quebra com `Module '@prisma/client' has no exported
+      # member 'PrismaClient'`. CI não pode confiar em postinstall implícito.
+      - name: Generate Prisma Client
+        run: pnpm --filter @papopro/db db:generate
+
       - name: Lint
         run: pnpm lint
 

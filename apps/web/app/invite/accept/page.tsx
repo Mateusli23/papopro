@@ -47,8 +47,16 @@ interface InviteAcceptPageProps {
  * `BrandArcs` permitido aqui (CLAUDE.md §8 — superfície de onboarding).
  */
 export default async function InviteAcceptPage({ searchParams }: InviteAcceptPageProps) {
+  // **Fix do review M7#4 HIGH #13:** Next entrega `searchParams.token` como
+  // `string | string[] | undefined`. Em `?token=a&token=b` vira array — o
+  // código original `typeof rawToken === 'string'` descartava tudo silente e
+  // caía na variante "Convite não encontrado". Normalizamos pegando o primeiro
+  // elemento (UX honesta: o user provavelmente colou o link errado uma vez e
+  // tentou de novo), e o Zod do Server Action ainda valida UUID estrito.
   const rawToken = searchParams.token;
-  const token = typeof rawToken === 'string' && rawToken.length > 0 ? rawToken : null;
+  const tokenCandidate = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+  const token =
+    typeof tokenCandidate === 'string' && tokenCandidate.length > 0 ? tokenCandidate : null;
 
   const invitation = token ? await getInvitationByToken(token) : null;
   const user = await getCurrentUser();

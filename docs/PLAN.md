@@ -529,14 +529,14 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 
 **Estratégia de sub-PRs.** M7 é o marco mais crítico do produto (CLAUDE.md §10 — "bug no helper de RLS = vazamento de dados entre clientes"). Por isso quebramos em 6 PRs pequenos em vez de um único monolítico, pra que cada review foque numa coisa por vez:
 
-| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                        | PR                                                   |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | --------------------------------------------- | ---------------------------------------------------- |
-| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                   | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits) | [#39](https://github.com/Mateusli23/papopro/pull/39) |
-| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | _a definir_             | ⏳ pendente                                   | —                                                    |
-| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                   | —                                                    |
+| Sub-PR | Escopo                                                                                                                                       | Branch                  | Status                                                         | PR                                                   |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| M7#1   | Setup Supabase & Chaves: SDK + `lib/supabase/{client,server,admin,with-workspace}.ts` + Prisma client lazy + smoke endpoint                  | `feat/supabase-core`    | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#2   | Schema inicial + RLS (`workspaces`, `users`, `workspace_members`, `invitations`, `audit_logs`, `notification_preferences`, `webhook_events`) | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#3   | Supabase Auth real: signup/login/forgot/verify + remove `AuthMockProvider` + middleware com `getUser()`                                      | `m7-schema-rls`         | ✅ entregue                                                    | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#4   | Convite por email (Resend) + aceite via magic link + wizard cria workspace real + switcher                                                   | `m7-invites-workspaces` | ✅ entregue (3 ondas + fix review, 5 commits)                  | [#39](https://github.com/Mateusli23/papopro/pull/39) |
+| M7#5   | RBAC `requireRole(ctx, …)` + log de auditoria + tela `/settings/team` real                                                                   | `m7-rbac-audit-team`    | ✅ entregue (onda 1: 7 commits + onda 2: 4 commits pós-review) | _aberto após merge local_                            |
+| M7#6   | Playwright E2E (signup→verify→login→workspace→convidar→aceitar) + Sentry em Server Actions                                                   | _a definir_             | ⏳ pendente                                                    | —                                                    |
 
 **Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
 
@@ -552,9 +552,9 @@ Sub-PRs autônomos de polimento que entram entre marcos quando há valor increme
 - [x] Switcher de workspace lê `workspace_members` real _(M7#4 — Onda 3: Sidebar + MobileNav viraram Server Components fetchando `getCurrentUserContext`; `WorkspaceSwitcher` recebe `workspaces[]` + `activeWorkspaceId` via prop, `setActiveWorkspaceAction` valida membership antes de setar cookie, `router.refresh()` re-roda middleware + Server Components com tenant novo)_
 - [x] Wizard de onboarding (M3) cria workspace de verdade _(M7#4 — Onda 1: `/onboarding` chama `createWorkspaceAction` que insere Workspace + WorkspaceMember(Owner) + NotificationPreference + AuditLog em transação; cookie httpOnly `papopro_workspace_id` setado pela action e lido pelo middleware)_
 - [x] Middleware com gate de auth + redirect inteligente _(M7#3 entregou gate por sessão + email confirmado; M7#4 Onda 1 fechou o lookup de memberships — cookie httpOnly `papopro_workspace_id` é fast path, `getMembershipCountForUser` via admin client é fallback Edge-safe; /onboarding bloqueia quem já tem workspace, demais rotas bloqueiam quem não tem)_
-- [ ] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5)_
-- [ ] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5)_
-- [ ] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5)_
+- [x] RBAC enforce nas Server Actions: helper `requireRole(ctx, ['Owner', 'Admin'])` _(M7#5 — `apps/web/lib/auth/require-role.ts` retorna `{ ok, ctx | error, code }` sem throw; refactor inline em `inviteMemberAction` e `revokeInvitationAction` (4 blocos cada → 1 chamada). `setActiveWorkspaceAction` ficou de fora: workspaceId vem do argumento, não do cookie ativo — RBAC inline mínimo justificado)_
+- [x] Log de auditoria em eventos críticos (login, criação de workspace, convite, mudança de papel) _(M7#5 — `user_logged_in` em `loginAction` (resolve workspaceId via cookie OU primeiro membership), `user_logged_out` em `logoutAction` (cookie ativo lido ANTES de clearWorkspaceCookie), `member_role_changed` em `changeRoleAction`, `member_removed` em `removeMemberAction`. `ipAddress` + `userAgent` via helper `lib/audit/context.ts` lendo `x-forwarded-for` / `x-real-ip` / `user-agent`)_
+- [x] Tela `/settings/team` lista membros, status de convite, permite mudar papel (Owner/Admin) _(M7#5 — `page.tsx` Server Component carrega dados reais via `getTeamMembersAndInvitations` (admin client com filtro explícito por workspaceId); `team-view.tsx` Client recebe props + chama Server Actions; bloco "Convites pendentes" acima da lista de membros com Reenviar/Cancelar; UI esconde ações pra non-Owner/Admin)_
 - [ ] Testes E2E (Playwright): signup → verificação email → login → criar workspace → convidar → aceitar _(M7#6)_
 - [ ] Sentry capturando erros de Server Actions e API routes _(M7#6)_
 
@@ -817,6 +817,88 @@ Após o merge das 3 ondas em local, code-reviewer agent revisou os ~4977 linhas 
 **Commit:** `fix(m7-invites-workspaces): aplicar fixes do code review (CRITICO + HIGH + MEDIUM)`
 
 **Commit final do M7#4 (entregue só no último sub-PR):** já efetivado nos 4 commits (3 ondas + fixes do review) — não há squash separado.
+
+**Entregas — M7#5 — RBAC + Audit Log + /settings/team + débitos do review do PR #39:**
+
+Branch `m7-rbac-audit-team`. PR único monolítico fechando 4 frentes coesas + 9 débitos do review do PR #39 (2 CRÍTICO, 4 HIGH, 3 MEDIUM, 1 falso-positivo confirmado). Decisão: contra o padrão "sub-PRs pequenos" do M7#1–#4, mas o escopo é coeso — RBAC, audit e `/settings/team` se exercitam mutuamente (sem `requireRole`, as actions novas de role/remove seriam mais inline duplicado).
+
+**Frente A — RBAC genérico (`requireRole`):**
+
+- [x] [`apps/web/lib/auth/require-role.ts`](apps/web/lib/auth/require-role.ts) — helper canônico. Retorna `{ ok: true, ctx }` em sucesso ou `{ ok: false, error, code }` em qualquer falha. `code: 'no_session' | 'no_workspace' | 'not_member' | 'forbidden'` permite o caller mapear pra microcopy contextual via `forbiddenMessage`. **Não joga** `redirect()` nem throw — caller decide UX. `ctx.userEmail` exposto explicitamente (sem `user.email!` espalhado pelo código).
+- [x] [`apps/web/features/invitations/actions.ts`](apps/web/features/invitations/actions.ts) — `inviteMemberAction` e `revokeInvitationAction` migrados pra `requireRole(['Owner','Admin'], { forbiddenMessage: … })`. 4 blocos inline (`getCurrentUser` + email guard + `readWorkspaceCookie` + `isUuid` + `workspaceMember.findUnique` + role check) viram 1 chamada. Constante `ADMIN_ROLES` removida.
+- **Decisão `setActiveWorkspaceAction` NÃO usa `requireRole`:** o action recebe `workspaceId` como argumento (não vem do cookie ativo) — o helper canônico lê do cookie. Refatorar exigiria opção `workspaceId` no helper que só `setActiveWorkspaceAction` usaria. Mantemos inline (4 linhas, RBAC mínimo) e documentamos no comentário do `require-role.ts`.
+
+**Frente B — Audit log expandido + wrap em `withWorkspace` (CRÍTICO #2):**
+
+- [x] [`apps/web/lib/audit/context.ts`](apps/web/lib/audit/context.ts) — helper `getRequestAuditContext()` lê `x-forwarded-for` (Vercel sanitiza spoofing — primeiro IP é o cliente real) com fallback `x-real-ip`, mais `user-agent`. Centraliza convenção pra todos os audit logs novos. Mascaramento LGPD do IP completo fica como TODO pro M7#6.
+- [x] [`apps/web/features/auth/actions.ts`](apps/web/features/auth/actions.ts) — `loginAction` registra `user_logged_in` pós-`signInWithPassword` (resolve workspaceId via cookie ativo OU primeiro membership; skip silente se user sem workspace — não polui audit_logs com órfãos). `logoutAction` registra `user_logged_out` **ANTES** de `signOut()` (senão `getUser()` volta null e perde o vínculo).
+- [x] **Wrap em `withWorkspace`** ([CRÍTICO #2 do review do PR #39]): `inviteMemberAction` envolve check de existing member + invitation upsert + lookup de inviterRecord em UMA tx com discriminated union no retorno (`{ ok: true, invitation, inviterName } | { ok: false, code: 'already_member' }`); audit log em tx separada (non-fatal). `acceptInvitationAction` substitui `prisma.$transaction` por `withWorkspace(invitation.workspaceId, …)` — chicken-and-egg da leitura do convite por token continua via `prisma.` (caller não é membro ainda; admin client documentado no header). `revokeInvitationAction` envolve `updateMany` + audit em txs separadas.
+
+**Frente C — `features/team/` + `/settings/team` real:**
+
+- [x] [`apps/web/features/team/types.ts`](apps/web/features/team/types.ts) — `TeamMemberRow` (join de `workspace_members` + `users`) e `PendingInviteRow` (status='pending' só). Strings ISO 8601 em datas pra trivializar Server→Client boundary.
+- [x] [`apps/web/features/team/schemas.ts`](apps/web/features/team/schemas.ts) — `changeRoleSchema` (aceita `Owner` no schema mas action bloqueia — sinal de "Use Transferir propriedade"), `removeMemberSchema`, `resendInviteSchema`.
+- [x] [`apps/web/features/team/queries.ts`](apps/web/features/team/queries.ts) — `getTeamMembersAndInvitations(workspaceId)` server-only via admin client (Server Component não roda em tx Prisma; defense-in-depth = filtro `.eq('workspace_id', …)` explícito). Errors em invitations não bloqueiam a tela — log + retorna lista vazia.
+- [x] [`apps/web/features/team/actions.ts`](apps/web/features/team/actions.ts) — 3 Server Actions: `changeRoleAction` (bloqueios: self-change, same-role no-op silente, promote Owner, demote Owner; audit `member_role_changed` com `changes: { from, to, targetUserId }`), `removeMemberAction` (bloqueios: Owner, self-remove; audit `member_removed`), `resendInviteAction` (token NÃO rotaciona — UX repetível; sem audit pois é repetição do invite original). Todas em `withWorkspace` com discriminated union no retorno.
+- [x] [`apps/web/features/team/presentation.ts`](apps/web/features/team/presentation.ts) — `memberInitials` (2 letras name→email), `memberDisplayName` (name OR local-part do email), `isActiveMember` type guard.
+- [x] [`apps/web/app/(dashboard)/settings/team/page.tsx`](<apps/web/app/(dashboard)/settings/team/page.tsx>) — vira Server Component com `dynamic = 'force-dynamic'` (mesma razão de `(dashboard)/layout.tsx`). Carrega ctx + workspaceId + dados reais e passa pro Client.
+- [x] [`apps/web/app/(dashboard)/settings/team/team-view.tsx`](<apps/web/app/(dashboard)/settings/team/team-view.tsx>) — Client Component próprio (não reusou `TeamList`/`InviteMemberDialog` do `features/settings/` legacy pra evitar adapter entre enum `MemberRole` lowercase e Prisma `Role` PascalCase). Bloco "Convites pendentes" novo acima dos membros (tabela responsiva + dropdown Reenviar/Cancelar). RBAC visual: `canManage = Owner | Admin`; ações somem pra Manager/Vendedor/Viewer (defense in depth — Server Actions revalidam server-side). `router.refresh()` pós-mutation; sem optimistic update (fica pra M8+ quando volume justificar).
+
+**Frente D — Débitos do review do PR #39:**
+
+| ID            | Débito                                                                          | Solução                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔴 CRÍTICO #1 | smoke test cobrindo `safeNextParam`                                             | Extraído de `middleware.ts` pra [`apps/web/lib/auth/safe-next-param.ts`](apps/web/lib/auth/safe-next-param.ts). 4 asserts novos no `/api/smoke-test/supabase`: aceita path de convite codificado, rejeita protocolo-relativo `//evil.com`, rejeita CRLF, rejeita >512 chars. |
+| 🔴 CRÍTICO #2 | wrap invitations em `withWorkspace`                                             | Frente B2 — todas as 3 actions agora rodam em `withWorkspace`.                                                                                                                                                                                                               |
+| 🟠 HIGH #11   | `User.email @db.Citext` — documentar invariante                                 | Comentário invariante em [schema.prisma:96](packages/db/prisma/schema.prisma) explicando que citext só é case-insensitive na comparação Postgres; app SEMPRE normaliza com `.toLowerCase().trim()` na borda.                                                                 |
+| 🟠 HIGH #13   | `searchParams.token` pode vir como array                                        | [`apps/web/app/invite/accept/page.tsx`](apps/web/app/invite/accept/page.tsx) normaliza `Array.isArray ? [0] : raw` antes do Zod — em vez de descartar arrays como "convite não encontrado", pega o primeiro elemento.                                                        |
+| 🟡 MEDIUM #15 | `/verify-email` redirect deleta `?token=`                                       | Middleware preserva o destino original (`pathname + search`) no `?next=` do `/verify-email`. Handler do `/verify-email` honra `next` quando `emailVerified`, redirecionando pra `/invite/accept?token=…` em vez de `/onboarding`.                                            |
+| 🟡 MEDIUM #16 | `users.email ?? ''` mascara bug do trigger                                      | `createWorkspaceAction` valida `user.email` antes da tx e lança Error barulhento se faltar (em vez de inserir string vazia). `acceptInvitationAction` extrai `const userEmail = user.email` pra preservar narrowing dentro da `withWorkspace` callback e usar limpo.         |
+| 🟡 MEDIUM #17 | cookie TTL vs sessão Supabase                                                   | Middleware fast-path agora valida membership via `isUserMemberOfWorkspace(userId, cookieWs)` (cached 60s) antes de confiar no cookie. Mismatch limpa cookie + cai pro slow path. Novo helper [`clearWorkspaceCookieOnResponse`](apps/web/lib/auth/workspace-cookie.ts).      |
+| 🟡 MEDIUM #20 | `getMembershipCountForUser` sem cache                                           | `Map<key, { value, expires }>` no module scope de [`features/workspace/queries.ts`](apps/web/features/workspace/queries.ts) com TTL 60s. Edge worker mantém o Map vivo entre requests da mesma instance.                                                                     |
+| 🟡 MEDIUM #21 | `resolveHasWorkspace` chamado 2x na mesma request                               | **Auditado: falso-positivo no middleware.** Cada path do middleware é exclusivo (raiz, auth routes, verify-email, onboarding, demais) — só 1 chamada por request. O cache TTL de MEDIUM #20 já cobre eventual chamada dupla cross-context (middleware + Server Component).   |
+| LOW (vários)  | cast `user_metadata`, fonte Poppins email, `accept-form.tsx` double-render, etc | Rolam pra M7#6.                                                                                                                                                                                                                                                              |
+
+**Validação local:**
+
+- `pnpm --filter @papopro/web typecheck` ✓ (após cada frente — A, D-rápidos, B1, B2, C-backend, C-UI, D-smoke).
+- 4 asserts novos no smoke endpoint elevam o total esperado de 6 → 10 checks.
+- Cenários de browser a validar pós-merge:
+  1. Owner em `/settings/team` vê membros reais + convites pendentes
+  2. Convida novo email (Resend dispara)
+  3. Muda papel Vendedor → Manager — `audit_logs.member_role_changed` aparece com ipAddress + userAgent
+  4. Revoga convite pending — some da tela
+  5. Logout — `audit_logs.user_logged_out` com workspaceId correto
+  6. Login com Vendedor — `/settings/team` mostra read-only (sem botões de ação)
+
+**Commits onda 1 (7 commits, em ordem):**
+
+1. `feat(rbac): require-role helper + refactor invitations actions (M7#5 frente A)`
+2. `fix(m7#5): débitos rápidos do review — token array, citext invariant, user.email throw`
+3. `feat(audit): user_logged_in / user_logged_out com helper de request context`
+4. `refactor(invitations): wrap actions em withWorkspace (M7#5 CRÍTICO #2)`
+5. `feat(team): features/team backend + audit member_role_changed/removed`
+6. `feat(settings/team): UI real consumindo features/team (Server Component + Client)`
+7. `fix(middleware): preserve ?token= em verify-email + valida cookie + cache TTL + safeNextParam smoke`
+
+**Entregas — M7#5 Onda 2 — fixes pós-review do PR #39:**
+
+Após onda 1 ser revisada, mais 3 débitos HIGH foram identificados (todos comportamento real de produção, não estético). Onda 2 fecha eles na mesma branch antes do PR ir pro `dev`.
+
+- [x] **HIGH #1 — `logLoginEvent` confiava no cookie de workspace de outra sessão** ([apps/web/features/auth/actions.ts](apps/web/features/auth/actions.ts)). Cenário: user A logado em workspace W1 → troca de conta no mesmo browser → user B faz login. Cookie `papopro_workspace_id` ainda é W1 (do user A), mas userId do request é B. Gravava audit `(workspaceId=W1, userId=B)` em tenant que B não pertence. Em produção com RLS restritiva, INSERT é rejeitado e login deixa de ser auditado. Em dev (superuser bypassa RLS), polui W1 com evento órfão. **Solução:** `logLoginEvent` sempre busca via `firstMembership` ordenado por `createdAt asc` do user que acabou de entrar — heurística simples até o switcher persistir "última seleção" em coluna do banco. Multi-workspace: audit vai sempre pro mais antigo (aceitável porque é login, não ação de domínio).
+- [x] **HIGH #2 — `resendInviteAction` sem rate-limit** ([apps/web/features/team/actions.ts](apps/web/features/team/actions.ts)). Owner click-spam disparava N emails Resend pro mesmo convidado, consumindo cota Resend cross-tenant (a API key é compartilhada entre todos os workspaces). **Solução:** cooldown server-side de 60s entre reenvios do MESMO convite, proxy do `lastSentAt` via aritmética `expiresAt - INVITATION_TTL_DAYS` (evita migration nova). Erro retornado em pt-BR ("Aguarde Xs antes de reenviar esse convite.") cai no toast genérico do team-view — sem mudança de UI necessária. Em M8+ quando uma coluna `last_sent_at` dedicada entrar, trocar a aritmética por leitura direta.
+- [x] **HIGH #3 — Ações destrutivas em /settings/team sem confirmação** ([apps/web/app/(dashboard)/settings/team/team-view.tsx](<apps/web/app/(dashboard)/settings/team/team-view.tsx>)). Clique acidental no dropdown removia membro / cancelava convite / rebaixava papel sem aviso, sem desfazer. **Solução:** ConfirmContext + `useConfirm()` hook evita prop drilling 3 níveis abaixo (TeamView → MembersSection → MemberRow → MemberActions). Cada ação destrutiva chama `useConfirm({ title, description, confirmLabel, destructive: true, onConfirm })`. Ações que NÃO passam por confirm (são reversíveis ou repetíveis): Promover, Convidar novo, Reenviar convite. Ações que passam: Remover membro, Cancelar convite, Rebaixar papel. `confirmPending` trava o cancelar enquanto a Server Action roda — evita fechar o dialog no meio da request.
+
+**Commits onda 2 (4 commits, em ordem):**
+
+8. `fix(m7-rbac-audit-team): logLoginEvent resolve workspaceId via firstMembership (HIGH #1)` (`ddb8f3a`)
+9. `fix(m7-rbac-audit-team): cooldown 60s em resendInviteAction (HIGH #2)` (`f9538a8`)
+10. `feat(m7-rbac-audit-team): confirm dialogs em ações destrutivas de /settings/team (HIGH #3)` (`b153da3`)
+11. `chore(claude): ajustar permissões locais de Bash + Read sob WSL` (`06a870c`)
+
+**Validação local pós-onda 2:** `pnpm -w typecheck` 5/5 ✓, `pnpm --filter @papopro/web lint` ✓ (lint-staged em cada commit já garantiu prettier + eslint --fix).
+
+**Commit:** `feat(m7-rbac-audit-team): rbac + audit + /settings/team + débitos PR #39 (M7#5)`
 
 ---
 

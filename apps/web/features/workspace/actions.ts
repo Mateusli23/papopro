@@ -71,6 +71,18 @@ export async function createWorkspaceAction(
   if (!user.email_confirmed_at) {
     return { ok: false, error: 'Confirme seu email antes de criar o workspace.' };
   }
+  // **Fix do review M7#4 MEDIUM #16:** antes mascarávamos com `?? ''` no upsert
+  // de users abaixo — se o trigger `handle_new_auth_user` falhasse em popular
+  // `email`, criávamos um espelho com string vazia e o bug ficava silencioso
+  // até a primeira query que tentasse encontrar esse user pelo email. Agora
+  // falha barulhento (logs + Sentry futuro) pra detecção imediata. Defense-
+  // in-depth: o middleware já garante user.email !== null antes de chegar aqui.
+  if (!user.email) {
+    throw new Error(
+      '[createWorkspaceAction] user without email — trigger handle_new_auth_user pode ter falhado?',
+    );
+  }
+  const userEmail = user.email; // narrow preservado dentro da $transaction abaixo
 
   // (3) Idempotência: usuário já tem workspace? Reaproveita.
   const existing = await prisma.workspaceMember.findFirst({
@@ -119,7 +131,7 @@ export async function createWorkspaceAction(
         where: { id: user.id },
         create: {
           id: user.id,
-          email: user.email ?? '',
+          email: userEmail,
           name: (user.user_metadata as Record<string, unknown>)?.name as string | undefined,
           emailVerifiedAt: user.email_confirmed_at ? new Date(user.email_confirmed_at) : null,
         },

@@ -37,6 +37,7 @@ import { NextResponse } from 'next/server';
 
 import { prisma } from '@papopro/db';
 
+import { safeNextParam } from '@/lib/auth/safe-next-param';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
@@ -61,6 +62,10 @@ export async function GET() {
     rollbackResetsContext: { ok: false },
     rlsBlocksOutOfWorkspace: { ok: false },
     rlsDeniesWriteCrossTenant: { ok: false },
+    safeNextParamAcceptsConvitePath: { ok: false },
+    safeNextParamRejectsProtocolRelative: { ok: false },
+    safeNextParamRejectsControlChars: { ok: false },
+    safeNextParamRejectsTooLong: { ok: false },
   };
 
   // ---------------------------------------------------------------------------
@@ -264,6 +269,86 @@ export async function GET() {
         // best-effort
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 7-10. safeNextParam — guard de open-redirect (M7#5 CRÍTICO #1).
+  //
+  // Fix do code review do PR #39: garantimos no smoke que `safeNextParam`
+  // **aceita** a query-string codificada de convite (caso 95% legítimo),
+  // **rejeita** open-redirects protocolo-relativos, CRLF smuggling e DoS de
+  // URL gigante. Esses 4 vetores cobrem o que o guard precisa segurar em
+  // produção; mudança em qualquer uma das regras quebra um destes asserts.
+  // ---------------------------------------------------------------------------
+  try {
+    // Cenário real: `/signup?next=/invite/accept?token=…` chega no middleware
+    // via `URLSearchParams.get('next')`, que já decodifica %2F → / e %3F → ?.
+    // `safeNextParam` deve aceitar a string decodificada (path + query).
+    const conviteNext = '/invite/accept?token=8b2c4ea4-9c2c-4f6f-8e1d-3b9c1c8ab123';
+    const accepted = safeNextParam(conviteNext);
+    checks.safeNextParamAcceptsConvitePath = {
+      ok: accepted === conviteNext,
+      detail:
+        accepted === conviteNext
+          ? `aceitou path de convite (${accepted.length} chars)`
+          : `esperava string igual, recebeu ${JSON.stringify(accepted)}`,
+    };
+  } catch (err) {
+    checks.safeNextParamAcceptsConvitePath = {
+      ok: false,
+      detail: (err as Error).message,
+    };
+  }
+
+  try {
+    // Protocolo-relativo (`//evil.com`) é open-redirect — browser interpreta
+    // como URL absoluta com mesmo protocolo. `safeNextParam` deve retornar null.
+    const rejected = safeNextParam('//evil.com/phishing');
+    checks.safeNextParamRejectsProtocolRelative = {
+      ok: rejected === null,
+      detail:
+        rejected === null
+          ? 'rejeitou protocolo-relativo'
+          : `VAZAMENTO: aceitou ${JSON.stringify(rejected)} (open-redirect)`,
+    };
+  } catch (err) {
+    checks.safeNextParamRejectsProtocolRelative = {
+      ok: false,
+      detail: (err as Error).message,
+    };
+  }
+
+  try {
+    // Control chars (`\r\n`) em URL permitem CRLF smuggling no Set-Cookie /
+    // Location header. `safeNextParam` deve rejeitar.
+    const rejected = safeNextParam('/dashboard\r\nX-Injected: oops');
+    checks.safeNextParamRejectsControlChars = {
+      ok: rejected === null,
+      detail: rejected === null ? 'rejeitou control chars' : `VAZAMENTO: aceitou string com CRLF`,
+    };
+  } catch (err) {
+    checks.safeNextParamRejectsControlChars = {
+      ok: false,
+      detail: (err as Error).message,
+    };
+  }
+
+  try {
+    // DoS de URL gigante: > 512 chars deve ser rejeitado.
+    const longPath = '/dashboard?x=' + 'a'.repeat(600);
+    const rejected = safeNextParam(longPath);
+    checks.safeNextParamRejectsTooLong = {
+      ok: rejected === null,
+      detail:
+        rejected === null
+          ? `rejeitou ${longPath.length} chars (limite 512)`
+          : `VAZAMENTO: aceitou string com ${longPath.length} chars`,
+    };
+  } catch (err) {
+    checks.safeNextParamRejectsTooLong = {
+      ok: false,
+      detail: (err as Error).message,
+    };
   }
 
   const allOk = Object.values(checks).every((c) => c.ok);
