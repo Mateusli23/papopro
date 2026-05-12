@@ -8,6 +8,20 @@ import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWizardCookie } from '@/lib/auth/workspace-cookie';
 
 /**
+ * **`dynamic = 'force-dynamic'` (M7#4 review fix):** todas as rotas filhas
+ * sob `(dashboard)/` dependem da sessão Supabase + workspace ativo (cookies
+ * por-request). Sem este flag, Next 14 tenta prerender no build e crasha
+ * porque o `getCurrentUserContext` abaixo invoca `createSupabaseServerClient`
+ * sem env vars (CI runner não tem `.env.local`). Marcar como force-dynamic
+ * documenta o invariante real: nenhuma dessas pages é cacheável estaticamente.
+ *
+ * Alternativa considerada: setar `NEXT_PUBLIC_SUPABASE_URL` etc. como secrets
+ * no CI. Rejeitada — a key vira pública nos logs do GitHub Actions e a fix
+ * estrutural é dizer "essas pages SÃO dinâmicas".
+ */
+export const dynamic = 'force-dynamic';
+
+/**
  * Layout do produto. Aplicado a TODAS as rotas dentro de `(dashboard)/` —
  * leads, kanban, inbox, agentes, etc. Sidebar à esquerda (desktop) ou drawer
  * (mobile), topbar fixa, conteúdo rolável.

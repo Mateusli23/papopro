@@ -16,6 +16,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+/**
+ * **`dynamic = 'force-dynamic'` (M7#4 review fix):** a página chama
+ * `getInvitationByToken` (admin client) + `getCurrentUser` (server client) que
+ * exigem `NEXT_PUBLIC_SUPABASE_URL` no env — sem isso o prerender em CI
+ * crasha. Como o output depende do `?token=` e da sessão, nunca seria
+ * cacheável estaticamente mesmo; force-dynamic é o flag honesto.
+ */
+export const dynamic = 'force-dynamic';
+
 interface InviteAcceptPageProps {
   searchParams: { token?: string | string[] };
 }
