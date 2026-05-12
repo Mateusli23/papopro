@@ -177,25 +177,37 @@ export async function loginAction(input: LoginInput): Promise<AuthActionResult> 
  * `user_logged_in` e grava na `audit_logs`. Non-fatal: falha de audit nunca
  * bloqueia login (UX: "consegui logar mas algo no banco quebrou" = sessão
  * útil; o audit é guardrail, não gating).
+ *
+ * **Fix do review M7#5 HIGH #1:** **NÃO** usa o cookie `papopro_workspace_id`
+ * pra resolver o workspaceId. Cenário: user A logado em workspace W1 →
+ * troca de conta no mesmo browser → user B faz login. O cookie do request
+ * ainda é W1 (do user A), mas o newly-logged userId é B. Usar o cookie aqui
+ * grava audit `(workspaceId=W1, userId=B)` em tenant ao qual B não pertence.
+ * Em produção com RLS restritiva, o INSERT é rejeitado e o login deixa de
+ * ser auditado. Em dev (superuser bypassa RLS), polui o tenant W1.
+ *
+ * Solução: sempre buscar via `firstMembership` ordenado por `createdAt asc`
+ * do user que acabou de entrar — heurística simples até o switcher do
+ * cliente persistir "última seleção" em coluna do banco. Se o user tem
+ * múltiplos workspaces, o evento vai sempre pro mais antigo — aceitável
+ * porque é login, não ação de domínio. O `setActiveWorkspaceAction` do
+ * switcher já registra `member_role_changed`/equivalente quando o user
+ * troca de workspace ativo.
  */
 async function logLoginEvent(userId: string | undefined): Promise<void> {
   if (!userId) return;
 
-  const cookieWs = readWorkspaceCookie();
-  let workspaceId: string | null = cookieWs && isUuid(cookieWs) ? cookieWs : null;
-
-  if (!workspaceId) {
-    try {
-      const firstMembership = await prisma.workspaceMember.findFirst({
-        where: { userId },
-        select: { workspaceId: true },
-        orderBy: { createdAt: 'asc' },
-      });
-      workspaceId = firstMembership?.workspaceId ?? null;
-    } catch (err) {
-      console.error('[loginAction] workspace lookup failed (non-fatal)', err);
-      return;
-    }
+  let workspaceId: string | null = null;
+  try {
+    const firstMembership = await prisma.workspaceMember.findFirst({
+      where: { userId },
+      select: { workspaceId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    workspaceId = firstMembership?.workspaceId ?? null;
+  } catch (err) {
+    console.error('[loginAction] workspace lookup failed (non-fatal)', err);
+    return;
   }
 
   if (!workspaceId) return; // user sem workspace — login pré-onboarding
