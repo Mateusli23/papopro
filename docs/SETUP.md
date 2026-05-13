@@ -172,6 +172,101 @@ abrir cedo pra começar a instrumentar.
 
 ---
 
+## 4.4 Dev local sem Supabase Cloud — stack em Docker (alternativa robusta)
+
+**Por quê:** o caminho default (apontar `.env.local` pro Supabase cloud `iffmjydjeukozopxxitb`) funciona bem na maioria das máquinas, **mas falha em redes com antivírus interceptando HTTPS** — Kaspersky, Bitdefender, ESET, Trend Micro, Zscaler corporativo etc. Sintomas: `UNABLE_TO_VERIFY_LEAF_SIGNATURE` (signup), `Can't reach database server` (Prisma), `Tenant or user not found` (pooler do Supabase).
+
+Solução: rodar a stack inteira do Supabase em containers locais via Supabase CLI + Docker. Zero TLS pra antivírus interceptar (tudo em `127.0.0.1`), zero pooler do Supavisor, dev offline-capable.
+
+**Pré-requisitos (instalar uma vez):**
+
+1. **Docker Desktop** — `https://www.docker.com/products/docker-desktop` (no Windows precisa WSL 2; o instalador habilita)
+2. **Supabase CLI** — pode usar:
+   - macOS: `brew install supabase/tap/supabase`
+   - Linux: `npx -y supabase` (sem install) ou download da release
+   - Windows: download direto de `https://github.com/supabase/cli/releases` (winget falha por TLS quando há antivírus interceptando)
+
+**Setup:**
+
+```bash
+# 1. Sobe a stack (primeira vez baixa ~3GB de imagens, 5-8min; depois é cache)
+supabase start
+
+# 2. Vê as URLs e keys que ele gerou
+supabase status --output env
+# Output: API_URL, ANON_KEY (JWT), SERVICE_ROLE_KEY (JWT), DB_URL, etc.
+
+# 3. Atualiza apps/web/.env.local:
+#    NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+#    NEXT_PUBLIC_SUPABASE_ANON_KEY=<ANON_KEY do supabase status>
+#    SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY>
+#    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+#    DIRECT_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+#    (sem `sslmode=no-verify` — localhost não tem antivírus interceptando)
+
+# 4. pnpm dev — Next vai falar com o Supabase do container
+pnpm dev
+```
+
+**O que sobe** (todos em `127.0.0.1`):
+
+- **API** (PostgREST + GoTrue Auth + Storage + Kong) — `:54321`
+- **Postgres** — `:54322`
+- **Studio** (admin UI tipo pgAdmin/Supabase web) — `:54323`
+- **Mailpit** (inbox fake — emails de signup/convite caem aqui em vez de Resend real) — `:54324`
+
+**Migrations:** `supabase start` aplica automaticamente o que está em `supabase/migrations/`. As 2 migrations iniciais (`init_auth_and_multi_tenant` + `harden_m7_2`) foram replicadas do cloud em 2026-05-12. Pra criar nova:
+
+```bash
+supabase migration new <slug>           # cria arquivo timestamped em supabase/migrations/
+# edita o SQL
+supabase db reset                       # apaga banco local + reaplica TUDO desde o início (idempotente)
+# quando aprovado, sobe pro cloud:
+supabase link --project-ref iffmjydjeukozopxxitb   # uma vez por máquina
+supabase db push                                    # aplica só as migrations não-aplicadas no cloud
+```
+
+**Comandos do dia-a-dia:**
+
+```bash
+supabase start              # de manhã quando ligar o PC
+supabase stop               # à noite (mantém os dados)
+supabase stop --no-backup   # se quiser apagar o banco local (signups de teste etc.)
+supabase status             # ver URLs/keys/health
+```
+
+**Edge runtime desabilitado:** em [supabase/config.toml](../supabase/config.toml) o `[edge_runtime]` está `enabled = false`. Motivo: Deno (que roda edge functions) tenta baixar `deno.land/std` no bootstrap, e em redes com antivírus interceptando isso falha com `UnknownIssuer`. PapoPro só usa edge functions a partir do M10/M11 (motor de cadência), então desligar agora não impacta. Reabilita quando chegar lá.
+
+**Em prod (Vercel) tudo isso é irrelevante:** o Vercel aponta pro Supabase cloud (`iffmjydjeukozopxxitb`), sem Docker, sem `sslmode=no-verify`, sem CA bundle. A stack local existe **só pra desbloquear dev**.
+
+---
+
+## 4.45 Windows + antivírus interceptando HTTPS — fix do Node TLS
+
+**Sintoma:** `UNABLE_TO_VERIFY_LEAF_SIGNATURE` em qualquer chamada HTTPS do Node (signup Supabase, `npm install`, Prisma, Resend etc.).
+
+**Causa:** antivírus instalou um cert root próprio no `Cert:\LocalMachine\Root` do Windows pra reassinar TLS (SSL inspection). Node, Prisma engine (Rust) e Deno têm CA bundles internos que NÃO enxergam o trust store do Windows — então tudo que esses runtimes batem em HTTPS quebra.
+
+**Fix (uma vez por máquina):**
+
+```powershell
+# 1. Exporta o trust store do Windows pra .windows-ca-bundle.pem (gitignored)
+.\scripts\export-windows-ca.ps1
+
+# 2. Aponta NODE_EXTRA_CA_CERTS pro bundle (persistente)
+setx NODE_EXTRA_CA_CERTS "$(Resolve-Path .\.windows-ca-bundle.pem)"
+
+# 3. Reabre o terminal (setx só vale em sessões NOVAS)
+```
+
+[turbo.json](../turbo.json) já declara `NODE_EXTRA_CA_CERTS` em `globalEnv`, então o Turbo propaga pro `next dev` filho.
+
+**Pra Prisma + Supabase pooler** (caso esteja usando cloud em dev, não-recomendado em redes com antivírus): adiciona `&sslmode=no-verify` em `DATABASE_URL` e `DIRECT_URL`. O engine Rust do Prisma tem trust store próprio que `NODE_EXTRA_CA_CERTS` não cobre. Em prod (Vercel) tira esse parâmetro.
+
+**Em prod (Vercel) nada disso é necessário:** rede do Vercel não tem o antivírus do seu PC. As env vars `NODE_EXTRA_CA_CERTS` e `sslmode=no-verify` só existem em dev local.
+
+---
+
 ## 4.5 Rodar E2E Playwright localmente (M7#6 — opcional)
 
 **Por quê:** os 3 specs Playwright em `apps/web/e2e/*.spec.ts` cobrem o fluxo crítico (signup→verify→login→onboarding, invite→accept, team management incluindo HIGH #1 + #2 + #3). Rodar local antes de PR confirma que não quebramos nada.

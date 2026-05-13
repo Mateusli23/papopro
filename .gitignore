@@ -2,6 +2,23 @@
 node_modules/
 .pnpm-store/
 
+# Local TLS CA bundle (exportado do trust store do Windows pra Node confiar em
+# certs de antivírus/proxy que interceptam HTTPS). Específico da máquina; nunca
+# commitar.
+.windows-ca-bundle.pem
+
+# Supabase local stack (Docker) — runtime artefatos que `supabase start` cria.
+# A pasta `supabase/migrations/` e `supabase/config.toml` SÃO commitadas (são
+# código), mas `.branches/`, `.temp/`, snippets de Studio etc. não.
+supabase/.branches/
+supabase/.temp/
+supabase/snippets/
+supabase/seed.sql.bak
+
+# IDE / editor configs per-user — Cursor escreve `.cursor/rules` específico da
+# máquina; cada dev pode ter o seu sem poluir o repo.
+.cursor/
+
 # Build / cache
 .next/
 .turbo/
