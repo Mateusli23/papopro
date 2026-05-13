@@ -20,9 +20,20 @@ import {
   statusForStage,
   sumOpenPipelineCents,
 } from '@/features/deals/transforms';
-import { applyLeadFilters } from '@/features/leads/queries';
+import { applyLeadFilters } from '@/features/leads/filters';
 import { calcRotState } from '@/features/leads/rotting';
-import { leadCreateSchema } from '@/features/leads/schemas';
+import {
+  archiveLeadSchema,
+  assignLeadSchema,
+  leadCreateSchema,
+  moveStageSchema,
+  updateLeadSchema,
+} from '@/features/leads/schemas';
+import {
+  deriveLeadTemperature,
+  flattenLeadTags,
+  type PrismaLeadTagRow,
+} from '@/features/leads/transforms';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 
@@ -138,11 +149,13 @@ export function GET() {
 
   // ── Validação Zod ───────────────────────────────────────────────────────
   t = run('zod', results);
+  // M8#2: stageId e assignedTo viraram UUIDs (eram slugs em M4). Usar UUIDs
+  // válidos quaisquer — schema só valida o formato, não o existência no banco.
   const baseValid = {
     name: 'Teste OK',
     phone: '+55 11 9 9999-0000',
-    stageId: 'novo',
-    assignedTo: 'user_mateus',
+    stageId: '11111111-1111-4111-9111-111111111111',
+    assignedTo: '22222222-2222-4222-9222-222222222222',
     origin: 'manual' as const,
     valueCents: 0,
     tags: [],
@@ -501,6 +514,63 @@ export function GET() {
       after.count === before.count + 1 &&
       after.totalCents === before.totalCents + created.valueCents
     );
+  });
+
+  // ── M8#2 transforms (puro, sem banco) ──────────────────────────────────
+  t = run('transforms-m8', results);
+
+  const VALID_UUID = '11111111-1111-4111-9111-111111111111';
+  const VALID_UUID_2 = '22222222-2222-4222-9222-222222222222';
+
+  t('deriveLeadTemperature: <3 dias → hot', () => {
+    const ref = new Date('2026-05-13T12:00:00-03:00');
+    const lastInt = new Date('2026-05-12T12:00:00-03:00'); // 1 dia atrás
+    return deriveLeadTemperature(lastInt, ref) === 'hot';
+  });
+  t('deriveLeadTemperature: 5 dias → warm', () => {
+    const ref = new Date('2026-05-13T12:00:00-03:00');
+    const lastInt = new Date('2026-05-08T12:00:00-03:00'); // 5 dias atrás
+    return deriveLeadTemperature(lastInt, ref) === 'warm';
+  });
+  t('deriveLeadTemperature: >10 dias → cold', () => {
+    const ref = new Date('2026-05-13T12:00:00-03:00');
+    const lastInt = new Date('2026-04-20T12:00:00-03:00'); // 23 dias atrás
+    return deriveLeadTemperature(lastInt, ref) === 'cold';
+  });
+  t('deriveLeadTemperature: null → cold', () => deriveLeadTemperature(null) === 'cold');
+
+  t('flattenLeadTags: undefined → []', () => flattenLeadTags(undefined).length === 0);
+  t('flattenLeadTags: vazio → []', () => flattenLeadTags([]).length === 0);
+  t('flattenLeadTags: extrai tag.name', () => {
+    const rows: PrismaLeadTagRow[] = [{ tag: { name: 'vip' } }, { tag: { name: 'imobiliário' } }];
+    const out = flattenLeadTags(rows);
+    return out.length === 2 && out[0] === 'vip' && out[1] === 'imobiliário';
+  });
+
+  // Schemas novos do M8#2
+  t('moveStageSchema rejeita IDs não-UUID', () => {
+    return !moveStageSchema.safeParse({ leadId: 'lead_001', stageId: 'novo' }).success;
+  });
+  t('moveStageSchema aceita UUIDs', () => {
+    return moveStageSchema.safeParse({ leadId: VALID_UUID, stageId: VALID_UUID_2 }).success;
+  });
+  t('assignLeadSchema rejeita IDs não-UUID', () => {
+    return !assignLeadSchema.safeParse({ leadId: 'lead_001', assignedToId: 'user_mateus' }).success;
+  });
+  t('assignLeadSchema aceita UUIDs', () => {
+    return assignLeadSchema.safeParse({ leadId: VALID_UUID, assignedToId: VALID_UUID_2 }).success;
+  });
+  t('archiveLeadSchema rejeita leadId não-UUID', () => {
+    return !archiveLeadSchema.safeParse({ leadId: 'lead_001' }).success;
+  });
+  t('archiveLeadSchema aceita UUID', () => {
+    return archiveLeadSchema.safeParse({ leadId: VALID_UUID }).success;
+  });
+  t('updateLeadSchema: apenas leadId é OK (patch vazio)', () => {
+    return updateLeadSchema.safeParse({ leadId: VALID_UUID }).success;
+  });
+  t('updateLeadSchema rejeita leadId não-UUID', () => {
+    return !updateLeadSchema.safeParse({ leadId: 'not-uuid' }).success;
   });
 
   const passed = results.filter((r) => r.ok).length;

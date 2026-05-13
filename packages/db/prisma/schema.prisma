@@ -5,9 +5,15 @@
 // audit_logs, notification_preferences, webhook_events. RLS habilitada em todas
 // as tabelas pelo SQL aplicado via MCP apply_migration (init_auth_and_multi_tenant).
 //
+// M8#1 acrescenta o domínio CRM core: leads, deals, pipelines + pipeline_stages,
+// tags + lead_tags (m:n), tasks, activities, attachments, custom_fields +
+// lead_custom_values. Campos refletem o que a UI de M4/M5 já espera (mapeado em
+// apps/web/features/leads/types.ts e fixtures em apps/web/lib/fixtures/). RLS
+// segue o padrão de M7#2 — `current_workspace_id()` filtrando por tenant ativo.
+//
 // Source of truth: este arquivo. SQL DDL/RLS é gerado manualmente espelhando os
-// models e aplicado no Supabase via MCP. M8 acrescenta o domínio de leads, deals,
-// pipelines e tarefas. Ver [docs/PLAN.md] §M7 e §M8.
+// models e aplicado no Supabase via supabase/migrations/. Ver [docs/PLAN.md]
+// §M7 e §M8.
 
 generator client {
   provider        = "prisma-client-js"
@@ -56,8 +62,125 @@ enum AuditAction {
   user_logged_out
   export_started
   data_deleted
+  lead_created
+  lead_updated
+  lead_deleted
+  deal_created
+  deal_updated
+  deal_stage_changed
+  task_created
+  task_completed
 
   @@map("audit_action")
+}
+
+// =============================================================================
+// Enums de domínio (M8#1)
+// =============================================================================
+
+/// Origem do lead — preenchida no create (manual, import CSV, webhook ads, etc.).
+/// Espelha `apps/web/features/leads/types.ts:LeadOrigin` (9 valores). Em M9 a
+/// origem `whatsapp_inbound` vira automática (lead criado quando chega mensagem
+/// de número desconhecido); por enquanto entra manual ou via webhook.
+enum LeadOrigin {
+  site
+  meta_ads
+  google_ads
+  indicacao
+  whatsapp_inbound
+  csv_import
+  manual
+  rd_station
+  hotmart
+
+  @@map("lead_origin")
+}
+
+/// Status do lead — `arquivado` é soft-archive (UI esconde de listas default);
+/// `perdido`/`ganho` são terminais e fecham a relação. Soft-delete real (linha
+/// some) usa `deletedAt`, separado do status (LGPD §17).
+enum LeadStatus {
+  ativo
+  arquivado
+  perdido
+  ganho
+
+  @@map("lead_status")
+}
+
+/// Status da oportunidade comercial. Lead pode ter múltiplos deals abertos
+/// (clientes recorrentes, propostas paralelas) — `won/lost` fecha o deal,
+/// não o lead. Espelha `apps/web/features/deals/types.ts:DealStatus`.
+enum DealStatus {
+  open
+  won
+  lost
+
+  @@map("deal_status")
+}
+
+/// Tipo da tarefa — usado pra ícone na lista e pra agrupar relatórios.
+enum TaskKind {
+  call
+  whatsapp
+  email
+  meeting
+  follow_up
+  other
+
+  @@map("task_kind")
+}
+
+/// Status da tarefa. `snoozed` é "adia 1d/3d/7d" — UI esconde até o `dueAt`
+/// novo. Diferente de `pending` pra distinguir adiada vs nunca-tocada.
+enum TaskStatus {
+  pending
+  done
+  snoozed
+
+  @@map("task_status")
+}
+
+/// Tipo de evento na timeline do lead — append-only. Cada evento de domínio
+/// (mover etapa, criar task, anexar arquivo) grava 1 linha em `activities`.
+/// Mensagens WhatsApp (`whatsapp_in`/`whatsapp_out`) entram em M9 quando o
+/// adapter conectar — entradas aqui são placeholder até lá.
+enum ActivityType {
+  whatsapp_in
+  whatsapp_out
+  call
+  email
+  meeting
+  note
+  task
+  stage_change
+  attachment
+  lead_created
+
+  @@map("activity_type")
+}
+
+/// Tom semântico da etapa pra UI — `success` em "Ganho", `destructive` em
+/// "Perdido", `default` no resto. Persistido aqui pra que pipelines custom
+/// (M8#2+) possam marcar suas próprias etapas terminais.
+enum StageTone {
+  default
+  success
+  destructive
+
+  @@map("stage_tone")
+}
+
+/// Tipo do custom field. Schema cobre M8#1 já — UI de configuração entra
+/// numa onda posterior (M8 polimento). `enum` armazena opções em `options`
+/// JSONB do CustomField.
+enum CustomFieldType {
+  text
+  number
+  date
+  enum
+
+  @@map("custom_field_type")
 }
 
 // =============================================================================
@@ -84,6 +207,14 @@ model Workspace {
   auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
   webhookEvents           WebhookEvent[]
+  pipelines               Pipeline[]
+  leads                   Lead[]
+  deals                   Deal[]
+  tags                    Tag[]
+  tasks                   Task[]
+  activities              Activity[]
+  attachments             Attachment[]
+  customFields            CustomField[]
 
   @@index([deletedAt])
   @@map("workspaces")
@@ -113,6 +244,7 @@ model User {
   auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
   invitationsCreated      Invitation[]             @relation("InvitationCreatedBy")
+  attachmentsUploaded     Attachment[]             @relation("AttachmentUploadedBy")
 
   @@map("users")
 }
@@ -131,6 +263,11 @@ model WorkspaceMember {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  leadsAssigned    Lead[]     @relation("LeadAssignee")
+  dealsOwned       Deal[]     @relation("DealOwner")
+  tasksAssigned    Task[]     @relation("TaskAssignee")
+  activitiesAuthor Activity[] @relation("ActivityAuthor")
 
   @@unique([workspaceId, userId])
   @@index([workspaceId])
@@ -223,4 +360,314 @@ model WebhookEvent {
   @@unique([source, externalId])
   @@index([workspaceId, source, createdAt(sort: Desc)])
   @@map("webhook_events")
+}
+
+// =============================================================================
+// Domínio CRM (M8#1)
+// =============================================================================
+
+/// Funil de vendas. Cada workspace tem 1+ pipelines; um é `isDefault=true` e
+/// `createWorkspaceAction` semeia 6 etapas padrão (Novo → … → Ganho/Perdido).
+/// Custom pipelines (M8#2+) podem ter qualquer número de etapas com `order`
+/// definido pelo Owner/Admin.
+///
+/// **Soft-delete:** `deletedAt` esconde da UI mas mantém histórico — leads e
+/// deals que referenciavam etapas dessa pipeline continuam válidos (FK Restrict
+/// nas etapas garante que pipeline com tráfego não some).
+model Pipeline {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  name        String    @db.VarChar(80)
+  isDefault   Boolean   @default(false) @map("is_default")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stages    PipelineStage[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, isDefault])
+  @@map("pipelines")
+}
+
+/// Etapa do funil. `order` define a sequência visual no Kanban (1-indexed,
+/// crescente da esquerda pra direita). `rotDays` é o número de dias após os
+/// quais um deal "esfria" nessa etapa — usado pelo detector de lead frio (M10).
+/// `terminal=true` impede cadências (M10) de re-engajar e marca a etapa como
+/// final no funil (Ganho/Perdido).
+///
+/// **Slug** é estável e único por pipeline — usado nas FKs de leads/deals em
+/// vez do UUID pra que a UI possa fazer `where: { stageId: 'novo' }` sem
+/// lookup. O ID UUID é a verdadeira PK; o slug é só conveniência de API.
+model PipelineStage {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pipelineId String    @map("pipeline_id") @db.Uuid
+  slug       String    @db.VarChar(64)
+  name       String    @db.VarChar(80)
+  order      Int
+  rotDays    Int       @default(0) @map("rot_days")
+  terminal   Boolean   @default(false)
+  tone       StageTone @default(default)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  leads    Lead[]
+  deals    Deal[]
+
+  @@unique([pipelineId, slug])
+  @@unique([pipelineId, order])
+  @@index([pipelineId, order])
+  @@map("pipeline_stages")
+}
+
+/// Contato cru — pessoa/empresa com potencial de virar oportunidade. Em
+/// imobiliário/B2B/alto-ticket (beachhead PapoPro), um lead pode gerar 0..N
+/// deals ao longo do tempo (compra de imóvel A, recompra de imóvel B etc.).
+///
+/// **`temperature` NÃO é coluna persistida** — é derivada de `lastInteractionAt`
+/// em query/view. Decisão: schema mais simples, computa na borda. Se virar
+/// gargalo de performance, criamos VIEW materializada.
+///
+/// **`stageId`** referencia a "etapa principal" do lead (pra UI de lista densa
+/// mostrar). O estado canônico da oportunidade vive em `Deal.stageId` — Kanban
+/// lê de lá, não daqui.
+model Lead {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String     @map("workspace_id") @db.Uuid
+  name              String     @db.VarChar(120)
+  email             String?    @db.Citext
+  phone             String     @db.VarChar(32)
+  company           String?    @db.VarChar(120)
+  position          String?    @db.VarChar(80)
+  origin            LeadOrigin @default(manual)
+  status            LeadStatus @default(ativo)
+  stageId           String     @map("stage_id") @db.Uuid
+  assignedToId      String     @map("assigned_to_id") @db.Uuid
+  valueCents        Int        @default(0) @map("value_cents")
+  notes             String?
+  lastInteractionAt DateTime?  @map("last_interaction_at") @db.Timestamptz(6)
+  nextActionAt      DateTime?  @map("next_action_at") @db.Timestamptz(6)
+  nextActionLabel   String?    @map("next_action_label") @db.VarChar(120)
+  createdById       String?    @map("created_by_id") @db.Uuid
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stage        PipelineStage     @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  assignedTo   WorkspaceMember   @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  deals        Deal[]
+  tasks        Task[]
+  activities   Activity[]
+  attachments  Attachment[]
+  tags         LeadTag[]
+  customValues LeadCustomValue[]
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, status])
+  @@index([workspaceId, stageId])
+  @@index([workspaceId, assignedToId])
+  @@index([workspaceId, lastInteractionAt(sort: Desc)])
+  @@index([workspaceId, deletedAt])
+  @@map("leads")
+}
+
+/// Oportunidade comercial — `(leadId, stageId)` representa "lead X está na
+/// etapa Y do funil Z com valor V". Lead pode ter múltiplos deals abertos:
+/// imóvel A em "Negociação" + imóvel B em "Proposta". O Kanban lê desta tabela.
+///
+/// **Soft-archive via `status`**, soft-delete via `deletedAt`. Diferente:
+/// `status=lost` registra perda com `lostReason`; `deletedAt` é "remover por
+/// erro de digitação" (raro mas LGPD §17 exige).
+model Deal {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String     @map("workspace_id") @db.Uuid
+  title        String     @db.VarChar(160)
+  leadId       String     @map("lead_id") @db.Uuid
+  stageId      String     @map("stage_id") @db.Uuid
+  valueCents   Int        @default(0) @map("value_cents")
+  ownerId      String     @map("owner_id") @db.Uuid
+  probability  Int?
+  dueAt        DateTime?  @map("due_at") @db.Timestamptz(6)
+  description  String?
+  status       DealStatus @default(open)
+  lostReason   String?    @map("lost_reason")
+  orderInStage Int        @default(0) @map("order_in_stage")
+  closedAt     DateTime?  @map("closed_at") @db.Timestamptz(6)
+  createdById  String?    @map("created_by_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead      Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  stage     PipelineStage   @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  owner     WorkspaceMember @relation("DealOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, stageId, orderInStage])
+  @@index([workspaceId, status])
+  @@index([workspaceId, ownerId])
+  @@index([leadId])
+  @@index([workspaceId, deletedAt])
+  @@map("deals")
+}
+
+/// Tag livre — criada inline no form de lead. Por workspace, unique por nome
+/// (case-insensitive via citext). UI permite até 8 por lead (enforced no app).
+model Tag {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String   @db.Citext
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leadTags  LeadTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+  @@map("tags")
+}
+
+/// Junction lead ↔ tag (m:n).
+model LeadTag {
+  leadId    String   @map("lead_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+  @@index([tagId])
+  @@map("lead_tags")
+}
+
+/// Tarefa vinculada a um lead. `kind` é só ícone/agrupamento de relatório;
+/// `dueAt` é o que dispara a coluna "atrasadas" no /tasks. `snoozed` é estado
+/// intermediário entre `pending` e `done` — adiada por N dias, some da UI até
+/// o `dueAt` novo.
+model Task {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String     @map("workspace_id") @db.Uuid
+  leadId       String     @map("lead_id") @db.Uuid
+  kind         TaskKind
+  title        String     @db.VarChar(160)
+  notes        String?
+  dueAt        DateTime   @map("due_at") @db.Timestamptz(6)
+  status       TaskStatus @default(pending)
+  assignedToId String     @map("assigned_to_id") @db.Uuid
+  doneAt       DateTime?  @map("done_at") @db.Timestamptz(6)
+  createdById  String?    @map("created_by_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead       Lead            @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignedTo WorkspaceMember @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, status, dueAt])
+  @@index([workspaceId, assignedToId])
+  @@index([leadId])
+  @@map("tasks")
+}
+
+/// Timeline append-only do lead. Cada evento de domínio (mudança de etapa,
+/// criar task, anexar arquivo, mensagem WhatsApp em M9) grava 1 linha aqui.
+/// **Sem update/delete** — policy RLS proíbe; LGPD permite anonimização via
+/// reescrita de `body` se solicitado.
+///
+/// `authorId` opcional pra eventos de sistema (`stage_change` automático por
+/// cadência, por exemplo). `meta` JSONB carrega contexto específico do tipo
+/// (fromStageId/toStageId em stage_change, durationSeconds em call, etc.).
+model Activity {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String       @map("workspace_id") @db.Uuid
+  leadId      String       @map("lead_id") @db.Uuid
+  type        ActivityType
+  body        String?
+  authorId    String?      @map("author_id") @db.Uuid
+  meta        Json?
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead      Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  author    WorkspaceMember? @relation("ActivityAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, leadId, createdAt(sort: Desc)])
+  @@index([leadId, createdAt(sort: Desc)])
+  @@index([workspaceId, type])
+  @@map("activities")
+}
+
+/// Anexo de lead — arquivo armazenado no Supabase Storage bucket `attachments`.
+/// `path` é o storage path completo (`<workspaceId>/<leadId>/<uuid>-<filename>`);
+/// `bucket` permite migrar pra outro bucket no futuro sem alterar schema.
+///
+/// **Cleanup de órfãos:** `pg_cron` diário em M8#6 vai varrer linhas com
+/// `deletedAt > 30 dias` e apagar o objeto no Storage. Até lá, soft-delete só
+/// esconde da UI.
+model Attachment {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  leadId       String    @map("lead_id") @db.Uuid
+  bucket       String    @default("attachments") @db.VarChar(64)
+  path         String
+  fileName     String    @map("file_name") @db.VarChar(255)
+  mimeType     String    @map("mime_type") @db.VarChar(127)
+  sizeBytes    Int       @map("size_bytes")
+  uploadedById String    @map("uploaded_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  workspace  Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead       Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  uploadedBy User      @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([workspaceId, leadId, createdAt(sort: Desc)])
+  @@index([workspaceId, deletedAt])
+  @@map("attachments")
+}
+
+/// Campo customizado por workspace — Owner/Admin define no settings o que
+/// quer rastrear além dos campos default (ex: "metragem", "andar", "ICP score").
+/// Schema preparado em M8#1; UI de gestão entra numa onda posterior.
+model CustomField {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String          @map("workspace_id") @db.Uuid
+  key         String          @db.VarChar(64)
+  label       String          @db.VarChar(120)
+  type        CustomFieldType
+  options     Json?
+  order       Int             @default(0)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  values    LeadCustomValue[]
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId, order])
+  @@map("custom_fields")
+}
+
+/// Valor do custom field pra um lead específico — JSONB porque o tipo varia
+/// (text/number/date/enum). Trade-off conhecido: queries em valores custom
+/// usam GIN sobre `value` em vez de índices nativos; performance OK pra
+/// volume MVP, revisamos se virar gargalo.
+model LeadCustomValue {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId        String   @map("lead_id") @db.Uuid
+  customFieldId String   @map("custom_field_id") @db.Uuid
+  value         Json
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  lead        Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  customField CustomField @relation(fields: [customFieldId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, customFieldId])
+  @@index([customFieldId])
+  @@map("lead_custom_values")
 }

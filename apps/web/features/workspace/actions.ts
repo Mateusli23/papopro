@@ -31,6 +31,7 @@ import {
 import { reportNonFatal } from '@/lib/observability/report';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 import { isUuid } from '@/lib/utils/uuid';
+import { DEFAULT_PIPELINE_NAME, DEFAULT_PIPELINE_STAGES } from '@/lib/workspace/default-pipeline';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
 
 import { workspaceCreateSchema, type WorkspaceCreateInput } from './schemas';
@@ -115,13 +116,10 @@ export async function createWorkspaceAction(
     };
   }
 
-  // (5) Transação: workspace + member + prefs + audit. Defense-in-depth: o
-  // member fixa `userId = user.id` (não confia em nada do input).
-  //
-  // **Sobre `tx: Prisma.TransactionClient`:** com `prisma generate` ainda não
-  // executado neste ambiente (TLS strict bloqueando `binaries.prisma.sh`, ver
-  // M7#1), o tipo gerado é `any`. No CI/Vercel onde generate roda, vira o
-  // shape real com `tx.workspace`, `tx.workspaceMember`, etc.
+  // (5) Transação: workspace + member + prefs + pipeline + 6 stages + audit.
+  // Defense-in-depth: o member fixa `userId = user.id` (não confia em nada do
+  // input). M8#1 cresceu a transação com o seed da default pipeline — se
+  // qualquer parte falhar, nada persiste.
   let workspaceId: string;
   try {
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -166,6 +164,30 @@ export async function createWorkspaceAction(
           userId: user.id,
           prefs: {},
         },
+      });
+
+      // **M8#1:** semeia pipeline default + 6 etapas (Novo → ... → Ganho/Perdido).
+      // `createMany` em vez de loop pra reduzir round-trips Postgres. Valores
+      // vivem em `lib/workspace/default-pipeline.ts` (compartilhado com testes).
+      const pipeline = await tx.pipeline.create({
+        data: {
+          workspaceId: workspace.id,
+          name: DEFAULT_PIPELINE_NAME,
+          isDefault: true,
+        },
+        select: { id: true },
+      });
+
+      await tx.pipelineStage.createMany({
+        data: DEFAULT_PIPELINE_STAGES.map((stage) => ({
+          pipelineId: pipeline.id,
+          slug: stage.slug,
+          name: stage.name,
+          order: stage.order,
+          rotDays: stage.rotDays,
+          terminal: stage.terminal,
+          tone: stage.tone,
+        })),
       });
 
       await tx.auditLog.create({

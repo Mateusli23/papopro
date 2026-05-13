@@ -44,8 +44,8 @@ export const leadCreateSchema = z.object({
     .or(z.literal('').transform(() => undefined)),
   company: z.string().max(120, 'Empresa muito longa').optional(),
   position: z.string().max(80, 'Cargo muito longo').optional(),
-  stageId: z.string().min(1, 'Escolha a etapa do funil'),
-  assignedTo: z.string().min(1, 'Escolha o vendedor responsável'),
+  stageId: z.string().uuid('Etapa inválida — recarregue a página'),
+  assignedTo: z.string().uuid('Vendedor inválido — recarregue a página'),
   origin: z.enum([
     'site',
     'meta_ads',
@@ -69,12 +69,41 @@ export type LeadCreateInput = z.infer<typeof leadCreateSchema>;
 
 /**
  * Update parcial de campos da ficha do lead. Usado pelo editor inline da
- * página de detalhe (clique → input → blur salva). Em M8 vira `updateLead`
- * Server Action; aqui apenas muta o fixture in-memory.
+ * página de detalhe (clique → input → blur salva). Em M8#2 alimenta a
+ * Server Action `updateLeadAction` — caller passa `leadId` separado +
+ * patch parcial dos campos editáveis.
  */
 export const leadUpdateSchema = leadCreateSchema.partial();
 
 export type LeadUpdateInput = z.infer<typeof leadUpdateSchema>;
+
+// ─── Server Actions de M8#2 ────────────────────────────────────────────────
+
+/** Mudar etapa do lead (botão "Mover etapa" no detalhe + futuro drag-and-drop M8#3). */
+export const moveStageSchema = z.object({
+  leadId: z.string().uuid('Lead inválido'),
+  stageId: z.string().uuid('Etapa inválida'),
+});
+export type MoveStageInput = z.infer<typeof moveStageSchema>;
+
+/** Reassignar lead a outro vendedor (Owner/Admin/Manager). */
+export const assignLeadSchema = z.object({
+  leadId: z.string().uuid('Lead inválido'),
+  assignedToId: z.string().uuid('Vendedor inválido'),
+});
+export type AssignLeadInput = z.infer<typeof assignLeadSchema>;
+
+/** Arquivar lead (soft-archive via `status='arquivado'`; soft-delete `deletedAt` é separado, fica pra polimento LGPD). */
+export const archiveLeadSchema = z.object({
+  leadId: z.string().uuid('Lead inválido'),
+});
+export type ArchiveLeadInput = z.infer<typeof archiveLeadSchema>;
+
+/** Atualização inline de campos da ficha. `leadId` + patch parcial (mesmos campos do create). */
+export const updateLeadSchema = leadUpdateSchema.extend({
+  leadId: z.string().uuid('Lead inválido'),
+});
+export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 
 // ─── CSV Import ────────────────────────────────────────────────────────────
 
