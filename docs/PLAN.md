@@ -1012,30 +1012,57 @@ Escopo intencionalmente menor que o plano original (sem `withSentryConfig` em `n
 
 ## M8 — Backend de Domínio: Leads, Deals, Pipelines, Tarefas
 
-**Branch:** `m8-backend-domain`
+**Branches:** múltiplos sub-PRs empilhados sobre `dev` (gitflow strict, CLAUDE.md §10), partindo de `m8-schema-leads-deals`.
 
-**Objetivo:** Persistir o core do CRM. Substituir fixtures de M4 por queries reais com RLS. CRUD ponta-a-ponta funcional, importação de CSV, webhooks de entrada.
+**Objetivo:** Persistir o core do CRM. Substituir fixtures de M4/M5 por queries reais com RLS. CRUD ponta-a-ponta funcional, importação de CSV, webhooks de entrada.
 
-**Entregas:**
+**Estratégia de sub-PRs.** Mesmo padrão de M7: fatiar pra cada review focar numa coisa. M8#1 entrega o alicerce (schema, RLS, seed) sem mexer em UI ainda — sub-PRs seguintes substituem mocks por queries.
 
-- [ ] Schema Prisma: `leads`, `deals`, `pipelines`, `pipeline_stages`, `tags`, `lead_tags`, `tasks`, `activities`, `attachments`, `custom_fields`, `lead_custom_values`
-- [ ] RLS em todas (filtro por `workspace_id` + papel)
-- [ ] Migrations versionadas + seed de pipeline default (Novo → Contato → Proposta → Negociação → Ganho/Perdido)
-- [ ] Server Actions: `createLead`, `updateLead`, `deleteLead`, `assignLead`, `createDeal`, `moveDealStage` (com `order` por etapa), `addActivity`, `createTask`, `completeTask`, `addAttachment`
-- [ ] Queries server-side: `listLeads(filters, pagination)`, `getLead(id)`, `listDeals`, `listTasks` — todas via `with-workspace`
-- [ ] Defense-in-depth: toda query inclui `where: { workspaceId }` no código
-- [ ] Tela `/leads` lê dados reais; filtros/busca usam Postgres (`pg_trgm` para similar, `tsvector` para full-text em texto longo)
-- [ ] Detalhe do lead lê timeline real (consolidando `activities`, `messages` placeholder, `tasks`, mudanças de etapa)
-- [ ] Kanban persiste drag-and-drop (`updateDealOrder` Server Action otimista)
-- [ ] Importação CSV: até 1.000 linhas síncrono; >1.000 vai para Edge Function com email de confirmação
-- [ ] Webhook genérico de leads: `app/api/webhooks/leads/[token]/route.ts` — token único por workspace, valida payload mínimo, cria lead, atribui round-robin
-- [ ] Storage Supabase para anexos (bucket `attachments` com RLS)
-- [ ] Cleanup de mídia órfã agendado (`pg_cron` diário)
-- [ ] Integração Google Calendar (OAuth + sync bidirecional de tarefas a cada 2 min via Edge Function)
-- [ ] Exportação CSV/XLSX (background + email com link 7d) com log de auditoria
-- [ ] Realtime para mudanças de Kanban (Supabase Realtime channel `workspace:<id>:deals`)
+| Sub-PR | Escopo                                                                                       | Branch                   | Status                       | PR                      |
+| ------ | -------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------- | ----------------------- |
+| M8#1   | Schema + migration + RLS (11 tabelas) + seed pipeline default + 8 audit_action novos         | `m8-schema-leads-deals`  | ✅ entregue (validado local) | _aberto após validação_ |
+| M8#2   | `/leads` lê DB real — queries + Server Actions de CRUD (`createLead`, `updateLead`, …)       | `m8-leads-crud`          | ⏳ próximo                   | —                       |
+| M8#3   | Kanban persiste drag-and-drop — `moveDealStage` + `updateDealOrder` otimista                 | `m8-kanban-persistence`  | ⏳                           | —                       |
+| M8#4   | Timeline real do lead + tasks (CRUD `createTask`, `completeTask`) lendo do DB                | `m8-timeline-tasks`      | ⏳                           | —                       |
+| M8#5   | Importação CSV (≤1k síncrono, >1k via Edge Function) + webhook `/api/webhooks/leads/[token]` | `m8-csv-webhooks`        | ⏳                           | —                       |
+| M8#6   | Storage Supabase para anexos (`bucket attachments` + RLS) + cleanup órfão `pg_cron`          | `m8-storage-attachments` | ⏳                           | —                       |
+| M8#7   | Realtime Kanban (Supabase channel `workspace:<id>:deals`) + export CSV/XLSX                  | `m8-realtime-export`     | ⏳                           | —                       |
 
-**Commit final:** `feat(backend): leads, deals, pipelines, tasks crud with rls and csv import`
+Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores — schema preparado em M8#1, UI em onda separada.
+
+**Entregas (consolidadas, marcadas conforme sub-PRs entregam):**
+
+- [x] Schema Prisma: `leads`, `deals`, `pipelines`, `pipeline_stages`, `tags`, `lead_tags`, `tasks`, `activities`, `attachments`, `custom_fields`, `lead_custom_values` _(M8#1)_
+- [x] RLS em todas (filtro por `workspace_id` via `current_workspace_id()`; defense-in-depth no código) _(M8#1 — 41 policies validadas)_
+- [x] Migration versionada + seed de pipeline default (Novo → Em contato → Proposta → Negociação → Ganho → Perdido) — semeada por `createWorkspaceAction` na transação do signup _(M8#1)_
+- [ ] Server Actions: `createLead`, `updateLead`, `deleteLead`, `assignLead`, `createDeal`, `moveDealStage` (com `order` por etapa), `addActivity`, `createTask`, `completeTask`, `addAttachment` _(M8#2-#4)_
+- [ ] Queries server-side: `listLeads(filters, pagination)`, `getLead(id)`, `listDeals`, `listTasks` — todas via `with-workspace` _(M8#2-#4)_
+- [ ] Defense-in-depth: toda query inclui `where: { workspaceId }` no código _(M8#2+)_
+- [ ] Tela `/leads` lê dados reais; filtros/busca usam Postgres (`pg_trgm` para similar, `tsvector` para full-text em texto longo) _(M8#2)_
+- [ ] Detalhe do lead lê timeline real (consolidando `activities`, `messages` placeholder, `tasks`, mudanças de etapa) _(M8#4)_
+- [ ] Kanban persiste drag-and-drop (`updateDealOrder` Server Action otimista) _(M8#3)_
+- [ ] Importação CSV: até 1.000 linhas síncrono; >1.000 vai para Edge Function com email de confirmação _(M8#5)_
+- [ ] Webhook genérico de leads: `app/api/webhooks/leads/[token]/route.ts` — token único por workspace, valida payload mínimo, cria lead, atribui round-robin _(M8#5)_
+- [ ] Storage Supabase para anexos (bucket `attachments` com RLS) _(M8#6)_
+- [ ] Cleanup de mídia órfã agendado (`pg_cron` diário) _(M8#6)_
+- [ ] Integração Google Calendar (OAuth + sync bidirecional de tarefas a cada 2 min via Edge Function) _(polimento pós-M8#4)_
+- [ ] Exportação CSV/XLSX (background + email com link 7d) com log de auditoria _(M8#7)_
+- [ ] Realtime para mudanças de Kanban (Supabase Realtime channel `workspace:<id>:deals`) _(M8#7)_
+
+**Entregas — M8#1 Schema + RLS + seed (entregue, PR pós-validação local):**
+
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — 11 modelos novos espelhando os tipos de M4/M5 (`apps/web/features/leads/types.ts`, `deals/types.ts`, etc.): Pipeline, PipelineStage, Lead, Deal, Tag, LeadTag, Task, Activity, Attachment, CustomField, LeadCustomValue. Reverse relations adicionadas em Workspace e WorkspaceMember.
+- [x] 8 enums novos: `lead_origin` (9 valores), `lead_status`, `deal_status`, `task_kind`, `task_status`, `activity_type` (10 valores), `stage_tone`, `custom_field_type`. Convenção: snake_case com `@@map`, espelhando UI.
+- [x] 8 valores adicionados ao enum existente `audit_action` (`lead_created`, `lead_updated`, `lead_deleted`, `deal_created`, `deal_updated`, `deal_stage_changed`, `task_created`, `task_completed`) via `ALTER TYPE ADD VALUE IF NOT EXISTS` (idempotente).
+- [x] [`supabase/migrations/20260513120000_m8_1_domain_leads_deals.sql`](supabase/migrations/20260513120000_m8_1_domain_leads_deals.sql) — DDL idempotente (tudo `IF NOT EXISTS` / `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object`). 11 `CREATE TABLE` + ~25 índices + 41 policies RLS + 7 triggers `touch_updated_at` + `COMMENT ON TABLE` em todas.
+- [x] RLS habilitada via `ENABLE ROW LEVEL SECURITY` + policies por `(workspace_id = public.current_workspace_id())`. Tabelas junction (`lead_tags`, `lead_custom_values`) e `pipeline_stages` usam subquery `pipeline_id IN (SELECT … FROM pipelines WHERE workspace_id = …)` pra herdar tenant. `activities` é append-only — só policy SELECT + INSERT, sem UPDATE/DELETE.
+- [x] [`apps/web/lib/workspace/default-pipeline.ts`](apps/web/lib/workspace/default-pipeline.ts) — constante `DEFAULT_PIPELINE_STAGES` com os 6 stages do funil padrão (slugs, names, order, rot_days, terminal, tone). Tipo `tone` como union literal (`'default' | 'success' | 'destructive'`) seguindo padrão do repo (sem importar enums Prisma como runtime).
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) — `createWorkspaceAction` agora cresce a transação com `pipeline.create` (isDefault=true) + `pipelineStage.createMany` (6 stages). Atomicidade preservada: se qualquer parte falhar, nada persiste (rollback automático).
+- [x] Validação local: `supabase db reset` aplica todas as 3 migrations (2 do M7 + 1 do M8#1), `prisma generate` regenera client com os 11 modelos, signup pelo navegador semeia workspace + pipeline + 6 stages na ordem correta (validado via SQL — 6 rows com slugs `novo`, `em_contato`, `proposta`, `negociacao`, `ganho`, `perdido`; `ganho`/`perdido` com `terminal=true` e tone correto).
+- [x] Typecheck `pnpm --filter @papopro/web typecheck` passa sem warnings.
+- [x] Smoke test `/api/smoke-test/supabase` mantém 10 checks verdes (M7#1 não-regressão).
+
+**Commit final M8:** `feat(backend): leads, deals, pipelines, tasks crud with rls and csv import`
 
 ---
 
