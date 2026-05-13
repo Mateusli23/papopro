@@ -1018,15 +1018,15 @@ Escopo intencionalmente menor que o plano original (sem `withSentryConfig` em `n
 
 **Estratégia de sub-PRs.** Mesmo padrão de M7: fatiar pra cada review focar numa coisa. M8#1 entrega o alicerce (schema, RLS, seed) sem mexer em UI ainda — sub-PRs seguintes substituem mocks por queries.
 
-| Sub-PR | Escopo                                                                                       | Branch                   | Status                       | PR                      |
-| ------ | -------------------------------------------------------------------------------------------- | ------------------------ | ---------------------------- | ----------------------- |
-| M8#1   | Schema + migration + RLS (11 tabelas) + seed pipeline default + 8 audit_action novos         | `m8-schema-leads-deals`  | ✅ entregue (validado local) | _aberto após validação_ |
-| M8#2   | `/leads` lê DB real — queries + Server Actions de CRUD (`createLead`, `updateLead`, …)       | `m8-leads-crud`          | ⏳ próximo                   | —                       |
-| M8#3   | Kanban persiste drag-and-drop — `moveDealStage` + `updateDealOrder` otimista                 | `m8-kanban-persistence`  | ⏳                           | —                       |
-| M8#4   | Timeline real do lead + tasks (CRUD `createTask`, `completeTask`) lendo do DB                | `m8-timeline-tasks`      | ⏳                           | —                       |
-| M8#5   | Importação CSV (≤1k síncrono, >1k via Edge Function) + webhook `/api/webhooks/leads/[token]` | `m8-csv-webhooks`        | ⏳                           | —                       |
-| M8#6   | Storage Supabase para anexos (`bucket attachments` + RLS) + cleanup órfão `pg_cron`          | `m8-storage-attachments` | ⏳                           | —                       |
-| M8#7   | Realtime Kanban (Supabase channel `workspace:<id>:deals`) + export CSV/XLSX                  | `m8-realtime-export`     | ⏳                           | —                       |
+| Sub-PR | Escopo                                                                                       | Branch                   | Status      | PR                                                   |
+| ------ | -------------------------------------------------------------------------------------------- | ------------------------ | ----------- | ---------------------------------------------------- |
+| M8#1   | Schema + migration + RLS (11 tabelas) + seed pipeline default + 8 audit_action novos         | `m8-schema-leads-deals`  | ✅ entregue | [#45](https://github.com/Mateusli23/papopro/pull/45) |
+| M8#2   | `/leads` lê DB real — queries + Server Actions de CRUD (`createLead`, `updateLead`, …)       | `m8-leads-crud`          | ✅ entregue | _aberto após validação_                              |
+| M8#3   | Kanban persiste drag-and-drop — `moveDealStage` + `updateDealOrder` otimista                 | `m8-kanban-persistence`  | ⏳          | —                                                    |
+| M8#4   | Timeline real do lead + tasks (CRUD `createTask`, `completeTask`) lendo do DB                | `m8-timeline-tasks`      | ⏳          | —                                                    |
+| M8#5   | Importação CSV (≤1k síncrono, >1k via Edge Function) + webhook `/api/webhooks/leads/[token]` | `m8-csv-webhooks`        | ⏳          | —                                                    |
+| M8#6   | Storage Supabase para anexos (`bucket attachments` + RLS) + cleanup órfão `pg_cron`          | `m8-storage-attachments` | ⏳          | —                                                    |
+| M8#7   | Realtime Kanban (Supabase channel `workspace:<id>:deals`) + export CSV/XLSX                  | `m8-realtime-export`     | ⏳          | —                                                    |
 
 Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores — schema preparado em M8#1, UI em onda separada.
 
@@ -1035,10 +1035,10 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - [x] Schema Prisma: `leads`, `deals`, `pipelines`, `pipeline_stages`, `tags`, `lead_tags`, `tasks`, `activities`, `attachments`, `custom_fields`, `lead_custom_values` _(M8#1)_
 - [x] RLS em todas (filtro por `workspace_id` via `current_workspace_id()`; defense-in-depth no código) _(M8#1 — 41 policies validadas)_
 - [x] Migration versionada + seed de pipeline default (Novo → Em contato → Proposta → Negociação → Ganho → Perdido) — semeada por `createWorkspaceAction` na transação do signup _(M8#1)_
-- [ ] Server Actions: `createLead`, `updateLead`, `deleteLead`, `assignLead`, `createDeal`, `moveDealStage` (com `order` por etapa), `addActivity`, `createTask`, `completeTask`, `addAttachment` _(M8#2-#4)_
-- [ ] Queries server-side: `listLeads(filters, pagination)`, `getLead(id)`, `listDeals`, `listTasks` — todas via `with-workspace` _(M8#2-#4)_
-- [ ] Defense-in-depth: toda query inclui `where: { workspaceId }` no código _(M8#2+)_
-- [ ] Tela `/leads` lê dados reais; filtros/busca usam Postgres (`pg_trgm` para similar, `tsvector` para full-text em texto longo) _(M8#2)_
+- [x] Server Actions: `createLead`, `updateLead`, `assignLead`, `archiveLead`, `moveLeadToStage` _(M8#2)_; `createDeal`, `moveDealStage`, `addActivity`, `createTask`, `completeTask`, `addAttachment` _(M8#3-#6)_
+- [x] Queries server-side: `listLeads(filters)`, `getLead(id)`, `listSalesReps`, `listLeadTags`, `listDefaultPipeline` — todas via `withWorkspace` _(M8#2)_; `listDeals`, `listTasks` _(M8#3-#4)_
+- [x] Defense-in-depth: toda query inclui `where: { workspaceId }` no código _(M8#2)_
+- [x] Tela `/leads` lê dados reais; filtros client-side em memória (volume MVP); pg*trgm/tsvector ficam pra otimização se virar gargalo *(M8#2)\_
 - [ ] Detalhe do lead lê timeline real (consolidando `activities`, `messages` placeholder, `tasks`, mudanças de etapa) _(M8#4)_
 - [ ] Kanban persiste drag-and-drop (`updateDealOrder` Server Action otimista) _(M8#3)_
 - [ ] Importação CSV: até 1.000 linhas síncrono; >1.000 vai para Edge Function com email de confirmação _(M8#5)_
@@ -1061,6 +1061,28 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - [x] Validação local: `supabase db reset` aplica todas as 3 migrations (2 do M7 + 1 do M8#1), `prisma generate` regenera client com os 11 modelos, signup pelo navegador semeia workspace + pipeline + 6 stages na ordem correta (validado via SQL — 6 rows com slugs `novo`, `em_contato`, `proposta`, `negociacao`, `ganho`, `perdido`; `ganho`/`perdido` com `terminal=true` e tone correto).
 - [x] Typecheck `pnpm --filter @papopro/web typecheck` passa sem warnings.
 - [x] Smoke test `/api/smoke-test/supabase` mantém 10 checks verdes (M7#1 não-regressão).
+
+**Entregas — M8#2 `/leads` lê DB real + CRUD via Server Actions (entregue, PR pós-validação local):**
+
+- [x] [`apps/web/features/leads/queries.ts`](apps/web/features/leads/queries.ts) — server-only (`import 'server-only'`). 5 funções via `withWorkspace` + defense-in-depth `where: { workspaceId }`: `listLeads(workspaceId, filters?)` (oculta soft-deleted e arquivados por default; filtros via Postgres `where`), `getLead(workspaceId, id)` (retorna `LeadWithRelations` com tags + open deals), `listSalesReps` (membros com role Owner/Admin/Manager/Vendedor, accent cyclado), `listLeadTags` (tags em uso ordenadas alfabeticamente), `listDefaultPipeline` (pipeline isDefault + stages ordenadas).
+- [x] [`apps/web/features/leads/transforms.ts`](apps/web/features/leads/transforms.ts) — funções puras Prisma row → UI `Lead`. `deriveLeadTemperature(lastInteractionAt, referenceDate?)` injetável (CLAUDE.md §5 — `now()` testável) com regra de M4 (≤3d → hot, 4-10d → warm, >10d/null → cold). `flattenLeadTags` achata m:n em `string[]`. `toLeadUI` converte `Date → ISO string` + null → undefined.
+- [x] [`apps/web/features/leads/filters.ts`](apps/web/features/leads/filters.ts) — extraído de `queries.ts` antigo. Mantém `applyLeadFilters`/`sumPipelineValue` puros (importáveis de client). Volume MVP ~500 leads/workspace torna filtragem client imperceptível.
+- [x] [`apps/web/features/leads/actions.ts`](apps/web/features/leads/actions.ts) — 5 Server Actions seguindo anatomia de [`features/team/actions.ts`](apps/web/features/team/actions.ts): Zod → `requireRole` → `withWorkspace` tx → defense-in-depth + audit log na mesma tx → `revalidatePath` → retorno padrão.
+  - `createLeadAction` — RBAC Owner/Admin/Manager/Vendedor; valida que `stageId` e `assignedTo` pertencem ao workspace antes de FK; sincroniza tags m:n via `syncLeadTags` helper (upsert idempotente); grava activity `lead_created` + audit `lead_created`.
+  - `updateLeadAction` — mesma RBAC; valida FK de stage/assignee se patch tocá-los; só atualiza campos presentes no patch (não sobrescreve com undefined); resincroniza tags se `tags` no patch; audit `lead_updated` com diff.
+  - `moveLeadToStageAction` — mesma RBAC; bloqueia same-stage como no-op; atualiza `lastInteractionAt` (sinaliza atividade do vendedor); grava activity `stage_change` + audit `deal_stage_changed`.
+  - `assignLeadAction` — RBAC mais restrito: **Owner/Admin/Manager** (Vendedor não reassigna leads de colegas pra evitar "roubo"); valida que novo assignee tem role permitido + pertence ao workspace.
+  - `archiveLeadAction` — RBAC Owner/Admin/Manager; soft-archive via `status='arquivado'` (lead some da listagem default mas continua acessível); audit `lead_deleted` (mapeia "delete lógico" ao enum existente).
+- [x] [`apps/web/features/leads/schemas.ts`](apps/web/features/leads/schemas.ts) — `stageId`/`assignedTo` viraram `.uuid()` (eram `min(1)` por causa de slugs em M4). Adicionados `moveStageSchema`, `assignLeadSchema`, `archiveLeadSchema`, `updateLeadSchema` (= `leadUpdateSchema.extend({ leadId })`).
+- [x] [`apps/web/app/(dashboard)/leads/page.tsx`](<apps/web/app/(dashboard)/leads/page.tsx>) — vira Server Component. `dynamic = 'force-dynamic'`. Padrão de `/settings/team/page.tsx`: `getCurrentUserContext` → `readWorkspaceCookie` → defense check membership → `Promise.all` de 4 queries → passa props.
+- [x] [`apps/web/app/(dashboard)/leads/leads-view.tsx`](<apps/web/app/(dashboard)/leads/leads-view.tsx>) — recebe `initialLeads`, `salesReps`, `pipeline`, `tags`, `callerRole` por prop (não chama mais `useLeads()` do store). Filtros continuam client-side. **Botões "Adicionar" e "Importar" escondidos pra Viewer** (RBAC server-side também bloqueia se forjar request).
+- [x] [`apps/web/features/leads/components/lead-create-dialog.tsx`](apps/web/features/leads/components/lead-create-dialog.tsx) — `onSubmit` chama `createLeadAction` via async + erro em `submitError`. Recebe `salesReps` + `activeStages` por prop (não importa mais `SALES_REPS`/`ACTIVE_STAGES` de fixtures). On success: `router.refresh()` re-fetcha Server Component + `router.push(/leads/${id})` navega pro detalhe.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/page.tsx`](<apps/web/app/(dashboard)/leads/[id]/page.tsx>) — Server Component, `notFound()` se RLS bloquear ou registro não existir. Carrega `getLead` + `listSalesReps` + `listDefaultPipeline` em paralelo. `dynamic = 'force-dynamic'`.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx`](<apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx>) — recebe `lead: LeadWithRelations` + `salesReps` + `stages` + `callerRole` por prop. Banner "Timeline e Próximas ações ainda mock — real em M8#4" pra transparência. Mostra bloco de "Negócios em aberto" se `lead.openDeals.length > 0`.
+- [x] [`apps/web/features/leads/components/lead-detail-card.tsx`](apps/web/features/leads/components/lead-detail-card.tsx) — substitui `updateLead` (store) por `updateLeadAction` + `moveLeadToStageAction` + `assignLeadAction` + `archiveLeadAction`. Edição inline com `router.refresh()` no sucesso. RBAC granular nos handlers: `canEdit` (não-Viewer), `canAssign` (Owner/Admin/Manager), `canArchive` (Owner/Admin/Manager). Botão "Arquivar lead" só aparece se `canArchive` + `status==='ativo'`.
+- [x] [`apps/web/app/api/smoke-test/leads/route.ts`](apps/web/app/api/smoke-test/leads/route.ts) — import path migrado (`queries` → `filters`); +15 checks novos do grupo `transforms-m8`: `deriveLeadTemperature` (3 janelas + null), `flattenLeadTags`, e validação de UUID em `moveStageSchema`/`assignLeadSchema`/`archiveLeadSchema`/`updateLeadSchema`. **77/77 checks verdes**; smoke `/api/smoke-test/supabase` continua 10/10 (não-regressão M7).
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅, `pnpm --filter @papopro/web build` ✅ (rotas dinâmicas conforme esperado).
+- [x] **`store.ts` mantido propositalmente** — 11 outros features (dashboard, reports, inbox, tasks) ainda dependem; serão migrados em M8#3/M8#4/M9.
 
 **Commit final M8:** `feat(backend): leads, deals, pipelines, tasks crud with rls and csv import`
 
