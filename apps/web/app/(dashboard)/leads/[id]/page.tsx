@@ -1,8 +1,10 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
-import { getLead } from '@/lib/fixtures/leads';
+import { getLead, listDefaultPipeline, listSalesReps } from '@/features/leads/queries';
+import { getCurrentUserContext } from '@/lib/auth/get-user';
+import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
 import { LeadDetailView } from './lead-detail-view';
 
@@ -10,24 +12,57 @@ interface LeadDetailPageProps {
   params: { id: string };
 }
 
-export function generateMetadata({ params }: LeadDetailPageProps): Metadata {
-  const lead = getLead(params.id);
+export const dynamic = 'force-dynamic';
+
+export async function generateMetadata({ params }: LeadDetailPageProps): Promise<Metadata> {
+  // generateMetadata roda fora do request normal — sem cookie no contexto
+  // do fetch (apenas no body do request). Em vez de re-buscar tudo aqui
+  // (overhead + duplicação), fica fixo com placeholder; o `<title>` final
+  // é setado dinamicamente pelo Server Component que carrega o lead real.
   return {
-    title: lead ? lead.name : 'Lead não encontrado',
+    title: `Lead #${params.id.slice(0, 8)}…`,
   };
 }
 
 /**
- * `/leads/[id]` — Server Component fino. Confirma que o ID existe nas
- * fixtures (404 explícito é melhor que tela quebrada). O conteúdo client
- * volta a ler o lead via `useLead(id)` pra refletir mutações inline em
- * tempo real (sem refresh).
+ * `/leads/[id]` — Server Component (M8#2). Carrega o lead + tags + open deals
+ * via Prisma + RLS; `notFound()` se RLS bloquear ou registro não existir
+ * (LGPD: não distingue "não existe" de "sem permissão"). Passa snapshot
+ * inicial + salesReps + pipeline stages pro Client Component, que liga edição
+ * inline às Server Actions de M8#2.
  *
- * Em M8 essa server component vira `await getLead({ workspaceId, id })`
- * com Prisma + RLS, e o client recebe o snapshot inicial como prop.
+ * **Timeline + tasks ainda mockadas** (banner visível no detail view) — viram
+ * reais em M8#4.
  */
-export default function LeadDetailPage({ params }: LeadDetailPageProps) {
-  const lead = getLead(params.id);
-  if (!lead) notFound();
-  return <LeadDetailView leadId={params.id} />;
+export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
+  const ctx = await getCurrentUserContext();
+  const workspaceId = readWorkspaceCookie();
+
+  if (!ctx || !workspaceId) {
+    redirect('/login');
+  }
+
+  const callerMembership = ctx.memberships.find((m) => m.workspaceId === workspaceId);
+  if (!callerMembership) {
+    redirect('/onboarding');
+  }
+
+  const [lead, salesReps, pipeline] = await Promise.all([
+    getLead(workspaceId, params.id),
+    listSalesReps(workspaceId),
+    listDefaultPipeline(workspaceId),
+  ]);
+
+  if (!lead) {
+    notFound();
+  }
+
+  return (
+    <LeadDetailView
+      lead={lead}
+      salesReps={salesReps}
+      stages={pipeline?.stages ?? []}
+      callerRole={callerMembership.role}
+    />
+  );
 }

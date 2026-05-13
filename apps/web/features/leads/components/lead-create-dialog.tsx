@@ -25,41 +25,55 @@ import {
   SelectValue,
   Textarea,
 } from '@papopro/ui';
-import { Loader2 } from '@papopro/ui/icons';
+import { AlertCircle, Loader2 } from '@papopro/ui/icons';
 
-import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
-import { SALES_REPS } from '@/lib/fixtures/sales-reps';
-
+import { createLeadAction } from '../actions';
 import { LEAD_ORIGINS, leadCreateSchema, type LeadCreateInput } from '../schemas';
-import { createLead } from '../store';
+import type { PipelineStage, SalesRep } from '../types';
 
 /**
- * Modal "Adicionar lead". Validação Zod + RHF, mutação via store
- * in-memory. Após criar, oferece "Abrir lead" (navega pro detalhe) ou
- * fecha mantendo o usuário na lista.
+ * Modal "Adicionar lead" (M8#2). Validação Zod + RHF, mutação via
+ * `createLeadAction` (Server Action real). Após criar, oferece navegação
+ * pro detalhe via toast e dispara `router.refresh()` pra Server Component
+ * `/leads/page.tsx` re-fetcher a lista.
  *
- * Em M8 o `onSubmit` chama a Server Action `createLead` real (mesmo
- * shape de input — daí o uso do mesmo schema Zod).
+ * **`salesReps` + `activeStages` vêm como prop** (passados pelo
+ * `LeadsView` que recebeu do Server Component) — não importa mais
+ * `SALES_REPS`/`ACTIVE_STAGES` de fixtures.
  */
 interface LeadCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Etapa pré-selecionada (Kanban: "+ adicionar nesta coluna"). */
+  /** Etapa pré-selecionada (Kanban: "+ adicionar nesta coluna"). Default: primeira etapa não-terminal. */
   defaultStageId?: string;
+  salesReps: SalesRep[];
+  /** Etapas não-terminais ordenadas (pipeline.stages.filter(s => !s.terminal)). */
+  activeStages: PipelineStage[];
 }
 
-const DEFAULT_VALUES: LeadCreateInput = {
-  name: '',
-  phone: '',
-  stageId: 'novo',
-  assignedTo: SALES_REPS[0]?.id ?? '',
-  origin: 'manual',
-  valueCents: 0,
-  tags: [],
-};
-
-export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCreateDialogProps) {
+export function LeadCreateDialog({
+  open,
+  onOpenChange,
+  defaultStageId,
+  salesReps,
+  activeStages,
+}: LeadCreateDialogProps) {
   const router = useRouter();
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+
+  const buildDefaults = React.useCallback(
+    (): LeadCreateInput => ({
+      name: '',
+      phone: '',
+      stageId: defaultStageId ?? activeStages[0]?.id ?? '',
+      assignedTo: salesReps[0]?.id ?? '',
+      origin: 'manual',
+      valueCents: 0,
+      tags: [],
+    }),
+    [defaultStageId, activeStages, salesReps],
+  );
+
   const {
     register,
     handleSubmit,
@@ -69,7 +83,7 @@ export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCre
     formState: { errors, isSubmitting },
   } = useForm<LeadCreateInput>({
     resolver: zodResolver(leadCreateSchema),
-    defaultValues: { ...DEFAULT_VALUES, stageId: defaultStageId ?? 'novo' },
+    defaultValues: buildDefaults(),
   });
 
   // Aceita "850.000" / "850000" / "1.200,00" e converte pra centavos.
@@ -83,18 +97,26 @@ export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCre
 
   React.useEffect(() => {
     if (open) {
-      reset({ ...DEFAULT_VALUES, stageId: defaultStageId ?? 'novo' });
+      reset(buildDefaults());
       setValueDisplay('');
+      setSubmitError(null);
     }
-  }, [open, defaultStageId, reset]);
+  }, [open, buildDefaults, reset]);
 
-  function onSubmit(data: LeadCreateInput) {
-    const lead = createLead(data);
-    toast.success(`Lead "${lead.name}" criado.`, { duration: 4000 });
+  const onSubmit = handleSubmit(async (data) => {
+    setSubmitError(null);
+    const result = await createLeadAction(data);
+    if (!result.ok) {
+      setSubmitError(result.error);
+      return;
+    }
+    toast.success(`Lead "${data.name}" criado.`, { duration: 4000 });
     onOpenChange(false);
-    // Navega pro detalhe — usuário já vê a ficha completa, padrão Linear.
-    router.push(`/leads/${lead.id}`);
-  }
+    // Refresh força Server Component `/leads/page.tsx` a re-fetch.
+    router.refresh();
+    // Navega pro detalhe — padrão Linear: user já vê a ficha completa.
+    router.push(`/leads/${result.leadId}`);
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -106,7 +128,17 @@ export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCre
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {submitError && (
+            <div
+              role="alert"
+              className="bg-destructive/10 text-destructive text-body flex items-start gap-2 rounded-md p-3"
+            >
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <span>{submitError}</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Nome*" error={errors.name?.message}>
               <Input
@@ -148,7 +180,7 @@ export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCre
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ACTIVE_STAGES.map((s) => (
+                      {activeStages.map((s) => (
                         <SelectItem key={s.id} value={s.id}>
                           {s.name}
                         </SelectItem>
@@ -169,7 +201,7 @@ export function LeadCreateDialog({ open, onOpenChange, defaultStageId }: LeadCre
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {SALES_REPS.map((r) => (
+                      {salesReps.map((r) => (
                         <SelectItem key={r.id} value={r.id}>
                           {r.name}
                         </SelectItem>
