@@ -7,8 +7,9 @@ import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { cn } from '@papopro/ui';
 import { Activity, AlertCircle, Trophy, Zap, type LucideIcon } from '@papopro/ui/icons';
 
-import { useDeals } from '@/features/deals/store';
 import { formatCentsCompact } from '@/lib/utils/format';
+
+import type { Deal } from '../types';
 
 /**
  * Faixa de KPIs no topo do Pipeline. Mostra de relance:
@@ -23,14 +24,16 @@ import { formatCentsCompact } from '@/lib/utils/format';
  * mobile, 4 em ≥md).
  */
 
-const NOW = new Date('2026-05-09T14:00:00-03:00');
-
 interface StatCard {
   label: string;
   value: string;
   hint?: string;
   Icon: LucideIcon;
   tone: 'info' | 'warning' | 'success' | 'destructive';
+}
+
+interface PipelineStatsProps {
+  deals: Deal[];
 }
 
 const TONE_STYLES: Record<
@@ -63,20 +66,21 @@ const TONE_STYLES: Record<
   },
 };
 
-export function PipelineStats() {
-  const deals = useDeals();
-
+export function PipelineStats({ deals }: PipelineStatsProps) {
   const stats = React.useMemo<StatCard[]>(() => {
+    const now = new Date();
     const open = deals.filter((d) => d.status === 'open');
-    const negociacao = open.filter((d) => d.stageId === 'negociacao');
+    // M8#3: "negociação" detectada pelo slug se houver, senão pelo stageId
+    // legado das fixtures M4. Server-fed deals sempre trazem `stageSlug`.
+    const negociacao = open.filter((d) => (d.stageSlug ?? d.stageId) === 'negociacao');
     const wonLast30 = deals.filter(
       (d) =>
         d.status === 'won' &&
         d.closedAt &&
-        differenceInCalendarDays(NOW, parseISO(d.closedAt)) <= 30,
+        differenceInCalendarDays(now, parseISO(d.closedAt)) <= 30,
     );
     const overdue = open.filter(
-      (d) => d.dueAt && differenceInCalendarDays(parseISO(d.dueAt), NOW) < 0,
+      (d) => d.dueAt && differenceInCalendarDays(parseISO(d.dueAt), now) < 0,
     );
 
     const sum = (arr: typeof deals) => arr.reduce((a, d) => a + d.valueCents, 0);

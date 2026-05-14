@@ -296,6 +296,7 @@ export async function listDefaultPipeline(workspaceId: string): Promise<Pipeline
       isDefault: row.isDefault,
       stages: row.stages.map((s) => ({
         id: s.id,
+        slug: s.slug,
         name: s.name,
         order: s.order,
         rotDays: s.rotDays,

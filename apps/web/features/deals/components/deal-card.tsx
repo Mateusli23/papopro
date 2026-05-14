@@ -7,12 +7,23 @@ import Link from 'next/link';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-import { cn, Tooltip, TooltipContent, TooltipTrigger } from '@papopro/ui';
-import { Trophy, User, X as XIcon } from '@papopro/ui/icons';
+import {
+  Button,
+  cn,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@papopro/ui';
+import { Edit, MoreVertical, Trophy, User, X as XIcon } from '@papopro/ui/icons';
 
 import { RepAvatar } from '@/features/leads/components/rep-avatar';
 import { getLead } from '@/lib/fixtures/leads';
 import { formatCentsCompact } from '@/lib/utils/format';
+import { isUuid } from '@/lib/utils/uuid';
 
 import { getStageStyle } from '../stage-style';
 import type { Deal } from '../types';
@@ -46,9 +57,15 @@ interface DealCardProps {
   deal: Deal;
   /** Renderiza como overlay (durante drag) — esconde DnD listeners. */
   isOverlay?: boolean;
+  /**
+   * Quando passado, mostra menu "⋮" no canto sup direito com ação "Editar".
+   * O parent (KanbanView) abre o `DealEditDialog` ao receber o callback.
+   * Omitido = card read-only (ex: Viewer ou contexto fora do Kanban).
+   */
+  onEdit?: (deal: Deal) => void;
 }
 
-export function DealCard({ deal, isOverlay = false }: DealCardProps) {
+export function DealCard({ deal, isOverlay = false, onEdit }: DealCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: deal.id,
     data: { deal },
@@ -60,8 +77,13 @@ export function DealCard({ deal, isOverlay = false }: DealCardProps) {
     transition,
   };
 
-  const lead = getLead(deal.leadId);
-  const stage = getStageStyle(deal.stageId);
+  // M8#3: server-fed deals trazem `leadName`/`leadCompany`/`stageSlug` direto.
+  // Fixtures legadas (M4) usam slug em `stageId` e dependem de `getLead`.
+  // Detecta o modo pelo formato do leadId (UUID = server; senão fixture).
+  const leadFromFixtures = !isUuid(deal.leadId) ? getLead(deal.leadId) : null;
+  const leadName = deal.leadName ?? leadFromFixtures?.name;
+  const leadIdForLink = deal.leadId;
+  const stage = getStageStyle(deal.stageSlug ?? deal.stageId);
   const isWon = deal.status === 'won';
   const isLost = deal.status === 'lost';
 
@@ -90,29 +112,59 @@ export function DealCard({ deal, isOverlay = false }: DealCardProps) {
       {/* Stripe lateral colorido */}
       <span className={cn('absolute inset-y-0 left-0 w-[3px]', stage.cardStripe)} aria-hidden />
 
-      {/* Status terminal — ícone discreto no canto superior direito */}
+      {/* Status terminal + menu de ações no canto superior direito.
+          Quando o deal está won/lost, mostramos só o ícone (status >
+          edição). Caso contrário, e se `onEdit` veio (caller não-Viewer),
+          mostramos o menu "⋮" discreto que abre só on hover/focus pra não
+          poluir a hierarquia visual do card. */}
       {isWon && (
         <Trophy className="text-success absolute right-2 top-2 size-4" aria-label="Ganho" />
       )}
       {isLost && (
         <XIcon className="text-destructive/70 absolute right-2 top-2 size-4" aria-label="Perdido" />
       )}
+      {!isWon && !isLost && onEdit && !isOverlay && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-1 top-1 size-7 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+              aria-label="Ações do negócio"
+              // Bloqueia drag-and-drop: o sensor do board (`distance: 6`)
+              // já desambigua click vs drag, mas explícito > implícito.
+              onPointerDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+            >
+              <MoreVertical className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                onEdit(deal);
+              }}
+            >
+              <Edit className="size-3.5" /> Editar negócio
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* Título do deal */}
       <header className="pr-5">
         <DealTitleLink deal={deal} dragging={isDragging || isOverlay} />
-        {lead && (
+        {leadName && (
           <Link
-            href={`/leads/${lead.id}`}
+            href={`/leads/${leadIdForLink}`}
             className="text-caption text-muted-foreground hover:text-foreground mt-0.5 inline-flex items-center gap-1 truncate"
-            // Mouse/pen via PointerSensor + touch via TouchSensor: ambos
-            // precisam de stopPropagation pra que long-press direto no nome
-            // do lead navegue (não ative drag do card pai).
             onPointerDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
           >
             <User className="size-3 shrink-0" aria-hidden />
-            <span className="truncate">{lead.name}</span>
+            <span className="truncate">{leadName}</span>
           </Link>
         )}
       </header>

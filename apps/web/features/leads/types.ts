@@ -24,6 +24,12 @@ export type DefaultStageId =
 
 export interface PipelineStage {
   id: DefaultStageId | string;
+  /**
+   * Slug estável (M8#3) — referencia o `getStageStyle()` cromático e
+   * sobrevive a rename do `name`. Fixtures legadas usam `id === slug`;
+   * stages reais do DB têm UUID em `id` e slug separado.
+   */
+  slug?: DefaultStageId | string;
   name: string;
   /** Ordem visual no Kanban e em selects. */
   order: number;

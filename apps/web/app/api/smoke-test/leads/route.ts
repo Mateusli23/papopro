@@ -11,14 +11,22 @@
  */
 import { NextResponse } from 'next/server';
 
-import { dealCreateSchema } from '@/features/deals/schemas';
+import {
+  dealCreateSchema,
+  moveDealStageSchema,
+  updateDealOrderSchema,
+} from '@/features/deals/schemas';
 import {
   aggregateByStage,
   applyCreateDeal,
   applyMoveDeal,
+  computeOrderBetween,
   defaultProbabilityFor,
+  ORDER_STEP,
   statusForStage,
   sumOpenPipelineCents,
+  toDealUI,
+  type PrismaDealRow,
 } from '@/features/deals/transforms';
 import { applyLeadFilters } from '@/features/leads/filters';
 import { calcRotState } from '@/features/leads/rotting';
@@ -250,13 +258,19 @@ export function GET() {
   });
 
   // ── Validação Zod (dealCreateSchema) ────────────────────────────────────
+  // M8#3: leadId, stageId, ownerId viraram .uuid() (eram .min(1) em M4 por
+  // causa de slugs em fixture). Usar UUIDs válidos quaisquer — schema só
+  // valida formato, FK real é checada na Server Action via Prisma.
   t = run('zod-deal', results);
+  const UUID_A = '11111111-1111-4111-9111-111111111111';
+  const UUID_B = '22222222-2222-4222-9222-222222222222';
+  const UUID_C = '33333333-3333-4333-9333-333333333333';
   const baseValidDeal = {
     title: 'Demo deal de teste',
-    leadId: 'lead_001',
-    stageId: 'novo',
+    leadId: UUID_A,
+    stageId: UUID_B,
     valueCents: 500_000_00,
-    ownerId: 'user_mateus',
+    ownerId: UUID_C,
   };
   t('input mínimo de deal válido', () => dealCreateSchema.safeParse(baseValidDeal).success);
   t(
@@ -268,12 +282,16 @@ export function GET() {
     () => !dealCreateSchema.safeParse({ ...baseValidDeal, title: 'AB' }).success,
   );
   t(
-    'leadId vazio é rejeitado',
-    () => !dealCreateSchema.safeParse({ ...baseValidDeal, leadId: '' }).success,
+    'leadId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, leadId: 'lead_001' }).success,
   );
   t(
-    'stageId vazio é rejeitado',
-    () => !dealCreateSchema.safeParse({ ...baseValidDeal, stageId: '' }).success,
+    'stageId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, stageId: 'novo' }).success,
+  );
+  t(
+    'ownerId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, ownerId: 'user_mateus' }).success,
   );
   t(
     'valueCents negativo é rejeitado',
@@ -571,6 +589,101 @@ export function GET() {
   });
   t('updateLeadSchema rejeita leadId não-UUID', () => {
     return !updateLeadSchema.safeParse({ leadId: 'not-uuid' }).success;
+  });
+
+  // ── M8#3 deals: ordering + transforms server-fed (puro, sem banco) ─────
+  t = run('deals-m8', results);
+
+  const UUID_D = '44444444-4444-4444-9444-444444444444';
+
+  // Schemas
+  t('moveDealStageSchema rejeita dealId não-UUID', () => {
+    return !moveDealStageSchema.safeParse({ dealId: 'deal_001', stageId: UUID_B }).success;
+  });
+  t('moveDealStageSchema aceita UUIDs', () => {
+    return moveDealStageSchema.safeParse({ dealId: UUID_A, stageId: UUID_B }).success;
+  });
+  t('moveDealStageSchema aceita beforeId/afterId opcionais', () => {
+    return moveDealStageSchema.safeParse({
+      dealId: UUID_A,
+      stageId: UUID_B,
+      beforeId: UUID_C,
+      afterId: UUID_D,
+    }).success;
+  });
+  t('updateDealOrderSchema aceita só dealId', () => {
+    return updateDealOrderSchema.safeParse({ dealId: UUID_A }).success;
+  });
+  t('updateDealOrderSchema rejeita beforeId não-UUID', () => {
+    return !updateDealOrderSchema.safeParse({ dealId: UUID_A, beforeId: 'deal_x' }).success;
+  });
+
+  // computeOrderBetween
+  t('computeOrderBetween: ambos null → 0', () => computeOrderBetween(null, null) === 0);
+  t('computeOrderBetween: só before (drop no fim) → before + ORDER_STEP', () => {
+    return computeOrderBetween(2000, null) === 2000 + ORDER_STEP;
+  });
+  t('computeOrderBetween: só after (drop no início) → after - ORDER_STEP', () => {
+    return computeOrderBetween(null, 5000) === 5000 - ORDER_STEP;
+  });
+  t('computeOrderBetween: midpoint entre 1000 e 3000 = 2000', () => {
+    return computeOrderBetween(1000, 3000) === 2000;
+  });
+  t('computeOrderBetween: vizinhos colapsados (gap=1) retorna piso (sinal pra rebalance)', () => {
+    // Math.floor((5 + 6) / 2) = 5 — caller detecta colisão (== beforeOrder)
+    return computeOrderBetween(5, 6) === 5;
+  });
+  t('ORDER_STEP é múltiplo grande pra muitas inserções midpoint', () => ORDER_STEP >= 100);
+
+  // toDealUI
+  const sampleRow: PrismaDealRow = {
+    id: UUID_A,
+    title: 'Apartamento Vértice',
+    leadId: UUID_B,
+    stageId: UUID_C,
+    valueCents: 1_500_000_00,
+    ownerId: UUID_D,
+    probability: 60,
+    dueAt: new Date('2026-06-15T12:00:00-03:00'),
+    description: 'Cliente em segunda visita',
+    status: 'open',
+    lostReason: null,
+    orderInStage: 2000,
+    closedAt: null,
+    createdAt: new Date('2026-05-10T10:00:00-03:00'),
+    updatedAt: new Date('2026-05-13T15:00:00-03:00'),
+    stage: { slug: 'proposta', name: 'Proposta' },
+    lead: { id: UUID_B, name: 'Mariana Souza', company: 'Construtora HX' },
+  };
+  t('toDealUI denormaliza stage.slug e lead.name', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.stageSlug === 'proposta' && ui.leadName === 'Mariana Souza';
+  });
+  t('toDealUI preserva orderInStage', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.orderInStage === 2000;
+  });
+  t('toDealUI converte Date → ISO string', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.createdAt.includes('T') && ui.dueAt?.includes('T') === true;
+  });
+  t('toDealUI: closedAt=null vira undefined', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.closedAt === undefined;
+  });
+  t('toDealUI: row won com closedAt definido', () => {
+    const wonRow: PrismaDealRow = {
+      ...sampleRow,
+      status: 'won',
+      closedAt: new Date('2026-05-14T10:00:00-03:00'),
+      stage: { slug: 'ganho', name: 'Ganho' },
+    };
+    const ui = toDealUI(wonRow);
+    return ui.status === 'won' && typeof ui.closedAt === 'string' && ui.stageSlug === 'ganho';
+  });
+  t('toDealUI: company null vira undefined', () => {
+    const noCo: PrismaDealRow = { ...sampleRow, lead: { ...sampleRow.lead, company: null } };
+    return toDealUI(noCo).leadCompany === undefined;
   });
 
   const passed = results.filter((r) => r.ok).length;

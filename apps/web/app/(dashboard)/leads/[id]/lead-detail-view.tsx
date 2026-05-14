@@ -5,8 +5,10 @@ import * as React from 'react';
 import Link from 'next/link';
 
 import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@papopro/ui';
-import { ArrowLeft, Info, MessageCircle, Phone, Sparkles } from '@papopro/ui/icons';
+import { ArrowLeft, Info, MessageCircle, Phone, PlusCircle, Sparkles } from '@papopro/ui/icons';
 
+import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
+import type { LeadComboboxOption } from '@/features/deals/queries';
 import { LeadDetailCard } from '@/features/leads/components/lead-detail-card';
 import { LeadNextActions } from '@/features/leads/components/lead-next-actions';
 import { LeadTimeline } from '@/features/leads/components/lead-timeline';
@@ -22,6 +24,11 @@ import type { PipelineStage, SalesRep } from '@/features/leads/types';
  * **M8#2:** ficha (LeadDetailCard) lê dados reais via prop; **Timeline
  * e Próximas ações continuam mockadas** (fixtures de M5) até M8#4
  * substituir por `activities` + `tasks` reais. Banner abaixo avisa.
+ *
+ * **M8#3:** CTA "Criar negócio" aparece quando o lead não tem nenhum deal
+ * aberto. Pré-preenche o modal com nome, valor e stage default — bate o
+ * caso "criei o lead com valor, cadê meu negócio no Kanban?" (Lead e Deal
+ * são entidades separadas por design, ver CLAUDE.md §9).
  */
 type Role = 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer';
 
@@ -33,6 +40,19 @@ interface LeadDetailViewProps {
 }
 
 export function LeadDetailView({ lead, salesReps, stages, callerRole }: LeadDetailViewProps) {
+  const [createDealOpen, setCreateDealOpen] = React.useState(false);
+  const canCreateDeal = callerRole !== 'Viewer';
+
+  // Pra abrir o DealCreateDialog precisamos do shape `LeadComboboxOption`.
+  // No contexto da ficha, o lead já tá selecionado — passamos uma lista de 1.
+  const leadOption: LeadComboboxOption[] = React.useMemo(
+    () => [{ id: lead.id, name: lead.name, company: lead.company ?? null }],
+    [lead.id, lead.name, lead.company],
+  );
+
+  const suggestedTitle = lead.company ? `${lead.company} — ${lead.name}` : lead.name;
+  const hasOpenDeals = lead.openDeals.length > 0;
+
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
       <div className="flex items-center justify-between gap-4">
@@ -63,11 +83,18 @@ export function LeadDetailView({ lead, salesReps, stages, callerRole }: LeadDeta
         }
       />
 
-      {lead.openDeals.length > 0 && (
+      {hasOpenDeals ? (
         <div className="bg-muted/40 border-border flex flex-col gap-2 rounded-lg border p-4">
-          <span className="text-caption text-muted-foreground font-semibold uppercase tracking-wide">
-            Negócios em aberto ({lead.openDeals.length})
-          </span>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-caption text-muted-foreground font-semibold uppercase tracking-wide">
+              Negócios em aberto ({lead.openDeals.length})
+            </span>
+            {canCreateDeal && (
+              <Button size="sm" variant="outline" onClick={() => setCreateDealOpen(true)}>
+                <PlusCircle /> Adicionar outro
+              </Button>
+            )}
+          </div>
           <ul className="flex flex-col gap-1">
             {lead.openDeals.map((d) => (
               <li key={d.id} className="text-body flex items-center justify-between gap-2">
@@ -77,6 +104,8 @@ export function LeadDetailView({ lead, salesReps, stages, callerRole }: LeadDeta
             ))}
           </ul>
         </div>
+      ) : (
+        canCreateDeal && <CreateDealCTA lead={lead} onOpen={() => setCreateDealOpen(true)} />
       )}
 
       <MockedDataNotice />
@@ -118,6 +147,41 @@ export function LeadDetailView({ lead, salesReps, stages, callerRole }: LeadDeta
           </TabsContent>
         </Tabs>
       </div>
+
+      <DealCreateDialog
+        open={createDealOpen}
+        onOpenChange={setCreateDealOpen}
+        defaultLeadId={lead.id}
+        defaultValueCents={lead.valueCents}
+        defaultTitle={suggestedTitle}
+        defaultStageId={lead.stageId}
+        stages={stages}
+        salesReps={salesReps}
+        leadOptions={leadOption}
+      />
+    </div>
+  );
+}
+
+function CreateDealCTA({ lead, onOpen }: { lead: LeadWithRelations; onOpen: () => void }) {
+  const hasValue = lead.valueCents > 0;
+  return (
+    <div className="border-primary/20 bg-primary/5 flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-1">
+        <span className="text-body text-foreground font-medium">
+          {hasValue
+            ? 'Este lead ainda não virou negócio no Kanban'
+            : 'Pronto pra abrir uma oportunidade?'}
+        </span>
+        <span className="text-caption text-muted-foreground">
+          {hasValue
+            ? 'Cria um negócio vinculado pra acompanhar no funil com valor, prazo e probabilidade.'
+            : 'Quando você sabe o valor estimado e o prazo, crie um negócio pra acompanhar no Kanban.'}
+        </span>
+      </div>
+      <Button size="sm" onClick={onOpen} className="shrink-0">
+        <PlusCircle /> Criar negócio
+      </Button>
     </div>
   );
 }

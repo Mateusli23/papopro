@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { zodResolver } from '@hookform/resolvers/zod';
 import { addDays, format as fmtDate } from 'date-fns';
 import { Controller, useForm } from 'react-hook-form';
@@ -28,46 +30,62 @@ import {
 } from '@papopro/ui';
 import { Loader2 } from '@papopro/ui/icons';
 
-import { FAKE_LEADS } from '@/lib/fixtures/leads';
-import { ACTIVE_STAGES, DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
-import { SALES_REPS } from '@/lib/fixtures/sales-reps';
+import { createDealAction } from '@/features/deals/actions';
+import type { LeadComboboxOption } from '@/features/deals/queries';
+import type { PipelineStage, SalesRep } from '@/features/leads/types';
 
 import { dealCreateSchema, type DealCreateInput } from '../schemas';
-import { createDeal } from '../store';
 
 /**
- * Modal "Adicionar negócio" — criação de Deal vinculada a um Lead existente.
+ * Modal "Adicionar negócio" (M8#3) — invoca `createDealAction` no submit.
  *
- * Validação Zod + RHF, mutação via store. Default do `dueAt` é +30 dias
- * (tempo médio razoável pra deals SMB B2B). O combobox de leads filtra
- * por nome/empresa pra acelerar a busca.
- *
- * Em M8 vira Server Action `createDeal({ input })` — schema reaproveitado.
+ * Stages + reps + leads vêm por prop do Server Component pai (já são dados
+ * reais do workspace via Prisma + RLS). Default do `dueAt` é +30 dias.
+ * On success: `router.refresh()` re-fetcha o Server Component pra o
+ * novo deal aparecer na coluna.
  */
 
 interface DealCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Etapa pré-selecionada (vindo do "+ Adicionar" da coluna). */
   defaultStageId?: string;
-  /** Lead pré-selecionado (vindo do detalhe do lead, M5+). */
   defaultLeadId?: string;
+  /** Valor estimado pré-preenchido (centavos). Usado quando o caller já tem
+   *  esse contexto — ex: criando deal a partir da ficha de um lead que tem
+   *  `valueCents` cadastrado. */
+  defaultValueCents?: number;
+  /** Título pré-preenchido. Usado pelo CTA da ficha pra sugerir um nome. */
+  defaultTitle?: string;
+  stages: PipelineStage[];
+  salesReps: SalesRep[];
+  leadOptions: LeadComboboxOption[];
 }
 
-const LEAD_OPTIONS: ComboboxOption[] = FAKE_LEADS.map((l) => ({
-  value: l.id,
-  label: l.company ? `${l.name} — ${l.company}` : l.name,
-}));
-
-function buildDefaults(stageId?: string, leadId?: string): DealCreateInput {
+function buildDefaults(
+  stageId: string | undefined,
+  leadId: string | undefined,
+  valueCents: number | undefined,
+  title: string | undefined,
+  stages: PipelineStage[],
+  salesReps: SalesRep[],
+): DealCreateInput {
+  // Fallback: primeira stage não-terminal (ou primeira disponível).
+  const firstActive = stages.find((s) => !s.terminal) ?? stages[0];
   return {
-    title: '',
+    title: title ?? '',
     leadId: leadId ?? '',
-    stageId: stageId ?? 'novo',
-    valueCents: 0,
-    ownerId: SALES_REPS[0]?.id ?? '',
-    dueAt: addDays(new Date('2026-05-09T14:00:00-03:00'), 30).toISOString(),
+    stageId: stageId ?? firstActive?.id ?? '',
+    valueCents: valueCents ?? 0,
+    ownerId: salesReps[0]?.id ?? '',
+    dueAt: addDays(new Date(), 30).toISOString(),
   };
+}
+
+/** Formata centavos pro display do campo "Valor" (sem separadores, só dígitos
+ *  inteiros em BRL — bate com o `parseValueToCents` do form). */
+function formatCentsForDisplay(cents: number): string {
+  if (!cents) return '';
+  return String(Math.floor(cents / 100));
 }
 
 export function DealCreateDialog({
@@ -75,31 +93,77 @@ export function DealCreateDialog({
   onOpenChange,
   defaultStageId,
   defaultLeadId,
+  defaultValueCents,
+  defaultTitle,
+  stages,
+  salesReps,
+  leadOptions,
 }: DealCreateDialogProps) {
+  const router = useRouter();
+  const [isPending, startTransition] = React.useTransition();
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
+
+  const leadComboboxOptions: ComboboxOption[] = React.useMemo(
+    () =>
+      leadOptions.map((l) => ({
+        value: l.id,
+        label: l.company ? `${l.name} — ${l.company}` : l.name,
+      })),
+    [leadOptions],
+  );
+
   const {
     register,
     handleSubmit,
     control,
     reset,
     setValue,
-    formState: { errors, isSubmitting },
+    formState: { errors },
   } = useForm<DealCreateInput>({
     resolver: zodResolver(dealCreateSchema),
-    defaultValues: buildDefaults(defaultStageId, defaultLeadId),
+    defaultValues: buildDefaults(
+      defaultStageId,
+      defaultLeadId,
+      defaultValueCents,
+      defaultTitle,
+      stages,
+      salesReps,
+    ),
   });
 
-  const [valueDisplay, setValueDisplay] = React.useState('');
+  const [valueDisplay, setValueDisplay] = React.useState(
+    formatCentsForDisplay(defaultValueCents ?? 0),
+  );
   const [dueDisplay, setDueDisplay] = React.useState(
-    fmtDate(addDays(new Date('2026-05-09T14:00:00-03:00'), 30), 'yyyy-MM-dd'),
+    fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'),
   );
 
   React.useEffect(() => {
     if (open) {
-      reset(buildDefaults(defaultStageId, defaultLeadId));
-      setValueDisplay('');
-      setDueDisplay(fmtDate(addDays(new Date('2026-05-09T14:00:00-03:00'), 30), 'yyyy-MM-dd'));
+      reset(
+        buildDefaults(
+          defaultStageId,
+          defaultLeadId,
+          defaultValueCents,
+          defaultTitle,
+          stages,
+          salesReps,
+        ),
+      );
+      setValueDisplay(formatCentsForDisplay(defaultValueCents ?? 0));
+      setDueDisplay(fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'));
+      setSubmitError(null);
     }
-  }, [open, defaultStageId, defaultLeadId, reset]);
+  }, [
+    open,
+    defaultStageId,
+    defaultLeadId,
+    defaultValueCents,
+    defaultTitle,
+    stages,
+    salesReps,
+    reset,
+  ]);
 
   function parseValueToCents(raw: string): number {
     const digits = raw.replace(/\D/g, '');
@@ -107,9 +171,17 @@ export function DealCreateDialog({
   }
 
   function onSubmit(data: DealCreateInput) {
-    const deal = createDeal(data);
-    toast.success(`Negócio "${deal.title}" criado.`, { duration: 4000 });
-    onOpenChange(false);
+    setSubmitError(null);
+    startTransition(async () => {
+      const result = await createDealAction(data);
+      if (!result.ok) {
+        setSubmitError(result.error);
+        return;
+      }
+      toast.success(`Negócio "${data.title}" criado.`, { duration: 4000 });
+      router.refresh();
+      onOpenChange(false);
+    });
   }
 
   return (
@@ -141,8 +213,12 @@ export function DealCreateDialog({
                 <Combobox
                   value={field.value || null}
                   onChange={(v) => field.onChange(v ?? '')}
-                  options={LEAD_OPTIONS}
-                  placeholder="Selecione um lead…"
+                  options={leadComboboxOptions}
+                  placeholder={
+                    leadComboboxOptions.length > 0
+                      ? 'Selecione um lead…'
+                      : 'Crie um lead antes de adicionar negócio'
+                  }
                   searchPlaceholder="Buscar por nome ou empresa…"
                   emptyMessage="Nenhum lead encontrado"
                 />
@@ -161,10 +237,10 @@ export function DealCreateDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {DEFAULT_STAGES.map((s) => (
+                      {stages.map((s) => (
                         <SelectItem key={s.id} value={s.id}>
                           {s.name}
-                          {ACTIVE_STAGES.find((a) => a.id === s.id) ? '' : ' (fechado)'}
+                          {s.terminal ? ' (fechado)' : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -183,7 +259,7 @@ export function DealCreateDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {SALES_REPS.map((r) => (
+                      {salesReps.map((r) => (
                         <SelectItem key={r.id} value={r.id}>
                           {r.name}
                         </SelectItem>
@@ -229,12 +305,18 @@ export function DealCreateDialog({
             />
           </Field>
 
+          {submitError && (
+            <p role="alert" className="text-caption text-destructive">
+              {submitError}
+            </p>
+          )}
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting && <Loader2 className="animate-spin" />}
+            <Button type="submit" disabled={isPending}>
+              {isPending && <Loader2 className="animate-spin" />}
               Criar negócio
             </Button>
           </DialogFooter>
