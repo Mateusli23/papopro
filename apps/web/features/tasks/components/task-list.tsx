@@ -5,23 +5,22 @@ import * as React from 'react';
 import { Card, CardContent, EmptyState } from '@papopro/ui';
 import { ListChecks } from '@papopro/ui/icons';
 
-import { useTasks } from '@/features/tasks/store';
-import { filterTasks, type TaskFilters } from '@/features/tasks/transforms';
+import type { SalesRep } from '@/features/leads/types';
+import type { TaskWithLead } from '@/features/tasks/transforms';
 
 import { TaskRow } from './task-row';
 
 /**
- * Lista de tasks renderizada como `<ul>` agrupada por status:
- *  - Pendentes (atrasadas + ativas) — em cima, ordenadas por dueAt asc
- *  - Concluídas — embaixo (colapsável visualmente: opacity reduzida, sem
- *    separator, mas presente pra quem quer marcar uma tarefa errada como
- *    pendente de novo)
+ * Lista de tasks renderizada como `<ul>` agrupada por status (M8#4 — server-fed).
  *
- * Quando ambos vazios, EmptyState.
+ * Recebe `tasks` por prop (não chama mais `useTasks()` do store).
  */
 
 interface TaskListProps {
-  filters?: TaskFilters;
+  tasks: TaskWithLead[];
+  salesReps: SalesRep[];
+  canEdit: boolean;
+  canDelete: boolean;
   /** Esconde a coluna do vendedor (útil em vista "Minhas tarefas"). */
   showAssignee?: boolean;
   emptyTitle?: string;
@@ -29,25 +28,25 @@ interface TaskListProps {
 }
 
 export function TaskList({
-  filters,
+  tasks,
+  salesReps,
+  canEdit,
+  canDelete,
   showAssignee = true,
   emptyTitle = 'Sem tarefas por aqui',
   emptyDescription = 'Quando criar tarefas, elas aparecem nesta lista.',
 }: TaskListProps) {
-  const tasks = useTasks();
-  const filtered = React.useMemo(() => filterTasks(tasks, filters), [tasks, filters]);
-
   const { pending, done } = React.useMemo(() => {
-    const pendingArr = filtered
+    const pendingArr = tasks
       .filter((t) => t.status === 'pending')
       .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
-    const doneArr = filtered
+    const doneArr = tasks
       .filter((t) => t.status === 'done')
       .sort((a, b) => (b.doneAt ?? b.dueAt).localeCompare(a.doneAt ?? a.dueAt));
     return { pending: pendingArr, done: doneArr };
-  }, [filtered]);
+  }, [tasks]);
 
-  if (filtered.length === 0) {
+  if (tasks.length === 0) {
     return (
       <Card>
         <CardContent className="py-8">
@@ -64,7 +63,14 @@ export function TaskList({
           <SectionHeader label="Pendentes" count={pending.length} />
           <ul className="flex flex-col gap-2">
             {pending.map((task) => (
-              <TaskRow key={task.id} task={task} showAssignee={showAssignee} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                showAssignee={showAssignee}
+                salesReps={salesReps}
+                canEdit={canEdit}
+                canDelete={canDelete}
+              />
             ))}
           </ul>
         </section>
@@ -75,7 +81,14 @@ export function TaskList({
           <SectionHeader label="Concluídas" count={done.length} muted />
           <ul className="flex flex-col gap-2">
             {done.map((task) => (
-              <TaskRow key={task.id} task={task} showAssignee={showAssignee} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                showAssignee={showAssignee}
+                salesReps={salesReps}
+                canEdit={canEdit}
+                canDelete={canDelete}
+              />
             ))}
           </ul>
         </section>

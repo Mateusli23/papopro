@@ -18,6 +18,8 @@ import { ptBR } from 'date-fns/locale';
 import { Button, cn } from '@papopro/ui';
 import { ChevronLeft, ChevronRight, PlusCircle } from '@papopro/ui/icons';
 
+import type { SalesRep } from '@/features/leads/types';
+import type { TaskWithLead } from '@/features/tasks/transforms';
 import type { Task } from '@/features/tasks/types';
 
 import { DayView } from './day-view';
@@ -48,9 +50,22 @@ interface CalendarViewProps {
   onTaskClick?: (task: Task) => void;
   /** Callback quando usuário pede criação (header ou empty state). */
   onCreateTask?: (defaultDate?: Date) => void;
+  /** Tasks pra renderizar nas 3 vistas. Quando undefined, views caem no store. */
+  tasks?: TaskWithLead[];
+  salesReps?: SalesRep[];
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export function CalendarView({ initialDate, onTaskClick, onCreateTask }: CalendarViewProps) {
+export function CalendarView({
+  initialDate,
+  onTaskClick,
+  onCreateTask,
+  tasks,
+  salesReps,
+  canEdit = false,
+  canDelete = false,
+}: CalendarViewProps) {
   const [view, setView] = React.useState<CalendarViewMode>('month');
   const [currentDate, setCurrentDate] = React.useState<Date>(
     () => initialDate ?? new Date('2026-05-09T14:00:00-03:00'),
@@ -158,16 +173,29 @@ export function CalendarView({ initialDate, onTaskClick, onCreateTask }: Calenda
           currentDate={currentDate}
           onDayClick={handleDayClick}
           onTaskClick={onTaskClick}
+          tasks={tasks}
         />
       )}
       {view === 'week' && (
-        <WeekView currentDate={currentDate} onDayClick={handleDayClick} onTaskClick={onTaskClick} />
+        <WeekView
+          currentDate={currentDate}
+          onDayClick={handleDayClick}
+          onTaskClick={onTaskClick}
+          tasks={tasks}
+          salesReps={salesReps}
+          canEdit={canEdit}
+          canDelete={canDelete}
+        />
       )}
       {view === 'day' && (
         <DayView
           currentDate={currentDate}
           onTaskClick={onTaskClick}
           onCreateForDay={onCreateTask}
+          tasks={tasks}
+          salesReps={salesReps}
+          canEdit={canEdit}
+          canDelete={canDelete}
         />
       )}
     </div>

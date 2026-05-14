@@ -7,8 +7,10 @@ import { ptBR } from 'date-fns/locale';
 
 import { cn } from '@papopro/ui';
 
+import type { SalesRep } from '@/features/leads/types';
 import { useTasks } from '@/features/tasks/store';
 import { groupTasksByDay } from '@/features/tasks/transforms';
+import type { TaskWithLead } from '@/features/tasks/transforms';
 import type { Task } from '@/features/tasks/types';
 
 import { TaskRow } from './task-row';
@@ -30,11 +32,24 @@ interface WeekViewProps {
   currentDate: Date;
   onDayClick?: (date: Date) => void;
   onTaskClick?: (task: Task) => void;
+  tasks?: TaskWithLead[];
+  salesReps?: SalesRep[];
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export function WeekView({ currentDate, onDayClick, onTaskClick }: WeekViewProps) {
-  const tasks = useTasks();
-  const grouped = React.useMemo(() => groupTasksByDay(tasks), [tasks]);
+export function WeekView({
+  currentDate,
+  onDayClick,
+  onTaskClick,
+  tasks: tasksProp,
+  salesReps = [],
+  canEdit = false,
+  canDelete = false,
+}: WeekViewProps) {
+  const fromStore = useTasks();
+  const effective = (tasksProp ?? (fromStore as unknown as TaskWithLead[])) as TaskWithLead[];
+  const grouped = React.useMemo(() => groupTasksByDay(effective), [effective]);
 
   const days = React.useMemo(() => {
     const start = startOfWeek(currentDate, { weekStartsOn: 0 });
@@ -100,7 +115,13 @@ export function WeekView({ currentDate, onDayClick, onTaskClick }: WeekViewProps
                 <ul className="flex flex-col gap-2">
                   {dayTasks.map((task) => (
                     <li key={task.id} onClick={() => onTaskClick?.(task)}>
-                      <TaskRow task={task} showAssignee={false} />
+                      <TaskRow
+                        task={task}
+                        showAssignee={false}
+                        salesReps={salesReps}
+                        canEdit={canEdit}
+                        canDelete={canDelete}
+                      />
                     </li>
                   ))}
                 </ul>

@@ -135,6 +135,16 @@ export interface Activity {
     /** attachment: nome/tamanho. */
     fileName?: string;
     fileSizeKb?: number;
+    /**
+     * task activity sub-event (M8#4):
+     *  - `'created'` → "Tarefa criada"
+     *  - `'completed'` → "Tarefa concluída"
+     */
+    eventKind?: 'created' | 'completed';
+    /** task activity ref (M8#4). */
+    taskId?: string;
+    /** task kind (M8#4). */
+    kind?: string;
   };
 }
 
