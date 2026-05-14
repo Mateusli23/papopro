@@ -120,6 +120,7 @@ export function LeadsView({ initialLeads, salesReps, pipeline, callerRole }: Lea
 
       <LeadsTable
         leads={filtered}
+        stages={pipeline?.stages}
         hasFiltersActive={isFilterActive(filters)}
         onClearFilters={() => setFilters(EMPTY_FILTERS)}
         onCreateLead={() => setCreateOpen(true)}
