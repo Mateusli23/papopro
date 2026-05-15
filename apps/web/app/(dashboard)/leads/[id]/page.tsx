@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 
 import { listActivitiesForLead } from '@/features/activities/queries';
+import { listAttachmentsForLead } from '@/features/attachments/queries';
 import { getLead, listDefaultPipeline, listSalesReps } from '@/features/leads/queries';
 import { listTasksForLead } from '@/features/tasks/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
@@ -46,13 +47,15 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     redirect('/onboarding');
   }
 
-  const [lead, salesReps, pipeline, initialActivities, initialTasks] = await Promise.all([
-    getLead(workspaceId, params.id),
-    listSalesReps(workspaceId),
-    listDefaultPipeline(workspaceId),
-    listActivitiesForLead(workspaceId, params.id),
-    listTasksForLead(workspaceId, params.id),
-  ]);
+  const [lead, salesReps, pipeline, initialActivities, initialTasks, initialAttachments] =
+    await Promise.all([
+      getLead(workspaceId, params.id),
+      listSalesReps(workspaceId),
+      listDefaultPipeline(workspaceId),
+      listActivitiesForLead(workspaceId, params.id),
+      listTasksForLead(workspaceId, params.id),
+      listAttachmentsForLead(workspaceId, params.id),
+    ]);
 
   if (!lead) {
     notFound();
@@ -65,6 +68,8 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
       stages={pipeline?.stages ?? []}
       initialActivities={initialActivities}
       initialTasks={initialTasks}
+      initialAttachments={initialAttachments}
+      callerUserId={ctx.user.id}
       callerRole={callerMembership.role}
     />
   );

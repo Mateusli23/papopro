@@ -8,6 +8,8 @@ import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@p
 import { ArrowLeft, MessageCircle, Phone, PlusCircle, Sparkles } from '@papopro/ui/icons';
 
 import type { ActivityWithAuthor } from '@/features/activities/transforms';
+import { LeadAttachmentsCard } from '@/features/attachments/components/lead-attachments-card';
+import type { AttachmentUI } from '@/features/attachments/transforms';
 import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import { LeadDetailCard } from '@/features/leads/components/lead-detail-card';
@@ -42,6 +44,8 @@ interface LeadDetailViewProps {
   stages: PipelineStage[];
   initialActivities: ActivityWithAuthor[];
   initialTasks: TaskWithLead[];
+  initialAttachments: AttachmentUI[];
+  callerUserId: string;
   callerRole: Role;
 }
 
@@ -51,6 +55,8 @@ export function LeadDetailView({
   stages,
   initialActivities,
   initialTasks,
+  initialAttachments,
+  callerUserId,
   callerRole,
 }: LeadDetailViewProps) {
   const [createDealOpen, setCreateDealOpen] = React.useState(false);
@@ -132,14 +138,22 @@ export function LeadDetailView({
           stages={stages}
           canAddNote={canAddNote}
         />
-        <LeadNextActions
-          leadId={lead.id}
-          initialTasks={initialTasks}
-          salesReps={salesReps}
-          leadName={lead.name}
-          leadCompany={lead.company ?? null}
-          callerRole={callerRole}
-        />
+        <div className="flex flex-col gap-6">
+          <LeadNextActions
+            leadId={lead.id}
+            initialTasks={initialTasks}
+            salesReps={salesReps}
+            leadName={lead.name}
+            leadCompany={lead.company ?? null}
+            callerRole={callerRole}
+          />
+          <LeadAttachmentsCard
+            leadId={lead.id}
+            initialAttachments={initialAttachments}
+            callerUserId={callerUserId}
+            callerRole={callerRole}
+          />
+        </div>
       </div>
 
       {/* Mobile/Tablet: tabs */}
@@ -154,6 +168,9 @@ export function LeadDetailView({
             </TabsTrigger>
             <TabsTrigger value="acoes" className="flex-1">
               Ações
+            </TabsTrigger>
+            <TabsTrigger value="anexos" className="flex-1">
+              Anexos
             </TabsTrigger>
           </TabsList>
           <TabsContent value="ficha" className="mt-4">
@@ -179,6 +196,14 @@ export function LeadDetailView({
               salesReps={salesReps}
               leadName={lead.name}
               leadCompany={lead.company ?? null}
+              callerRole={callerRole}
+            />
+          </TabsContent>
+          <TabsContent value="anexos" className="mt-4">
+            <LeadAttachmentsCard
+              leadId={lead.id}
+              initialAttachments={initialAttachments}
+              callerUserId={callerUserId}
               callerRole={callerRole}
             />
           </TabsContent>
