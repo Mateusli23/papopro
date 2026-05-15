@@ -1,13 +1,17 @@
 /**
  * Smoke test WhatsApp — grupos `whatsapp-schema-m9` (M9#1) +
- * `whatsapp-connection-m9` (M9#2).
+ * `whatsapp-connection-m9` (M9#2) + `whatsapp-webhook-m9` +
+ * `whatsapp-antiban-m9` (M9#3).
  *
- * Valida o contrato do schema + adapter + factory + transforms sem tocar
- * rede nem banco. Roda em CI + manual via `curl /api/smoke-test/whatsapp`.
+ * Valida o contrato do schema + adapter + factory + transforms + verificação
+ * HMAC + Zod webhook + anti-ban puro — sem tocar rede nem banco. Roda em CI
+ * + manual via `curl /api/smoke-test/whatsapp`.
  *
- * Em M9#3+ outros grupos entram aqui (`whatsapp-webhook-m9`,
- * `whatsapp-antiban-m9`, `whatsapp-inbox-m9`, `whatsapp-heartbeat-m9`).
+ * Em M9#4+ outros grupos entram aqui (`whatsapp-inbox-m9`,
+ * `whatsapp-heartbeat-m9`).
  */
+import { createHmac } from 'node:crypto';
+
 import { NextResponse } from 'next/server';
 
 import {
@@ -36,9 +40,25 @@ import {
   type WhatsAppInstanceStatus,
   type WhatsAppQrCode,
 } from '@/lib/whatsapp/adapter';
+import {
+  applyJitter,
+  assertCanSendPure,
+  BURST_PAUSE_THRESHOLD,
+  isWithinBusinessHours,
+  JITTER_MAX_MS,
+  JITTER_MIN_MS,
+  OUTBOUND_LIMIT_24H,
+  type InstanceSnapshot,
+} from '@/lib/whatsapp/anti-ban';
 import { selectAdapter } from '@/lib/whatsapp/factory';
 import { mockAdapter } from '@/lib/whatsapp/mock-adapter';
 import { uazapiAdapter } from '@/lib/whatsapp/uazapi';
+import {
+  instanceStatusSchema,
+  messageReceivedSchema,
+  messageStatusSchema,
+} from '@/lib/whatsapp/webhook-schemas';
+import { verifyUazapiSignaturePure } from '@/lib/whatsapp/webhook-verify';
 
 interface CheckResult {
   group: string;
@@ -269,6 +289,250 @@ export async function GET() {
       getConnectionStatusSchema.safeParse({}).success;
     const extraRejected = !connectInstanceSchema.safeParse({ foo: 'bar' }).success;
     return (emptyOk && extraRejected) || 'connection schemas inconsistentes';
+  });
+
+  // ─── Grupo whatsapp-webhook-m9 (M9#3) ────────────────────────────────────
+  const w = run('whatsapp-webhook-m9', results);
+
+  const TEST_SECRET = 'test-secret-abc123';
+  const TEST_BODY = '{"event":"instance.status","instance_id":"ext-1","status":"connected"}';
+  const validHmac = createHmac('sha256', TEST_SECRET).update(TEST_BODY).digest('hex');
+
+  // 14. HMAC válido com prefixo sha256= aceita
+  await w('verifySignatureAcceptsValid', () => {
+    const result = verifyUazapiSignaturePure(TEST_SECRET, TEST_BODY, `sha256=${validHmac}`);
+    return result.ok === true || `reason=${'reason' in result ? result.reason : 'unknown'}`;
+  });
+
+  // 15. HMAC válido sem prefixo também aceita
+  await w('verifySignatureAcceptsNoPrefix', () => {
+    const result = verifyUazapiSignaturePure(TEST_SECRET, TEST_BODY, validHmac);
+    return result.ok === true || 'expected ok=true sem prefixo';
+  });
+
+  // 16. HMAC inválido rejeita
+  await w('verifySignatureRejectsInvalid', () => {
+    const wrong = '0'.repeat(64);
+    const result = verifyUazapiSignaturePure(TEST_SECRET, TEST_BODY, `sha256=${wrong}`);
+    return (!result.ok && result.reason === 'signature_invalid') || 'expected signature_invalid';
+  });
+
+  // 17. HMAC malformado (não hex) rejeita
+  await w('verifySignatureRejectsMalformed', () => {
+    const result = verifyUazapiSignaturePure(TEST_SECRET, TEST_BODY, 'sha256=not-hex-xyz');
+    return (
+      (!result.ok && result.reason === 'signature_malformed') || 'expected signature_malformed'
+    );
+  });
+
+  // 18. Secret vazio = dev skip
+  await w('verifySignatureSkipsEmptySecret', () => {
+    const result = verifyUazapiSignaturePure('', TEST_BODY, null);
+    return (result.ok === true && result.skipped === true) || 'expected ok=true skipped=true';
+  });
+
+  // 19. Header ausente com secret presente = signature_missing
+  await w('verifySignatureRequiresHeader', () => {
+    const result = verifyUazapiSignaturePure(TEST_SECRET, TEST_BODY, null);
+    return (!result.ok && result.reason === 'signature_missing') || 'expected signature_missing';
+  });
+
+  // 20. messageReceivedSchema aceita payload válido
+  await w('messageReceivedSchemaValid', () => {
+    return (
+      messageReceivedSchema.safeParse({
+        event: 'message.received',
+        instance_id: 'inst-1',
+        message: {
+          id: 'msg-1',
+          from: '+5511999998888',
+          type: 'text',
+          text: { body: 'oi' },
+          timestamp: '2026-05-15T10:00:00Z',
+        },
+      }).success || 'expected valid'
+    );
+  });
+
+  // 21. messageStatusSchema rejeita status fora do enum
+  await w('messageStatusSchemaRejectsInvalidStatus', () => {
+    return (
+      !messageStatusSchema.safeParse({
+        event: 'message.status',
+        instance_id: 'inst-1',
+        message_id: 'msg-1',
+        status: 'sent_but_invalid',
+      }).success || 'expected rejection'
+    );
+  });
+
+  // 22. instanceStatusSchema aceita connected + phone E.164
+  await w('instanceStatusSchemaConnected', () => {
+    return (
+      instanceStatusSchema.safeParse({
+        event: 'instance.status',
+        instance_id: 'inst-1',
+        status: 'connected',
+        phone_number: '+5511999998888',
+      }).success || 'expected valid'
+    );
+  });
+
+  // 23. Phone E.164 inválido rejeitado (faltando +)
+  await w('phoneE164Validation', () => {
+    return (
+      !messageReceivedSchema.safeParse({
+        event: 'message.received',
+        instance_id: 'inst-1',
+        message: {
+          id: 'msg-1',
+          from: '5511999998888', // sem +
+          type: 'text',
+          timestamp: '2026-05-15T10:00:00Z',
+        },
+      }).success || 'expected rejection'
+    );
+  });
+
+  // ─── Grupo whatsapp-antiban-m9 (M9#3) ────────────────────────────────────
+  const a = run('whatsapp-antiban-m9', results);
+
+  // Helper pra construir InstanceSnapshot
+  const healthyInstance: InstanceSnapshot = {
+    status: 'connected',
+    healthScore: 'healthy',
+    pausedUntil: null,
+    messagesSent24h: 0,
+    externalInstanceId: 'ext-1',
+  };
+  const noon = new Date('2026-05-15T15:00:00Z'); // 12h em SP (UTC-3)
+  const earlyMorning = new Date('2026-05-15T06:00:00Z'); // 3h em SP
+
+  // 24. Happy path
+  await a('assertCanSendHappyPath', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: healthyInstance,
+      blacklisted: false,
+      now: noon,
+    });
+    return r.ok === true || `unexpected reason=${'reason' in r ? r.reason : 'none'}`;
+  });
+
+  // 25. Blacklisted bloqueia
+  await a('assertCanSendBlacklisted', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: healthyInstance,
+      blacklisted: true,
+      now: noon,
+    });
+    return (!r.ok && r.reason === 'blacklisted') || 'expected blacklisted';
+  });
+
+  // 26. Instance disconnected bloqueia
+  await a('assertCanSendDisconnected', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: { ...healthyInstance, status: 'disconnected' },
+      blacklisted: false,
+      now: noon,
+    });
+    return (!r.ok && r.reason === 'instance_disconnected') || 'expected instance_disconnected';
+  });
+
+  // 27. Instance unhealthy bloqueia
+  await a('assertCanSendUnhealthy', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: { ...healthyInstance, healthScore: 'unhealthy' },
+      blacklisted: false,
+      now: noon,
+    });
+    return (!r.ok && r.reason === 'instance_unhealthy') || 'expected instance_unhealthy';
+  });
+
+  // 28. Instance pausedUntil futuro bloqueia
+  await a('assertCanSendPaused', () => {
+    const future = new Date(noon.getTime() + 10 * 60 * 1_000);
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: { ...healthyInstance, pausedUntil: future },
+      blacklisted: false,
+      now: noon,
+    });
+    return (!r.ok && r.reason === 'instance_paused') || 'expected instance_paused';
+  });
+
+  // 29. Fora horário comercial (3h da manhã em SP) bloqueia
+  await a('assertCanSendOutsideHours', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: healthyInstance,
+      blacklisted: false,
+      now: earlyMorning,
+    });
+    return (!r.ok && r.reason === 'outside_business_hours') || 'expected outside_business_hours';
+  });
+
+  // 30. Rate limit 24h atingido bloqueia
+  await a('assertCanSendRateLimit', () => {
+    const r = assertCanSendPure({
+      workspaceTimezone: 'America/Sao_Paulo',
+      toPhone: '+5511999998888',
+      instance: { ...healthyInstance, messagesSent24h: OUTBOUND_LIMIT_24H },
+      blacklisted: false,
+      now: noon,
+    });
+    return (!r.ok && r.reason === 'rate_limit_24h') || 'expected rate_limit_24h';
+  });
+
+  // 31. Janela horária respeita timezone (12h SP = OK; 22h SP = fora)
+  await a('businessHoursTimezone', () => {
+    const dayInSp = new Date('2026-05-15T15:00:00Z'); // 12h SP
+    const nightInSp = new Date('2026-05-16T01:00:00Z'); // 22h SP
+    const dayOk = isWithinBusinessHours(dayInSp, 'America/Sao_Paulo');
+    const nightBlocked = !isWithinBusinessHours(nightInSp, 'America/Sao_Paulo');
+    return (dayOk && nightBlocked) || `dayOk=${dayOk} nightBlocked=${nightBlocked}`;
+  });
+
+  // 32. Constantes corretas
+  await a('antiBanConstants', () => {
+    return (
+      (OUTBOUND_LIMIT_24H === 1000 &&
+        JITTER_MIN_MS === 30_000 &&
+        JITTER_MAX_MS === 50_000 &&
+        BURST_PAUSE_THRESHOLD === 50) ||
+      `OUTBOUND=${OUTBOUND_LIMIT_24H} MIN=${JITTER_MIN_MS} MAX=${JITTER_MAX_MS} BURST=${BURST_PAUSE_THRESHOLD}`
+    );
+  });
+
+  // 33. applyJitter respeita min com random=0 e max com random=0.9999
+  await a('applyJitterRandomMin', async () => {
+    let slept = 0;
+    const sleepFn = async (ms: number) => {
+      slept = ms;
+    };
+    await applyJitter(() => 0, sleepFn);
+    return slept === JITTER_MIN_MS || `slept=${slept}`;
+  });
+
+  await a('applyJitterRandomMax', async () => {
+    let slept = 0;
+    const sleepFn = async (ms: number) => {
+      slept = ms;
+    };
+    await applyJitter(() => 0.9999, sleepFn);
+    // Max ≈ JITTER_MAX_MS - 1 (Math.floor(0.9999 * range))
+    return slept >= JITTER_MAX_MS - 10 && slept < JITTER_MAX_MS
+      ? true
+      : `slept=${slept} esperado ~${JITTER_MAX_MS}`;
   });
 
   const passed = results.filter((r) => r.ok).length;
