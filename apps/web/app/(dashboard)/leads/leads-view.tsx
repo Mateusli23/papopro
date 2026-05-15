@@ -5,9 +5,11 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
+import { toast } from 'react-hot-toast';
+
 import { Button, PageHeader } from '@papopro/ui';
 import type { LeadTemperature } from '@papopro/ui';
-import { KanbanSquare, PlusCircle, Upload } from '@papopro/ui/icons';
+import { Download, KanbanSquare, PlusCircle, Upload } from '@papopro/ui/icons';
 
 import { LeadCreateDialog } from '@/features/leads/components/lead-create-dialog';
 import {
@@ -70,6 +72,7 @@ export function LeadsView({ initialLeads, salesReps, pipeline, callerRole }: Lea
   );
   const [createOpen, setCreateOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
 
   const filtered = React.useMemo(
     () => applyLeadFilters(initialLeads, filters),
@@ -83,7 +86,51 @@ export function LeadsView({ initialLeads, salesReps, pipeline, callerRole }: Lea
   // Viewer não pode criar leads — esconde botões (defense-in-depth, RBAC
   // server-side também bloqueia se forjar request).
   const canCreate = callerRole !== 'Viewer';
+  const canExport = callerRole === 'Owner' || callerRole === 'Admin' || callerRole === 'Manager';
   const activeStages = pipeline?.stages.filter((s) => !s.terminal) ?? [];
+
+  async function handleExportCsv() {
+    setExporting(true);
+    try {
+      // Envia filtros server-side (temperatura é client-only, ignorada no payload).
+      const payload = {
+        search: filters.search || undefined,
+        stageIds: filters.stages.length > 0 ? filters.stages : undefined,
+        assigneeIds: filters.reps.length > 0 ? filters.reps : undefined,
+        origins: filters.origins.length > 0 ? filters.origins : undefined,
+        tagNames: filters.tags.length > 0 ? filters.tags : undefined,
+      };
+      const response = await fetch('/api/exports/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => null)) as { error?: string } | null;
+        toast.error(errorBody?.error ?? 'Não foi possível exportar agora.');
+        return;
+      }
+      const rowCount = response.headers.get('X-Row-Count') ?? '?';
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Tenta extrair filename do Content-Disposition; fallback genérico.
+      const disposition = response.headers.get('Content-Disposition') ?? '';
+      const fileNameMatch = disposition.match(/filename="([^"]+)"/);
+      a.download = fileNameMatch?.[1] ?? 'leads.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${rowCount} lead(s) exportados.`);
+    } catch (err) {
+      console.error('[handleExportCsv]', err);
+      toast.error('Não foi possível exportar agora.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -97,6 +144,16 @@ export function LeadsView({ initialLeads, salesReps, pipeline, callerRole }: Lea
                 <KanbanSquare /> Ver no Kanban
               </Link>
             </Button>
+            {canExport && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportCsv}
+                disabled={exporting || initialLeads.length === 0}
+              >
+                <Download /> {exporting ? 'Exportando…' : 'Exportar CSV'}
+              </Button>
+            )}
             {canCreate && (
               <>
                 <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>

@@ -38,6 +38,7 @@ import { type Prisma } from '@papopro/db';
 
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { requireRole } from '@/lib/auth/require-role';
+import { serializeLeadsCsv, type LeadCsvRow } from '@/lib/exports/csv';
 import { findDuplicates } from '@/lib/leads/dedupe';
 import { pickNextAssignee } from '@/lib/leads/pick-assignee';
 import { reportNonFatal } from '@/lib/observability/report';
@@ -47,7 +48,8 @@ import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 import {
   archiveLeadSchema,
   assignLeadSchema,
-  CSV_IMPORT_MAX_ROWS,
+  EXPORT_MAX_ROWS,
+  exportLeadsSchema,
   importLeadsSchema,
   leadCreateSchema,
   moveStageSchema,
@@ -55,6 +57,7 @@ import {
   updateLeadSchema,
   type ArchiveLeadInput,
   type AssignLeadInput,
+  type ExportLeadsInput,
   type ImportLeadsInput,
   type LeadCreateInput,
   type MoveStageInput,
@@ -816,4 +819,164 @@ export async function importLeadsAction(input: ImportLeadsInput): Promise<Import
   }
 }
 
-export { CSV_IMPORT_MAX_ROWS };
+// =============================================================================
+// M8#7 — Export CSV de leads
+// =============================================================================
+
+export interface ExportLeadsSuccess {
+  ok: true;
+  csv: string;
+  fileName: string;
+  rowCount: number;
+}
+
+export type ExportLeadsResult = ExportLeadsSuccess | { ok: false; error: string };
+
+/**
+ * `exportLeadsAction` (M8#7) — gera CSV dos leads do workspace ativo
+ * respeitando filtros + RBAC + soft-delete. Retorna string CSV pra que o
+ * Route Handler envolva em `Content-Disposition: attachment`.
+ *
+ * **RBAC:** Owner/Admin/Manager. Vendedor não exporta base inteira (vetor
+ * de vazamento; LGPD §7.5).
+ *
+ * **Hard limit:** `EXPORT_MAX_ROWS` (5k). Workspaces maiores precisam de
+ * Edge Function + email link 7d (V2 — bloqueado em dev local por
+ * antivírus/TLS, memória `dev-local-windows-antivirus-tls`).
+ *
+ * **Audit log:** `export_started` com `changes.format='csv'`, `rowCount`,
+ * `filters` e IP/UA pra LGPD §3.4 (toda exportação registrada).
+ *
+ * **Sort:** `createdAt desc` (mesmo de `/leads` lista).
+ */
+export async function exportLeadsAction(input: ExportLeadsInput): Promise<ExportLeadsResult> {
+  const parsed = exportLeadsSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Filtros inválidos.' };
+  }
+
+  const auth = await requireRole(['Owner', 'Admin', 'Manager'], {
+    forbiddenMessage: 'Apenas Owner, Admin e Manager podem exportar leads.',
+  });
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const { userId, workspaceId } = auth.ctx;
+  const { ipAddress, userAgent } = getRequestAuditContext();
+
+  const filters = parsed.data;
+
+  try {
+    const result = await withWorkspace<{ rows: LeadCsvRow[]; total: number }>(
+      workspaceId,
+      async (tx) => {
+        const where: Prisma.LeadWhereInput = { workspaceId, deletedAt: null };
+
+        // Default oculta arquivados — caller passa `statuses=['ativo','arquivado',...]`
+        // pra incluir tudo. Espelha lógica de `listLeads` (M8#2).
+        if (filters.statuses === undefined) {
+          where.status = 'ativo';
+        } else if (filters.statuses.length > 0) {
+          where.status = { in: filters.statuses };
+        }
+
+        if (filters.search && filters.search.trim()) {
+          const term = filters.search.trim();
+          where.OR = [
+            { name: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
+            { phone: { contains: term } },
+            { company: { contains: term, mode: 'insensitive' } },
+          ];
+        }
+        if (filters.stageIds && filters.stageIds.length > 0) {
+          where.stageId = { in: filters.stageIds };
+        }
+        if (filters.assigneeIds && filters.assigneeIds.length > 0) {
+          where.assignedToId = { in: filters.assigneeIds };
+        }
+        if (filters.origins && filters.origins.length > 0) {
+          where.origin = { in: filters.origins };
+        }
+        if (filters.tagNames && filters.tagNames.length > 0) {
+          where.tags = { some: { tag: { name: { in: filters.tagNames } } } };
+        }
+
+        // Conta antes pra decidir se passa do limite.
+        const total = await tx.lead.count({ where });
+        if (total > EXPORT_MAX_ROWS) {
+          throw new Error('TOO_MANY_ROWS');
+        }
+
+        const rows = await tx.lead.findMany({
+          where,
+          include: {
+            tags: { include: { tag: { select: { name: true } } } },
+            stage: { select: { name: true } },
+            assignedTo: { include: { user: { select: { name: true, email: true } } } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: EXPORT_MAX_ROWS,
+        });
+
+        const csvRows: LeadCsvRow[] = rows.map((r) => ({
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          company: r.company,
+          position: r.position,
+          origin: r.origin,
+          status: r.status,
+          stageName: r.stage.name,
+          assignedToName: r.assignedTo.user.name ?? r.assignedTo.user.email?.split('@')[0] ?? null,
+          valueCents: r.valueCents,
+          tags: r.tags.map((t) => t.tag.name),
+          notes: r.notes,
+          lastInteractionAt: r.lastInteractionAt,
+          nextActionAt: r.nextActionAt,
+          createdAt: r.createdAt,
+        }));
+
+        return { rows: csvRows, total };
+      },
+    );
+
+    const csv = serializeLeadsCsv(result.rows);
+    const now = new Date();
+    const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const fileName = `leads-${ts}.csv`;
+
+    // Audit log fora da tx — não bloqueia o export se audit falhar.
+    try {
+      await withWorkspace(workspaceId, async (tx) => {
+        await tx.auditLog.create({
+          data: {
+            workspaceId,
+            userId,
+            action: 'export_started',
+            entityType: 'lead',
+            entityId: null,
+            changes: {
+              format: 'csv',
+              rowCount: result.total,
+              filters,
+            } as Prisma.InputJsonValue,
+            ipAddress,
+            userAgent,
+          },
+        });
+      });
+    } catch (auditErr) {
+      reportNonFatal('leads.export.audit', auditErr, { workspaceId, userId });
+    }
+
+    return { ok: true, csv, fileName, rowCount: result.total };
+  } catch (err) {
+    if (err instanceof Error && err.message === 'TOO_MANY_ROWS') {
+      return {
+        ok: false,
+        error: `Sua busca tem mais de ${EXPORT_MAX_ROWS} leads. Aplique filtros pra reduzir antes de exportar.`,
+      };
+    }
+    reportNonFatal('leads.export.tx', err, { workspaceId, userId });
+    return { ok: false, error: 'Não foi possível exportar agora. Tente em instantes.' };
+  }
+}

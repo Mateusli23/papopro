@@ -56,6 +56,7 @@ export default async function KanbanPage() {
   return (
     <Suspense>
       <KanbanView
+        workspaceId={workspaceId}
         initialDeals={initialDeals}
         pipeline={pipeline}
         salesReps={salesReps}

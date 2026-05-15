@@ -194,3 +194,43 @@ export const importLeadsSchema = z.object({
 });
 
 export type ImportLeadsInput = z.infer<typeof importLeadsSchema>;
+
+// ─── Export (M8#7) ──────────────────────────────────────────────────────
+
+/**
+ * Limite hard pra export síncrono. Plan Pro tem 5k leads ativos/workspace —
+ * mesmo `export tudo` cabe num response Vercel (4.5MB) já que CSV de 5k leads
+ * fica em torno de 1MB. Background pra >5k (email + link 7d) entra em V2.
+ */
+export const EXPORT_MAX_ROWS = 5000;
+
+/**
+ * Payload do `exportLeadsAction`. Espelha `ListLeadsFilters` da
+ * `features/leads/queries.ts` — caller passa os filtros que estiverem
+ * aplicados na tela `/leads`.
+ */
+export const exportLeadsSchema = z.object({
+  search: z.string().max(120).optional(),
+  stageIds: z.array(z.string().uuid()).optional(),
+  assigneeIds: z.array(z.string().uuid()).optional(),
+  origins: z
+    .array(
+      z.enum([
+        'site',
+        'meta_ads',
+        'google_ads',
+        'indicacao',
+        'whatsapp_inbound',
+        'csv_import',
+        'manual',
+        'rd_station',
+        'hotmart',
+        'webhook_generico',
+      ]),
+    )
+    .optional(),
+  tagNames: z.array(z.string().max(32)).max(8).optional(),
+  statuses: z.array(z.enum(['ativo', 'arquivado', 'perdido', 'ganho'])).optional(),
+});
+
+export type ExportLeadsInput = z.infer<typeof exportLeadsSchema>;

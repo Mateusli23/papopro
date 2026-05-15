@@ -1025,8 +1025,8 @@ Escopo intencionalmente menor que o plano original (sem `withSentryConfig` em `n
 | M8#3   | Kanban persiste drag-and-drop — `moveDealStage` + `updateDealOrder` otimista                    | `m8-kanban-persistence`  | ✅ entregue | [#48](https://github.com/Mateusli23/papopro/pull/48) |
 | M8#4   | Timeline real do lead + tasks (CRUD `createTask`, `completeTask`) lendo do DB                   | `m8-timeline-tasks`      | ✅ entregue | [#49](https://github.com/Mateusli23/papopro/pull/49) |
 | M8#5   | Importação CSV (≤1k síncrono) + webhook `/api/webhooks/leads/[token]` + round-robin de assignee | `m8-csv-webhooks`        | ✅ entregue | [#51](https://github.com/Mateusli23/papopro/pull/51) |
-| M8#6   | Storage Supabase para anexos (`bucket attachments` + RLS) + cleanup órfão diário                | `m8-storage-attachments` | ✅ entregue | _aberto após validação local_                        |
-| M8#7   | Realtime Kanban (Supabase channel `workspace:<id>:deals`) + export CSV/XLSX                     | `m8-realtime-export`     | ⏳          | —                                                    |
+| M8#6   | Storage Supabase para anexos (`bucket attachments` + RLS) + cleanup órfão diário                | `m8-storage-attachments` | ✅ entregue | [#53](https://github.com/Mateusli23/papopro/pull/53) |
+| M8#7   | Realtime Kanban (postgres_changes em `deals`) + export CSV de leads + audit LGPD                | `m8-realtime-export`     | ✅ entregue | _aberto após validação local_                        |
 
 Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores — schema preparado em M8#1, UI em onda separada.
 
@@ -1046,8 +1046,8 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - [x] Storage Supabase para anexos (bucket `attachments` privado, 10 MB, whitelist MIME + 3 policies RLS em `storage.objects` workspace-scoped via path prefix) _(M8#6)_
 - [x] Cleanup de mídia órfã agendado (Next route `/api/cron/cleanup-attachments` + GitHub Action diário 03:00 BRT; rows + storage objects com `deletedAt > 30d`) _(M8#6)_. Migração pra `pg_cron + pg_net + Edge Function` fica pós-MVP (Edge Functions bloqueadas em dev local).
 - [ ] Integração Google Calendar (OAuth + sync bidirecional de tarefas a cada 2 min via Edge Function) _(polimento pós-M8#4)_
-- [ ] Exportação CSV/XLSX (background + email com link 7d) com log de auditoria _(M8#7)_
-- [ ] Realtime para mudanças de Kanban (Supabase Realtime channel `workspace:<id>:deals`) _(M8#7)_
+- [x] Exportação CSV de leads (≤5k linhas síncrono; CSV UTF-8 BOM RFC 4180; respeitando filtros aplicados; audit `export_started` com IP/UA pra LGPD §3.4) _(M8#7)_. XLSX + background >5k (Edge Function + email link 7d) ficam pra pós-MVP.
+- [x] Realtime no Kanban (Supabase postgres*changes em `deals` filter `workspace_id`; `REPLICA IDENTITY FULL`; hook `useRealtimeDeals` dispara `router.refresh()` debounced) *(M8#7)\_
 
 **Entregas — M8#1 Schema + RLS + seed (entregue, PR pós-validação local):**
 
@@ -1184,7 +1184,23 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, `pnpm -r typecheck` ✅.
 - [x] **Decisão técnica — pg_cron + pg_net fora**: Edge Functions desabilitadas em dev local nessa máquina (antivírus + TLS quebra TLS — memória `dev-local-windows-antivirus-tls`). Next route + GitHub Action é portável, testável local, com mesma garantia operacional. Migração pra `pg_cron + pg_net + Edge Function` (alinhada com CLAUDE.md §6) fica pra pós-MVP.
 
-**Commit final M8:** `feat(backend): leads, deals, pipelines, tasks crud with rls and csv import`
+**Entregas — M8#7 Realtime Kanban + export CSV (entregue, PR pós-validação local):**
+
+- [x] **Migration:** [`supabase/migrations/20260517120000_m8_7_realtime_export.sql`](supabase/migrations/20260517120000_m8_7_realtime_export.sql) — adiciona `public.deals` à publication `supabase_realtime` (idempotente via `pg_publication_tables` guard) e seta `REPLICA IDENTITY FULL` na tabela. Sem isso, payload de UPDATE/DELETE no canal teria só a PK e o cliente precisaria re-fetchar. FULL é aceitável pro volume (~50-500 deals/workspace).
+- [x] [`apps/web/features/deals/hooks/use-realtime-deals.ts`](apps/web/features/deals/hooks/use-realtime-deals.ts) — hook client. Subscribe ao canal `workspace:<id>:deals` em `postgres_changes` event=`*` filter=`workspace_id=eq.<id>`. **Decisão:** dispara `router.refresh()` debounced 200ms em vez de mergear payload manualmente — Server Component pai re-fetcha, `useOptimistic` reconcilia. Evita race de merge sutil. Unsubscribe limpo no unmount via `supabase.removeChannel`.
+- [x] [`apps/web/app/(dashboard)/kanban/page.tsx`](<apps/web/app/(dashboard)/kanban/page.tsx>) + [`kanban-view.tsx`](<apps/web/app/(dashboard)/kanban/kanban-view.tsx>) — passa `workspaceId` por prop; `KanbanView` chama `useRealtimeDeals(workspaceId)` no mount. **RLS garante isolamento** — Supabase Realtime aplica a policy SELECT de `deals` (`workspace_id = current_workspace_id()`), então mesmo se outro tenant disparar event, o JWT do anon key filtra na ponta.
+- [x] [`apps/web/lib/exports/csv.ts`](apps/web/lib/exports/csv.ts) — writer puro RFC 4180. `escapeCsvValue` (quote/comma/newline → envolve em aspas e duplica `"`), `serializeCsvRow`/`serializeCsv`, BOM UTF-8 (`﻿`) prefixado, CRLF entre linhas. `LeadCsvRow` interface + `LEAD_CSV_HEADER` em pt-BR + `serializeLeadsCsv` (formata `valueCents` com vírgula decimal BR, tags joinadas com `; `, datas ISO `yyyy-MM-dd HH:mm`).
+- [x] [`apps/web/features/leads/schemas.ts`](apps/web/features/leads/schemas.ts) — `exportLeadsSchema` (todos filtros opcionais: search/stageIds/assigneeIds/origins/tagNames/statuses) + constante `EXPORT_MAX_ROWS = 5000` (Plan Pro 5k leads/workspace cobre tudo síncrono no Vercel 4.5MB limit).
+- [x] [`apps/web/features/leads/actions.ts`](apps/web/features/leads/actions.ts) — `exportLeadsAction(filters)` RBAC Owner/Admin/Manager. Reusa lógica de `listLeads` (mesma `where`); `tx.lead.count` antes pra detectar >5k e abortar com mensagem propositiva; `findMany` com `take: 5k` + include `tags/stage/assignedTo.user`. Audit `export_started` fora da tx (não bloqueia export se audit falhar) com `changes.format='csv'`, `rowCount`, `filters` + IP/UA.
+- [x] [`apps/web/app/api/exports/leads/route.ts`](apps/web/app/api/exports/leads/route.ts) — POST handler. Valida payload Zod (defense-in-depth), chama action, envolve resultado em `Response(csv, { headers: 'Content-Type: text/csv; charset=utf-8', 'Content-Disposition': attachment, 'X-Row-Count' })`. GET retorna 405.
+- [x] [`apps/web/app/(dashboard)/leads/leads-view.tsx`](<apps/web/app/(dashboard)/leads/leads-view.tsx>) — botão "Exportar CSV" no header (visível pra O/A/M, disabled se workspace vazio). Aplica filtros atuais (search/stageIds/assigneeIds/origins/tagNames; `temperatures` é client-only e não vai no payload). Client faz `fetch('/api/exports/leads', { method: 'POST', body: JSON.stringify(payload) })` → `response.blob()` → `URL.createObjectURL` → trigger download. Toast com `X-Row-Count` no sucesso.
+- [x] [`apps/web/app/api/smoke-test/leads/route.ts`](apps/web/app/api/smoke-test/leads/route.ts) — +18 checks no grupo `exports-m8`: `EXPORT_MAX_ROWS=5000`, `escapeCsvValue` (string simples / vírgula / aspas / newline / null / undefined / number), `serializeCsvRow` (join + escape inline), `serializeLeadsCsv` contrato completo (BOM, header pt-BR, valueCents com vírgula, tags joinadas, CRLF), `exportLeadsSchema` (vazio aceito, UUID inválido rejeita, origin enum, payload completo).
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, `pnpm -r typecheck` ✅.
+- [x] **Decisão técnica — CSV-only no MVP**: PRD §3.4 menciona XLSX também, mas adiciona dep `xlsx` ~800KB. CSV cobre 95% dos casos (Zapier/Make/Sheets/Excel). XLSX entra em polimento quando justificado por demanda real.
+- [x] **Decisão técnica — postgres_changes vs broadcast**: postgres_changes ganha porque RLS é automática e sem código extra nas Server Actions. Broadcast exigiria instrumentar 3 actions e perderia garantia "mudou no DB → broadcast".
+- [x] **Decisão técnica — hard limit 5k síncrono**: PRD §3.4 menciona Edge Function + email link 7d pra >1k. Plan Pro tem 5k leads/workspace; CSV de 5k fica em ~1MB (bem abaixo do 4.5MB Vercel response limit). Background pra Enterprise/V2.
+
+**Commit final M8:** `feat(backend): leads, deals, pipelines, tasks crud + storage + realtime + export with rls`
 
 ---
 
