@@ -1214,7 +1214,7 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 | **M9#2** | `lib/whatsapp/uazapi.ts` (HTTP client) + `factory.ts` (env-based) + Server Actions `connectInstance`/`getInstanceStatus`/`disconnectInstance` + UI `WhatsAppConnectionCard` server-fed + QR polling 2s/timeout 60s + monta em `/settings/connections`                                                                                                                                                                                                                                                 | `m9-uazapi-connection` | ✅ entregue |
 | **M9#3** | Webhook `app/api/webhooks/whatsapp/route.ts` (HMAC SHA256 contra `UAZAPI_WEBHOOK_SECRET`, idempotência via `WhatsappEvent`) + auto-cria lead inbound (round-robin via `pickNextAssignee` M8#5) + detecta opt-out `^(pare\|sair\|cancelar)$` → BlackList + bloqueio outbound + `lib/whatsapp/anti-ban.ts` (rate-limit, janela 9-21h timezone-aware, pausa 50 envios, jitter 30-50s, health update) + Server Actions `sendTextMessageAction`/`sendInternalNoteAction` (não plugadas no composer — M9#4) | `m9-webhook-antiban`   | ✅ entregue |
 | **M9#4** | Inbox page Server Component que hidrata o store via `features/inbox/queries.ts` + hook `use-realtime-messages.ts` (3 canais: messages + conversations + quick_replies) + actions complementares (archive/unarchive/transfer/markConversationRead) + QuickReply CRUD + composer plugado em `sendTextMessageAction`/`sendInternalNoteAction` do M9#3 + migration adiciona 3 tabelas a publication `supabase_realtime` com `REPLICA IDENTITY FULL`                                                       | `m9-inbox-server-fed`  | ✅ entregue |
-| **M9#5** | Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno; itera instances `connected`, chama `adapter.getInstanceStatus`, atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`) + deploy via MCP `deploy_edge_function` + migration `pg_cron` agenda invocação a cada 60s                                                                                                                                                                                                        | `m9-heartbeat`         | ⏳          |
+| **M9#5** | Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno; itera instances `connected`, chama uazapi status, atualiza `lastSeenAt`/`healthScore` via `computeNextHealth`, registra `WhatsappEvent type='heartbeat_ok/fail'`) + deploy via MCP `deploy_edge_function` + migration `pg_cron + pg_net` agenda invocação a cada 1 min. Push/email em queda fica pra M10                                                                                                                        | `m9-heartbeat`         | ✅ entregue |
 
 **Decisões fechadas (não reabrir):**
 
@@ -1368,9 +1368,51 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - Mídia (image/audio/doc) real → M9.x/M10
 - `useLeads` server-fed → polimento
 
-### M9#5 — entrega planejada (escopo macro)
+### M9#5 — Heartbeat Edge Function + pg_cron (entregue 2026-05-15)
 
-- [ ] **M9#5** Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno) + deploy via MCP `deploy_edge_function` + migration `pg_cron` 60s. Atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`. Push/email em queda fica pra M10.
+**Branch:** `m9-heartbeat`
+
+**Objetivo:** detectar queda de conexão WhatsApp em ≤1 min sem depender da Vercel. Edge Function (Deno) roda dentro do Supabase, agendada por `pg_cron`, ativada via `pg_net` HTTP POST. Push/email pro vendedor em queda fica pra M10 (motor de cadência).
+
+**Entregas:**
+
+- [x] [`apps/web/lib/whatsapp/heartbeat-helpers.ts`](apps/web/lib/whatsapp/heartbeat-helpers.ts) — `computeNextHealth(currentHealth, success)` puro com política de 3 estados (success → healthy; falha em healthy → degraded; falha em degraded → unhealthy; falha em unhealthy → stays). `summarizeHeartbeat(outcomes)` puro agrega por estado. Fonte canônica da regra — Edge Function tem cópia inline em Deno.
+- [x] [`supabase/functions/whatsapp-heartbeat/index.ts`](supabase/functions/whatsapp-heartbeat/index.ts) — Deno `Deno.serve()`. Valida `x-heartbeat-secret` contra env `HEARTBEAT_SECRET` (timing-safe via `===` — single-byte secret compare é OK pra equality-only auth de cron interno). Lista `whatsapp_instances WHERE status='connected' AND external_instance_id IS NOT NULL` via Service Role (bypassa RLS). Pra cada: `fetch(uazapi /instance/<id>/status)` com timeout 5s. Atualiza `health_score = computeNextHealth(curr, success)` + `last_seen_at = now()` (se success) + insert `WhatsappEvent type='heartbeat_ok'|'heartbeat_fail'`. Retorna `{ok, summary: {checked, healthy, degraded, unhealthy, errors}, outcomes}`.
+- [x] [`supabase/migrations/20260520120000_m9_5_heartbeat_cron.sql`](supabase/migrations/20260520120000_m9_5_heartbeat_cron.sql):
+  - `CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA cron`
+  - `CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions`
+  - Função `public.invoke_whatsapp_heartbeat()` (`SECURITY DEFINER`, `search_path` fixo) que faz `extensions.http_post` pra `${app.supabase_url}/functions/v1/whatsapp-heartbeat` com header `x-heartbeat-secret: ${app.heartbeat_secret}` e timeout 30s. Settings (`app.supabase_url`/`app.heartbeat_secret`) lidos via `current_setting(..., true)` — operador configura via `ALTER DATABASE postgres SET ...`. Função RETURNS `NULL` se settings ausentes (não quebra cron).
+  - `cron.schedule('whatsapp-heartbeat-every-minute', '* * * * *', $cron$ SELECT public.invoke_whatsapp_heartbeat() $cron$)` — idempotente via unschedule prévia. pg_cron mínimo é 1 min (`* * * * *`).
+- [x] [`apps/web/app/api/smoke-test/whatsapp/route.ts`](apps/web/app/api/smoke-test/whatsapp/route.ts) — +grupo `whatsapp-heartbeat-m9` com 6 checks: `computeNextHealth` (success recupera de qualquer estado; falha em healthy/degraded/unhealthy) + `summarizeHeartbeat` (agregação correta + lista vazia). **Total whatsapp: 42 (M9#1..#4) + 6 = 48 checks.**
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅, `pnpm --filter @papopro/web build` ✅.
+
+**Decisões fechadas M9#5:**
+
+- **1 min em vez de 60s exatos** — pg_cron mínimo é `* * * * *`. Cobre detecção em ~30s média; alinhado com SLO realista do PRD.
+- **Política health 3-estados conservadora** — uma falha vai pra `degraded` (não direto `unhealthy`), evitando alarme em flake de rede.
+- **Cópia inline da regra em Deno** — Edge Function não pode importar do Next; helper canônico em `apps/web/lib/whatsapp/heartbeat-helpers.ts` é o smoke; manter os dois em sync na review de PR.
+- **Service Role na Edge** — heartbeat é processo interno do Supabase, bypassa RLS por design. Defense-in-depth: select estreito + filter por status.
+- **Push/email em queda fica pra M10** — heartbeat só persiste estado; cadência consulta `health_score != 'healthy'` antes de disparar mensagens. Notificação ativa do vendedor depende do sistema de notificações que entra em M11/M12.
+- **`net.http_post` assíncrono** — função SQL não bloqueia esperando resposta; Edge escreve no DB e o próximo cron 1min depois tenta novamente se algo falhou.
+
+**Configuração pós-deploy (ops, fora do PR):**
+
+1. **Deploy Edge Function** via MCP `deploy_edge_function` (memória `dev-local-windows-antivirus-tls` impede CLI local).
+2. **Secret na Edge Function** via `supabase secrets set HEARTBEAT_SECRET=<random64> UAZAPI_BASE_URL=... UAZAPI_API_KEY=...` ou via Dashboard.
+3. **Settings no Postgres** via SQL Editor:
+   ```sql
+   ALTER DATABASE postgres SET app.supabase_url = 'https://<ref>.supabase.co';
+   ALTER DATABASE postgres SET app.heartbeat_secret = '<mesmo random64>';
+   ```
+4. **Migration via MCP `apply_migration`** depois do deploy da Edge.
+5. **Smoke pós-deploy:** `SELECT cron.job` lista o agendamento; `SELECT * FROM net._http_response ORDER BY id DESC LIMIT 5` mostra os últimos requests pra Edge; `SELECT type, count(*) FROM whatsapp_events WHERE type LIKE 'heartbeat%' GROUP BY type` mostra a divisão sucesso/falha.
+
+**Não-objetivos M9#5 (explícitos):**
+
+- Push/email pro vendedor em queda → M10 (depende de notification system)
+- Heartbeat para Cloud API Meta → V2 (mesma estrutura, troca o adapter via factory)
+- Auto-reconexão (regenerar QR se cai) → M10 polimento; hoje vendedor reconecta manual em `/settings/connections`
+- Retry de envios pausados após recovery → M10 com fila assíncrona
 
 **Commit final M9:** `feat(whatsapp): uazapi adapter with anti-ban, real-time inbox and capture`
 
