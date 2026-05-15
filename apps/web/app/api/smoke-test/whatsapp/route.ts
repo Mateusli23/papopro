@@ -1,11 +1,10 @@
 /**
- * Smoke test WhatsApp — grupos M9#1+M9#2+M9#3+M9#4.
+ * Smoke test WhatsApp — grupos M9#1+M9#2+M9#3+M9#4+M9#5.
  *
  * Valida sem tocar rede nem banco: schema + adapter + factory + transforms +
- * verificação HMAC + Zod webhook + anti-ban + schemas Inbox/QuickReply do
- * M9#4. Roda em CI + manual via `curl /api/smoke-test/whatsapp`.
- *
- * Em M9#5 entra `whatsapp-heartbeat-m9`.
+ * HMAC + Zod webhook + anti-ban + schemas Inbox/QuickReply +
+ * computeNextHealth/summarizeHeartbeat. Roda em CI + manual via
+ * `curl /api/smoke-test/whatsapp`.
  */
 import { createHmac } from 'node:crypto';
 
@@ -55,6 +54,11 @@ import {
   type InstanceSnapshot,
 } from '@/lib/whatsapp/anti-ban';
 import { selectAdapter } from '@/lib/whatsapp/factory';
+import {
+  computeNextHealth,
+  summarizeHeartbeat,
+  type HealthScore as HeartbeatHealthScore,
+} from '@/lib/whatsapp/heartbeat-helpers';
 import { mockAdapter } from '@/lib/whatsapp/mock-adapter';
 import { uazapiAdapter } from '@/lib/whatsapp/uazapi';
 import {
@@ -623,6 +627,71 @@ export async function GET() {
       reorderQuickRepliesSchema.safeParse({
         items: [{ id: '11111111-1111-4111-9111-111111111111', order: 0 }],
       }).success || 'expected valid'
+    );
+  });
+
+  // ─── Grupo whatsapp-heartbeat-m9 (M9#5) ──────────────────────────────────
+  const h = run('whatsapp-heartbeat-m9', results);
+
+  // 44. computeNextHealth: success sempre vira healthy (recupera)
+  await h('computeNextHealthSuccessRecovers', () => {
+    const cases: HeartbeatHealthScore[] = ['healthy', 'degraded', 'unhealthy'];
+    const bad = cases.find((c) => computeNextHealth(c, true) !== 'healthy');
+    return bad === undefined || `falha em ${bad}`;
+  });
+
+  // 45. computeNextHealth: falha em healthy → degraded
+  await h('computeNextHealthHealthyFailDegrades', () => {
+    return (
+      computeNextHealth('healthy', false) === 'degraded' ||
+      `esperado degraded, recebi ${computeNextHealth('healthy', false)}`
+    );
+  });
+
+  // 46. computeNextHealth: falha em degraded → unhealthy
+  await h('computeNextHealthDegradedFailDeteriorates', () => {
+    return (
+      computeNextHealth('degraded', false) === 'unhealthy' ||
+      `esperado unhealthy, recebi ${computeNextHealth('degraded', false)}`
+    );
+  });
+
+  // 47. computeNextHealth: falha em unhealthy → mantém unhealthy
+  await h('computeNextHealthUnhealthyStays', () => {
+    return (
+      computeNextHealth('unhealthy', false) === 'unhealthy' ||
+      `esperado unhealthy, recebi ${computeNextHealth('unhealthy', false)}`
+    );
+  });
+
+  // 48. summarizeHeartbeat agrega corretamente
+  await h('summarizeHeartbeat', () => {
+    const s = summarizeHeartbeat([
+      { next: 'healthy', errored: false },
+      { next: 'healthy', errored: false },
+      { next: 'degraded', errored: true },
+      { next: 'unhealthy', errored: true },
+    ]);
+    return (
+      (s.checked === 4 &&
+        s.healthy === 2 &&
+        s.degraded === 1 &&
+        s.unhealthy === 1 &&
+        s.errors === 2) ||
+      JSON.stringify(s)
+    );
+  });
+
+  // 49. summarizeHeartbeat com lista vazia
+  await h('summarizeHeartbeatEmpty', () => {
+    const s = summarizeHeartbeat([]);
+    return (
+      (s.checked === 0 &&
+        s.healthy === 0 &&
+        s.degraded === 0 &&
+        s.unhealthy === 0 &&
+        s.errors === 0) ||
+      JSON.stringify(s)
     );
   });
 
