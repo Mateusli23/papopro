@@ -5,50 +5,64 @@ import * as React from 'react';
 import { Badge, Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@papopro/ui';
 import { ListChecks, PlusCircle } from '@papopro/ui/icons';
 
+import type { SalesRep } from '@/features/leads/types';
 import { CalendarView } from '@/features/tasks/components/calendar-view';
 import { TaskCreateDialog } from '@/features/tasks/components/task-create-dialog';
 import { TaskList } from '@/features/tasks/components/task-list';
-import { useTasks } from '@/features/tasks/store';
+import type { LeadComboboxOption } from '@/features/tasks/queries';
 import { countTasks } from '@/features/tasks/transforms';
-import { FAKE_USER } from '@/lib/fixtures/user';
+import type { TaskWithLead } from '@/features/tasks/transforms';
+
+type Role = 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer';
 
 /**
- * `/tasks` — central de tarefas do workspace.
+ * `/tasks` (M8#4 — server-fed) — central de tarefas do workspace.
  *
- * 3 abas (Tabs Radix horizontal):
- *  1. **Minhas tarefas** — só `assignedTo === FAKE_USER.id` (usuário logado)
+ * Recebe `initialTasks` (com lead resolvido), `salesReps`, `leadOptions`,
+ * `callerMemberId`, `callerRole` por prop do Server Component pai.
+ *
+ * 3 abas:
+ *  1. **Minhas tarefas** — `assignedTo === callerMemberId`
  *  2. **Time** — todas do workspace
- *  3. **Calendário** — vistas Mês/Semana/Dia com toggle
+ *  3. **Calendário** — vistas Mês/Semana/Dia (recebe `tasks` via prop)
  *
- * Atalho global `n` abre o modal "Nova tarefa" (mesmo padrão do Kanban).
- *
- * Em M8 essa view passa a ler `tasks` via Server Component + Prisma RLS,
- * com filtros aplicados server-side. As 3 abas viram queries distintas
- * mas a estrutura de UI sobrevive.
+ * Atalho `n` abre "Nova tarefa". RBAC: Viewer não cria/edita/conclui;
+ * Owner/Admin/Manager delete.
  */
 
-const NOW = new Date('2026-05-09T14:00:00-03:00');
+interface TasksViewProps {
+  initialTasks: TaskWithLead[];
+  salesReps: SalesRep[];
+  leadOptions: LeadComboboxOption[];
+  callerMemberId: string | null;
+  callerRole: Role;
+}
 
-export function TasksView() {
-  const tasks = useTasks();
+export function TasksView({
+  initialTasks,
+  salesReps,
+  leadOptions,
+  callerMemberId,
+  callerRole,
+}: TasksViewProps) {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [defaultDate, setDefaultDate] = React.useState<Date | undefined>();
 
+  const canEdit = callerRole !== 'Viewer';
+  const canDelete = callerRole === 'Owner' || callerRole === 'Admin' || callerRole === 'Manager';
+
   function openCreate(date?: Date) {
+    if (!canEdit) return;
     setDefaultDate(date);
     setCreateOpen(true);
   }
 
-  // Counts pra badges das abas
-  const myCounts = React.useMemo(
-    () =>
-      countTasks(
-        tasks.filter((t) => t.assignedTo === FAKE_USER.id),
-        NOW,
-      ),
-    [tasks],
+  const myTasks = React.useMemo(
+    () => (callerMemberId ? initialTasks.filter((t) => t.assignedTo === callerMemberId) : []),
+    [initialTasks, callerMemberId],
   );
-  const teamCounts = React.useMemo(() => countTasks(tasks, NOW), [tasks]);
+  const myCounts = React.useMemo(() => countTasks(myTasks), [myTasks]);
+  const teamCounts = React.useMemo(() => countTasks(initialTasks), [initialTasks]);
 
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -56,9 +70,11 @@ export function TasksView() {
         title="Tarefas"
         description="Suas pendências, do time inteiro e o calendário compartilhado."
         actions={
-          <Button size="sm" onClick={() => openCreate()}>
-            <PlusCircle /> Nova tarefa
-          </Button>
+          canEdit ? (
+            <Button size="sm" onClick={() => openCreate()}>
+              <PlusCircle /> Nova tarefa
+            </Button>
+          ) : null
         }
       />
 
@@ -85,7 +101,10 @@ export function TasksView() {
 
         <TabsContent value="mine" className="m-0">
           <TaskList
-            filters={{ assignedTo: FAKE_USER.id }}
+            tasks={myTasks}
+            salesReps={salesReps}
+            canEdit={canEdit}
+            canDelete={canDelete}
             showAssignee={false}
             emptyTitle="Sem tarefas atribuídas a você"
             emptyDescription="Quando alguém atribuir uma tarefa pra você (ou você criar uma), ela aparece aqui."
@@ -94,24 +113,38 @@ export function TasksView() {
 
         <TabsContent value="team" className="m-0">
           <TaskList
+            tasks={initialTasks}
+            salesReps={salesReps}
+            canEdit={canEdit}
+            canDelete={canDelete}
             emptyTitle="Sem tarefas no workspace"
             emptyDescription="Crie a primeira tarefa pra começar a popular esta lista."
           />
         </TabsContent>
 
         <TabsContent value="calendar" className="m-0">
-          <CalendarView onCreateTask={openCreate} />
+          <CalendarView
+            onCreateTask={canEdit ? openCreate : undefined}
+            tasks={initialTasks}
+            salesReps={salesReps}
+            canEdit={canEdit}
+            canDelete={canDelete}
+          />
         </TabsContent>
       </Tabs>
 
-      <TaskCreateDialog
-        open={createOpen}
-        onOpenChange={(o) => {
-          setCreateOpen(o);
-          if (!o) setDefaultDate(undefined);
-        }}
-        defaultDueDate={defaultDate}
-      />
+      {canEdit && (
+        <TaskCreateDialog
+          open={createOpen}
+          onOpenChange={(o) => {
+            setCreateOpen(o);
+            if (!o) setDefaultDate(undefined);
+          }}
+          defaultDueDate={defaultDate}
+          salesReps={salesReps}
+          leadOptions={leadOptions}
+        />
+      )}
     </div>
   );
 }

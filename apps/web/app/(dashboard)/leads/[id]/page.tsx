@@ -2,7 +2,9 @@ import { notFound, redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
+import { listActivitiesForLead } from '@/features/activities/queries';
 import { getLead, listDefaultPipeline, listSalesReps } from '@/features/leads/queries';
+import { listTasksForLead } from '@/features/tasks/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
@@ -25,14 +27,11 @@ export async function generateMetadata({ params }: LeadDetailPageProps): Promise
 }
 
 /**
- * `/leads/[id]` — Server Component (M8#2). Carrega o lead + tags + open deals
- * via Prisma + RLS; `notFound()` se RLS bloquear ou registro não existir
- * (LGPD: não distingue "não existe" de "sem permissão"). Passa snapshot
- * inicial + salesReps + pipeline stages pro Client Component, que liga edição
- * inline às Server Actions de M8#2.
+ * `/leads/[id]` — Server Component (M8#4). Carrega lead + tags + open deals
+ * + activities + tasks via Prisma + RLS; `notFound()` se RLS bloquear ou
+ * registro não existir (LGPD: não distingue "não existe" de "sem permissão").
  *
- * **Timeline + tasks ainda mockadas** (banner visível no detail view) — viram
- * reais em M8#4.
+ * **M8#4:** banner mock removido — timeline + tasks são reais agora.
  */
 export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
   const ctx = await getCurrentUserContext();
@@ -47,10 +46,12 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     redirect('/onboarding');
   }
 
-  const [lead, salesReps, pipeline] = await Promise.all([
+  const [lead, salesReps, pipeline, initialActivities, initialTasks] = await Promise.all([
     getLead(workspaceId, params.id),
     listSalesReps(workspaceId),
     listDefaultPipeline(workspaceId),
+    listActivitiesForLead(workspaceId, params.id),
+    listTasksForLead(workspaceId, params.id),
   ]);
 
   if (!lead) {
@@ -62,6 +63,8 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
       lead={lead}
       salesReps={salesReps}
       stages={pipeline?.stages ?? []}
+      initialActivities={initialActivities}
+      initialTasks={initialTasks}
       callerRole={callerMembership.role}
     />
   );

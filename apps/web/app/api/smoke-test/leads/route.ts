@@ -11,6 +11,12 @@
  */
 import { NextResponse } from 'next/server';
 
+import { createNoteSchema } from '@/features/activities/schemas';
+import {
+  enrichStageChangeMeta,
+  toActivityUI,
+  type PrismaActivityRow,
+} from '@/features/activities/transforms';
 import {
   dealCreateSchema,
   moveDealStageSchema,
@@ -42,6 +48,18 @@ import {
   flattenLeadTags,
   type PrismaLeadTagRow,
 } from '@/features/leads/transforms';
+import {
+  completeTaskSchema,
+  deleteTaskSchema,
+  reopenTaskSchema,
+  taskCreateSchema,
+  updateTaskSchema,
+} from '@/features/tasks/schemas';
+import {
+  computeNextActionFromTasks,
+  toTaskUI,
+  type PrismaTaskRow,
+} from '@/features/tasks/transforms';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 
@@ -684,6 +702,206 @@ export function GET() {
   t('toDealUI: company null vira undefined', () => {
     const noCo: PrismaDealRow = { ...sampleRow, lead: { ...sampleRow.lead, company: null } };
     return toDealUI(noCo).leadCompany === undefined;
+  });
+
+  // ── M8#4 tasks: schemas + transforms (puro, sem banco) ──────────────────
+  t = run('tasks-m8', results);
+
+  const UUID_T = '55555555-5555-4555-9555-555555555555';
+  const UUID_U = '66666666-6666-4666-9666-666666666666';
+
+  // Schemas Zod
+  t('taskCreateSchema aceita input mínimo válido', () => {
+    return taskCreateSchema.safeParse({
+      leadId: VALID_UUID,
+      kind: 'follow_up',
+      title: 'Ligar pra confirmar',
+      assignedTo: VALID_UUID_2,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('taskCreateSchema rejeita leadId não-UUID', () => {
+    return !taskCreateSchema.safeParse({
+      leadId: 'lead_001',
+      kind: 'follow_up',
+      title: 'X',
+      assignedTo: VALID_UUID,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('taskCreateSchema rejeita kind inválido', () => {
+    return !taskCreateSchema.safeParse({
+      leadId: VALID_UUID,
+      kind: 'jamaica' as never,
+      title: 'X',
+      assignedTo: VALID_UUID_2,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('updateTaskSchema aceita só taskId (patch vazio)', () => {
+    return updateTaskSchema.safeParse({ taskId: VALID_UUID }).success;
+  });
+  t('completeTaskSchema rejeita taskId não-UUID', () => {
+    return !completeTaskSchema.safeParse({ taskId: 'task_x' }).success;
+  });
+  t('reopenTaskSchema aceita UUID', () => {
+    return reopenTaskSchema.safeParse({ taskId: VALID_UUID }).success;
+  });
+  t('deleteTaskSchema rejeita taskId não-UUID', () => {
+    return !deleteTaskSchema.safeParse({ taskId: 'x' }).success;
+  });
+
+  // computeNextActionFromTasks
+  t('computeNextActionFromTasks: array vazio → null', () => {
+    return computeNextActionFromTasks([]) === null;
+  });
+  t('computeNextActionFromTasks: só done → null', () => {
+    return (
+      computeNextActionFromTasks([
+        {
+          status: 'done',
+          dueAt: '2026-05-10T09:00:00Z',
+          title: 'X',
+          createdAt: '2026-05-01T00:00:00Z',
+        },
+      ]) === null
+    );
+  });
+  t('computeNextActionFromTasks: pega o pending de dueAt mais cedo', () => {
+    const next = computeNextActionFromTasks([
+      {
+        status: 'pending',
+        dueAt: '2026-05-20T09:00:00Z',
+        title: 'Tarde',
+        createdAt: '2026-05-01T00:00:00Z',
+      },
+      {
+        status: 'pending',
+        dueAt: '2026-05-15T09:00:00Z',
+        title: 'Cedo',
+        createdAt: '2026-05-02T00:00:00Z',
+      },
+      {
+        status: 'done',
+        dueAt: '2026-05-10T09:00:00Z',
+        title: 'Já feito',
+        createdAt: '2026-05-01T00:00:00Z',
+      },
+    ]);
+    return next?.title === 'Cedo';
+  });
+  t('computeNextActionFromTasks: desempate por createdAt mais antigo', () => {
+    const sameDue = '2026-05-15T09:00:00Z';
+    const next = computeNextActionFromTasks([
+      { status: 'pending', dueAt: sameDue, title: 'Nova', createdAt: '2026-05-03T00:00:00Z' },
+      { status: 'pending', dueAt: sameDue, title: 'Antiga', createdAt: '2026-05-01T00:00:00Z' },
+    ]);
+    return next?.title === 'Antiga';
+  });
+
+  // toTaskUI
+  const sampleTaskRow: PrismaTaskRow = {
+    id: UUID_T,
+    leadId: VALID_UUID,
+    kind: 'call',
+    title: 'Ligar pra Mariana',
+    notes: null,
+    dueAt: new Date('2026-05-20T09:00:00-03:00'),
+    status: 'pending',
+    assignedToId: VALID_UUID_2,
+    doneAt: null,
+    createdAt: new Date('2026-05-10T10:00:00-03:00'),
+    lead: { id: VALID_UUID, name: 'Mariana Souza', company: 'Construtora HX' },
+  };
+  t('toTaskUI converte Date → ISO + denormaliza lead.name', () => {
+    const ui = toTaskUI(sampleTaskRow);
+    return (
+      ui.leadName === 'Mariana Souza' &&
+      ui.leadCompany === 'Construtora HX' &&
+      ui.dueAt.includes('T') &&
+      ui.notes === undefined
+    );
+  });
+  t('toTaskUI: doneAt null vira undefined', () => {
+    const ui = toTaskUI(sampleTaskRow);
+    return ui.doneAt === undefined;
+  });
+  t('toTaskUI: task done preserva doneAt como ISO', () => {
+    const done: PrismaTaskRow = {
+      ...sampleTaskRow,
+      status: 'done',
+      doneAt: new Date('2026-05-14T18:00:00-03:00'),
+    };
+    const ui = toTaskUI(done);
+    return ui.status === 'done' && typeof ui.doneAt === 'string';
+  });
+
+  // ── M8#4 activities: schemas + transforms (puro, sem banco) ─────────────
+  t = run('activities-m8', results);
+
+  // Schema
+  t('createNoteSchema aceita body válido', () => {
+    return createNoteSchema.safeParse({ leadId: VALID_UUID, body: 'Cliente pediu desconto' })
+      .success;
+  });
+  t('createNoteSchema rejeita body vazio', () => {
+    return !createNoteSchema.safeParse({ leadId: VALID_UUID, body: '' }).success;
+  });
+  t('createNoteSchema rejeita leadId não-UUID', () => {
+    return !createNoteSchema.safeParse({ leadId: 'lead_x', body: 'X' }).success;
+  });
+
+  // toActivityUI
+  const sampleActivityRow: PrismaActivityRow = {
+    id: UUID_U,
+    leadId: VALID_UUID,
+    type: 'note',
+    body: 'Cliente pediu desconto',
+    authorId: VALID_UUID_2,
+    meta: null,
+    createdAt: new Date('2026-05-14T10:00:00-03:00'),
+    author: {
+      id: VALID_UUID_2,
+      user: { name: 'Mateus', email: 'mateus@x.com' },
+    },
+  };
+  t('toActivityUI converte row + resolve authorName', () => {
+    const ui = toActivityUI(sampleActivityRow);
+    return (
+      ui.authorName === 'Mateus' &&
+      ui.body === 'Cliente pediu desconto' &&
+      ui.createdAt.includes('T')
+    );
+  });
+  t('toActivityUI: author null → authorName undefined + authorId "system"', () => {
+    const noAuthor: PrismaActivityRow = { ...sampleActivityRow, author: null, authorId: null };
+    const ui = toActivityUI(noAuthor);
+    return ui.authorName === undefined && ui.authorId === 'system';
+  });
+  t('toActivityUI: author sem name usa fallback email', () => {
+    const fallback: PrismaActivityRow = {
+      ...sampleActivityRow,
+      author: { id: VALID_UUID_2, user: { name: null, email: 'maria@x.com' } },
+    };
+    const ui = toActivityUI(fallback);
+    return ui.authorName === 'maria';
+  });
+
+  // enrichStageChangeMeta
+  const FAKE_STAGES = [
+    { id: 'aaa', slug: 'em_contato', name: 'Em contato', order: 1, rotDays: 14 },
+    { id: 'bbb', slug: 'proposta', name: 'Proposta', order: 2, rotDays: 7 },
+  ];
+  t('enrichStageChangeMeta resolve from/to em nomes', () => {
+    const enriched = enrichStageChangeMeta({ fromStageId: 'aaa', toStageId: 'bbb' }, FAKE_STAGES);
+    return enriched?.fromStageName === 'Em contato' && enriched?.toStageName === 'Proposta';
+  });
+  t('enrichStageChangeMeta: stage desconhecida cai em "?"', () => {
+    const enriched = enrichStageChangeMeta({ fromStageId: 'aaa', toStageId: 'ccc' }, FAKE_STAGES);
+    return enriched?.toStageName === '?';
+  });
+  t('enrichStageChangeMeta: meta vazio → null', () => {
+    return enrichStageChangeMeta(undefined, FAKE_STAGES) === null;
   });
 
   const passed = results.filter((r) => r.ok).length;
