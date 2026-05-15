@@ -46,10 +46,77 @@ import type { Conversation, InboxFilters, Message, QuickReply, WhatsAppConnectio
 
 let conversationsState: Conversation[] = [...FAKE_CONVERSATIONS];
 let messagesState: Message[] = [...FAKE_MESSAGES];
+let quickRepliesState: ReadonlyArray<QuickReply> = [...FAKE_QUICK_REPLIES].sort(
+  (a, b) => a.order - b.order,
+);
+let whatsappConnectionState: WhatsAppConnection = FAKE_WHATSAPP_CONNECTION;
+
+/**
+ * **`hydrateInboxFromServer` (M9#4)** — substitui os snapshots iniciais com
+ * dados reais carregados via `withWorkspace` no Server Component
+ * `/inbox/page.tsx`. Chamado num `useEffect` do `<InboxView>` no mount + a
+ * cada re-render do server (após `router.refresh()` do realtime).
+ *
+ * **Por que substituir e não mergear:** Server Component é a fonte da verdade
+ * (RLS + Prisma). Realtime dispara `router.refresh()` → page re-fetcha → essa
+ * função roda de novo com dados frescos. Sem merge manual a UI não sofre de
+ * inconsistência de optimistic local vs server.
+ *
+ * **Não emite se referências forem idênticas** — `<InboxView>` é client; o
+ * Server Component passa novas refs a cada refresh, mas o array shape é o
+ * mesmo. Comparação shallow protege contra re-render desnecessário.
+ */
+export function hydrateInboxFromServer(input: {
+  conversations: Conversation[];
+  messages: Message[];
+  quickReplies: ReadonlyArray<QuickReply>;
+  whatsappConnection: WhatsAppConnection;
+}): void {
+  conversationsState = input.conversations;
+  messagesState = input.messages;
+  quickRepliesState = input.quickReplies;
+  whatsappConnectionState = input.whatsappConnection;
+  emitConversations();
+  emitMessages();
+  emitQuickReplies();
+  emitConnection();
+}
 
 // Listeners separados pra evitar re-render dos painéis sem mudança neles.
 const conversationListeners = new Set<() => void>();
 const messageListeners = new Set<() => void>();
+const quickReplyListeners = new Set<() => void>();
+const connectionListeners = new Set<() => void>();
+
+function emitQuickReplies() {
+  for (const fn of quickReplyListeners) fn();
+}
+function emitConnection() {
+  for (const fn of connectionListeners) fn();
+}
+
+function subscribeQuickReplies(fn: () => void) {
+  quickReplyListeners.add(fn);
+  return () => quickReplyListeners.delete(fn);
+}
+function subscribeConnection(fn: () => void) {
+  connectionListeners.add(fn);
+  return () => connectionListeners.delete(fn);
+}
+
+function getQuickRepliesSnapshot() {
+  return quickRepliesState;
+}
+function getConnectionSnapshot() {
+  return whatsappConnectionState;
+}
+
+function getQuickRepliesServerSnapshot() {
+  return FAKE_QUICK_REPLIES;
+}
+function getConnectionServerSnapshot() {
+  return FAKE_WHATSAPP_CONNECTION;
+}
 
 function emitConversations() {
   for (const fn of conversationListeners) fn();
@@ -121,25 +188,31 @@ export function useMessages(conversationId: string | undefined): Message[] {
 }
 
 /**
- * Lista de respostas rápidas — estática em M5; em M9 vira `useQuery` contra
- * `quick_replies` no Postgres com RLS por workspace.
- *
- * **Por que `useMemo` em vez de constante de módulo?** Quando M5#6 (settings)
- * adicionar CRUD de quick replies que mute `FAKE_QUICK_REPLIES`, a Inbox
- * precisa ver a lista atualizada. Constante avaliada no module-load
- * congela o snapshot. Custo do sort: trivial (8 itens). Fix do review M5#4b
- * (HIGH #6).
+ * Lista de respostas rápidas — M9#4 lê do snapshot reativo populado por
+ * `hydrateInboxFromServer`. CRUD via `features/quick-replies/actions.ts`
+ * dispara Realtime → `router.refresh()` → page re-fetcha → hydrate emite novo
+ * snapshot. Em SSR (server snapshot) retorna `FAKE_QUICK_REPLIES` como
+ * fallback determinístico.
  */
 export function useQuickReplies(): ReadonlyArray<QuickReply> {
-  return React.useMemo(() => [...FAKE_QUICK_REPLIES].sort((a, b) => a.order - b.order), []);
+  return React.useSyncExternalStore(
+    subscribeQuickReplies,
+    getQuickRepliesSnapshot,
+    getQuickRepliesServerSnapshot,
+  );
 }
 
 /**
- * Conexão WhatsApp do workspace. Em M5 estado fixo `connected`; em M9 lê do
- * Realtime canal `workspace:<id>:whatsapp_connection`.
+ * Conexão WhatsApp do workspace. M9#4 lê do snapshot reativo populado pelo
+ * `hydrateInboxFromServer`. Heartbeat (M9#5) atualizará `health` via Realtime
+ * → router.refresh → hydrate.
  */
 export function useWhatsAppConnection(): WhatsAppConnection {
-  return FAKE_WHATSAPP_CONNECTION;
+  return React.useSyncExternalStore(
+    subscribeConnection,
+    getConnectionSnapshot,
+    getConnectionServerSnapshot,
+  );
 }
 
 /** Total de mensagens não lidas (para badge da sidebar). */

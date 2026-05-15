@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import toast from 'react-hot-toast';
+
 import {
   Button,
   cn,
@@ -19,11 +21,11 @@ import { SALES_REPS } from '@/lib/fixtures/sales-reps';
 import { showUndoableToast } from '@/lib/utils/show-undoable-toast';
 
 import {
-  archiveConversation,
-  reassignConversation,
-  unarchiveConversation,
-  useConversation,
-} from '../store';
+  archiveConversationAction,
+  transferConversationAction,
+  unarchiveConversationAction,
+} from '../conversation-actions';
+import { useConversation } from '../store';
 
 /**
  * Bloco de quick actions no topo da ficha do lead — entrega 5/5 do M5#4c.
@@ -68,24 +70,47 @@ export function LeadFichaQuickActions({
   const handleStageChange = (nextStageId: string) => {
     if (nextStageId === currentStageId) return;
     const previous = currentStageId;
+    // moveLeadToStage continua mockado (M9#4 não migra leads/store) — UX
+    // otimista mantém comportamento; migração real entra junto com Kanban
+    // futuro polimento.
     moveLeadToStage(leadId, nextStageId);
     showUndoableToast('Etapa atualizada', () => moveLeadToStage(leadId, previous));
   };
 
-  const handleReassign = (nextVendorId: string) => {
+  const handleReassign = async (nextVendorId: string) => {
     if (nextVendorId === conversation.vendorId) return;
-    const previous = conversation.vendorId;
-    reassignConversation(conversationId, nextVendorId);
-    showUndoableToast('Vendedor atribuído', () => reassignConversation(conversationId, previous));
+    const result = await transferConversationAction({
+      conversationId,
+      vendorId: nextVendorId,
+    });
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success('Vendedor atribuído.');
   };
 
-  const handleArchiveToggle = () => {
+  const handleArchiveToggle = async () => {
     if (isArchived) {
-      unarchiveConversation(conversationId);
-      showUndoableToast('Conversa desarquivada', () => archiveConversation(conversationId));
+      const result = await unarchiveConversationAction({ conversationId });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      showUndoableToast('Conversa desarquivada', async () => {
+        const r = await archiveConversationAction({ conversationId });
+        if (!r.ok) toast.error(r.error);
+      });
     } else {
-      archiveConversation(conversationId);
-      showUndoableToast('Conversa arquivada', () => unarchiveConversation(conversationId));
+      const result = await archiveConversationAction({ conversationId });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      showUndoableToast('Conversa arquivada', async () => {
+        const r = await unarchiveConversationAction({ conversationId });
+        if (!r.ok) toast.error(r.error);
+      });
     }
   };
 

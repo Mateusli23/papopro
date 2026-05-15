@@ -1213,7 +1213,7 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 | **M9#1** | Schema Prisma (7 models + 4 enums + 8 valores AuditAction + RLS) + adapter interface + mockAdapter + smoke schema                                                                                                                                                                                                                                                                                                                                                                                     | `m9-whatsapp-schema`   | ✅ entregue |
 | **M9#2** | `lib/whatsapp/uazapi.ts` (HTTP client) + `factory.ts` (env-based) + Server Actions `connectInstance`/`getInstanceStatus`/`disconnectInstance` + UI `WhatsAppConnectionCard` server-fed + QR polling 2s/timeout 60s + monta em `/settings/connections`                                                                                                                                                                                                                                                 | `m9-uazapi-connection` | ✅ entregue |
 | **M9#3** | Webhook `app/api/webhooks/whatsapp/route.ts` (HMAC SHA256 contra `UAZAPI_WEBHOOK_SECRET`, idempotência via `WhatsappEvent`) + auto-cria lead inbound (round-robin via `pickNextAssignee` M8#5) + detecta opt-out `^(pare\|sair\|cancelar)$` → BlackList + bloqueio outbound + `lib/whatsapp/anti-ban.ts` (rate-limit, janela 9-21h timezone-aware, pausa 50 envios, jitter 30-50s, health update) + Server Actions `sendTextMessageAction`/`sendInternalNoteAction` (não plugadas no composer — M9#4) | `m9-webhook-antiban`   | ✅ entregue |
-| **M9#4** | Migra `features/inbox/store.ts` (useSyncExternalStore + fixtures) → `features/inbox/queries.ts` (Server Components + TanStack Query) + hook `use-realtime-messages.ts` (canal `workspace:<id>:messages`) + actions `sendInternalNote`/`archive`/`transfer`/`markAsRead`/`quickReply CRUD` + migration adiciona `messages`/`conversations`/`quick_replies` à publication `supabase_realtime` com `REPLICA IDENTITY FULL`                                                                               | `m9-inbox-server-fed`  | ⏳          |
+| **M9#4** | Inbox page Server Component que hidrata o store via `features/inbox/queries.ts` + hook `use-realtime-messages.ts` (3 canais: messages + conversations + quick_replies) + actions complementares (archive/unarchive/transfer/markConversationRead) + QuickReply CRUD + composer plugado em `sendTextMessageAction`/`sendInternalNoteAction` do M9#3 + migration adiciona 3 tabelas a publication `supabase_realtime` com `REPLICA IDENTITY FULL`                                                       | `m9-inbox-server-fed`  | ✅ entregue |
 | **M9#5** | Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno; itera instances `connected`, chama `adapter.getInstanceStatus`, atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`) + deploy via MCP `deploy_edge_function` + migration `pg_cron` agenda invocação a cada 60s                                                                                                                                                                                                        | `m9-heartbeat`         | ⏳          |
 
 **Decisões fechadas (não reabrir):**
@@ -1331,10 +1331,46 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - Heartbeat Edge Function 60s server-side → M9#5
 - Push/email em opt-out ou queda de conexão → M9#5+/M10
 
-### M9#4..M9#5 — entregas planejadas (escopo macro)
+### M9#4 — Inbox server-fed + Realtime (entregue 2026-05-15)
 
-- [ ] **M9#4** Migra `features/inbox/store.ts` → `features/inbox/queries.ts` (Server Components + TanStack Query) + hook `use-realtime-messages.ts` (canal `workspace:<id>:messages`) + plugar composer em `sendTextMessageAction`/`sendInternalNoteAction` do M9#3 + actions complementares `archive`/`transfer`/`markAsRead` + `quickReply CRUD`. Migration adiciona `messages`/`conversations`/`quick_replies` à publication `supabase_realtime` com `REPLICA IDENTITY FULL`.
-- [ ] **M9#5** Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno) + deploy via MCP `deploy_edge_function` + migration `pg_cron` 60s. Atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`. Não dispara push/email em M9 (cadências pausadas entram em M10).
+**Branch:** `m9-inbox-server-fed`
+
+**Entregas principais:**
+
+- [x] [`supabase/migrations/20260519120000_m9_4_inbox_realtime.sql`](supabase/migrations/20260519120000_m9_4_inbox_realtime.sql) — adiciona `messages`/`conversations`/`quick_replies` à publication `supabase_realtime` + `REPLICA IDENTITY FULL` em cada (idempotente via `pg_publication_tables` guard).
+- [x] [`apps/web/features/inbox/queries.ts`](apps/web/features/inbox/queries.ts) — 3 queries server-only: `listConversations`, `listRecentMessages` (via `$queryRaw` com `ROW_NUMBER() OVER (PARTITION BY conversation_id)` pra evitar N+1), `listQuickReplies`. Mapeia rows do Prisma pros shapes do contrato fechado em `features/inbox/types.ts`.
+- [x] [`apps/web/features/inbox/conversation-actions.ts`](apps/web/features/inbox/conversation-actions.ts) — 4 Server Actions complementares ao composer do M9#3: `archive`/`unarchive` (RBAC O/A/M/V) + `transfer` (RBAC O/A/M só — atualiza Conversation.vendorId + Lead.assignedToId) + `markConversationRead` (qualquer membro, zera unreadCount + readAt nas inbound).
+- [x] [`apps/web/features/quick-replies/{schemas,actions}.ts`](apps/web/features/quick-replies/actions.ts) — CRUD completo (Owner/Admin/Manager): `create` (order auto = max+1), `update` (refine ≥1 campo), `delete` (idempotente), `reorder` (batch). Trata P2002 (label unique).
+- [x] [`apps/web/features/inbox/hooks/use-realtime-messages.ts`](apps/web/features/inbox/hooks/use-realtime-messages.ts) — subscribe em 3 canais (`workspace:<id>:messages`, `:conversations`, `:quick_replies`) com filter `workspace_id=eq.<id>`. Debounce 250ms dispara `router.refresh()` → page Server Component re-fetcha → InboxView re-hidrata o store.
+- [x] [`apps/web/features/inbox/store.ts`](apps/web/features/inbox/store.ts) — adiciona `hydrateInboxFromServer({conversations, messages, quickReplies, whatsappConnection})` que substitui os snapshots iniciais + emite. `useQuickReplies`/`useWhatsAppConnection` agora reativos via `useSyncExternalStore`. API pública dos demais hooks inalterada — componentes não mudaram.
+- [x] [`apps/web/app/(dashboard)/inbox/page.tsx`](<apps/web/app/(dashboard)/inbox/page.tsx>) — Server Component async com RBAC qualquer membro. `Promise.all` carrega 4 streams. Mapeia `ConnectionUI.{status,health}` → `WhatsAppConnection.health` (`connected/unstable/disconnected`).
+- [x] [`apps/web/app/(dashboard)/inbox/inbox-view.tsx`](<apps/web/app/(dashboard)/inbox/inbox-view.tsx>) — props `initial` + `workspaceId`. `useEffect([initial])` chama `hydrateInboxFromServer`; `useRealtimeMessages(workspaceId)` subscribe nos canais.
+- [x] [`apps/web/features/inbox/components/message-composer.tsx`](apps/web/features/inbox/components/message-composer.tsx) — `handleSubmit` async chama `sendTextMessageAction`/`sendInternalNoteAction` do M9#3 com `leadId` (não `conversationId` — actions fazem upsert da conversation). Toast `loading` "Enviando — pode levar até 50s pelo anti-ban…" cobre o jitter síncrono. `reason` retornado (`not_connected`/`blacklisted`/`outside_business_hours`/...) vira toast erro propositivo. Mídia desabilitada com aviso "em breve".
+- [x] [`apps/web/features/inbox/components/lead-ficha-quick-actions.tsx`](apps/web/features/inbox/components/lead-ficha-quick-actions.tsx) — `handleReassign`/`handleArchiveToggle` async chamam `transferConversationAction`/`archiveConversationAction`/`unarchiveConversationAction`. `showUndoableToast` invoca action contrária no undo.
+- [x] [`apps/web/features/inbox/components/message-thread.tsx`](apps/web/features/inbox/components/message-thread.tsx) — `markConversationRead` mock substituído por `markConversationReadAction` (fire-and-forget; realtime atualiza badge).
+- [x] [`apps/web/app/api/smoke-test/whatsapp/route.ts`](apps/web/app/api/smoke-test/whatsapp/route.ts) — +grupo `whatsapp-inbox-m9` com 9 checks (`fallbackPreview` + schemas QuickReply CRUD/reorder). **Total whatsapp: 42 checks (33 anteriores + 9).**
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅, `pnpm --filter @papopro/web build` ✅ (rota `/inbox` 17.2 kB).
+
+**Decisões fechadas M9#4:**
+
+- **Não substituir `useSyncExternalStore` por TanStack Query** — page Server + hidrate via realtime/`router.refresh()` é padrão mais simples sem dupla source-of-truth.
+- **Mutações via Server Actions diretas, sem optimistic UI** — vendedor vê spinner durante envio (jitter 30-50s); UX explícito via toast. Otimismo + fila assíncrona entram em M10.
+- **`maxDuration` não exportável de Server Action file** (Next 14 só aceita async exports em `'use server'`); rotas chamadoras herdam timeout Vercel default 60s.
+- **Mídia desabilitada** — `attachMedia` agora é toast "em breve"; bucket `whatsapp-media` adiado pra M9.x/M10.
+- **Store mock permanece com hidratação** — outras telas (`useLeads`, `disconnection-history`, etc.) seguem mockadas; substituição progressiva.
+- **`Conversation.vendorId` nullable no DB, string no contrato Inbox** — query mapeia `null → ''` (UI mostra "Sem dono").
+
+**Não-objetivos M9#4 (explícitos):**
+
+- Heartbeat Edge Function 60s → M9#5
+- Push/email em queda → M9#5/M10
+- Fila assíncrona de outbound → M10
+- Mídia (image/audio/doc) real → M9.x/M10
+- `useLeads` server-fed → polimento
+
+### M9#5 — entrega planejada (escopo macro)
+
+- [ ] **M9#5** Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno) + deploy via MCP `deploy_edge_function` + migration `pg_cron` 60s. Atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`. Push/email em queda fica pra M10.
 
 **Commit final M9:** `feat(whatsapp): uazapi adapter with anti-ban, real-time inbox and capture`
 

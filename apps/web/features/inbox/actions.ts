@@ -47,7 +47,9 @@ import { getWhatsAppAdapter } from '@/lib/whatsapp/factory';
 
 import { sendInternalNoteSchema, sendTextMessageSchema } from './schemas';
 
-export const maxDuration = 60;
+// Server Actions herdam `maxDuration` da rota que as chama (Vercel default 60s
+// no plano Pro). Não exportamos `maxDuration` aqui — Next 14 só aceita async
+// functions como named exports em arquivos `'use server'`.
 
 const PREVIEW_LIMIT = 280;
 
