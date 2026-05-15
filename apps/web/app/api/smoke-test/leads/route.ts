@@ -18,6 +18,11 @@ import {
   type PrismaActivityRow,
 } from '@/features/activities/transforms';
 import {
+  deleteAttachmentSchema,
+  signedUrlSchema,
+  uploadAttachmentMetadataSchema,
+} from '@/features/attachments/schemas';
+import {
   dealCreateSchema,
   moveDealStageSchema,
   updateDealOrderSchema,
@@ -69,6 +74,14 @@ import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 import { findDuplicatesPure, type ExistingLeadRef } from '@/lib/leads/dedupe';
 import { pickNextAssigneePure, type LoadCount, type MemberRef } from '@/lib/leads/pick-assignee';
+import {
+  ALLOWED_MIME_TYPES,
+  buildStoragePath,
+  formatFileSize,
+  MAX_FILE_SIZE,
+  sanitizeFileName,
+  validateAttachmentInput,
+} from '@/lib/storage/attachments';
 import { checkRateLimitPure } from '@/lib/webhooks/rate-limit';
 
 interface CheckResult {
@@ -1086,6 +1099,126 @@ export function GET() {
     const store = new Map();
     for (let i = 0; i < 100; i++) checkRateLimitPure(store, 'A', 0, 100, 60_000);
     return checkRateLimitPure(store, 'B', 0, 100, 60_000).ok === true;
+  });
+
+  // ── M8#6 Attachments (validação + helpers de storage) ───────────────────
+  t = run('attachments-m8', results);
+
+  t('MAX_FILE_SIZE = 10 MB', () => MAX_FILE_SIZE === 10 * 1024 * 1024);
+  t('ALLOWED_MIME_TYPES contém PDF + PNG + JPEG + DOCX', () => {
+    return (
+      ALLOWED_MIME_TYPES.has('application/pdf') &&
+      ALLOWED_MIME_TYPES.has('image/png') &&
+      ALLOWED_MIME_TYPES.has('image/jpeg') &&
+      ALLOWED_MIME_TYPES.has(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      )
+    );
+  });
+
+  // validateAttachmentInput
+  t('validateAttachmentInput aceita PDF 1MB', () => {
+    return validateAttachmentInput({
+      mimeType: 'application/pdf',
+      sizeBytes: 1024 * 1024,
+      fileName: 'proposta.pdf',
+    }).ok;
+  });
+  t('validateAttachmentInput rejeita ZIP', () => {
+    const r = validateAttachmentInput({
+      mimeType: 'application/zip',
+      sizeBytes: 1024,
+      fileName: 'a.zip',
+    });
+    return !r.ok && r.code === 'mime';
+  });
+  t('validateAttachmentInput rejeita >10MB', () => {
+    const r = validateAttachmentInput({
+      mimeType: 'application/pdf',
+      sizeBytes: 11 * 1024 * 1024,
+      fileName: 'grande.pdf',
+    });
+    return !r.ok && r.code === 'size';
+  });
+  t('validateAttachmentInput rejeita nome vazio', () => {
+    const r = validateAttachmentInput({
+      mimeType: 'application/pdf',
+      sizeBytes: 1024,
+      fileName: '',
+    });
+    return !r.ok && r.code === 'name';
+  });
+  t('validateAttachmentInput rejeita tamanho 0', () => {
+    const r = validateAttachmentInput({
+      mimeType: 'application/pdf',
+      sizeBytes: 0,
+      fileName: 'vazio.pdf',
+    });
+    return !r.ok && r.code === 'size';
+  });
+
+  // sanitizeFileName
+  t('sanitizeFileName remove acentos + espaços', () => {
+    return sanitizeFileName('Proposta v3 (final).pdf') === 'proposta-v3-final.pdf';
+  });
+  t('sanitizeFileName mantém extensão', () => {
+    return sanitizeFileName('Cláusulas àbêcedárias.docx') === 'clausulas-abecedarias.docx';
+  });
+  t('sanitizeFileName retorna "arquivo" para nome inválido', () => {
+    return sanitizeFileName('!!!.pdf') === 'arquivo.pdf';
+  });
+
+  // buildStoragePath
+  t('buildStoragePath gera <wid>/<lid>/<uuid>-<filename>', () => {
+    const wid = '11111111-1111-4111-9111-111111111111';
+    const lid = '22222222-2222-4222-9222-222222222222';
+    const path = buildStoragePath(wid, lid, 'doc.pdf', () => 'fixed-uuid');
+    return path === `${wid}/${lid}/fixed-uuid-doc.pdf`;
+  });
+
+  // formatFileSize
+  t('formatFileSize: 1024 → "1.0 KB"', () => formatFileSize(1024) === '1.0 KB');
+  t('formatFileSize: 1500000 → "1.4 MB"', () => formatFileSize(1500000) === '1.4 MB');
+  t('formatFileSize: 500 → "500 B"', () => formatFileSize(500) === '500 B');
+
+  // Schemas Zod
+  t('uploadAttachmentMetadataSchema rejeita leadId não-UUID', () => {
+    return !uploadAttachmentMetadataSchema.safeParse({
+      leadId: 'lead_x',
+      fileName: 'a.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1024,
+    }).success;
+  });
+  t('uploadAttachmentMetadataSchema rejeita mimeType fora da whitelist', () => {
+    return !uploadAttachmentMetadataSchema.safeParse({
+      leadId: '11111111-1111-4111-9111-111111111111',
+      fileName: 'a.zip',
+      mimeType: 'application/zip',
+      sizeBytes: 1024,
+    }).success;
+  });
+  t('uploadAttachmentMetadataSchema rejeita sizeBytes >10MB', () => {
+    return !uploadAttachmentMetadataSchema.safeParse({
+      leadId: '11111111-1111-4111-9111-111111111111',
+      fileName: 'a.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 11 * 1024 * 1024,
+    }).success;
+  });
+  t('uploadAttachmentMetadataSchema aceita input válido', () => {
+    return uploadAttachmentMetadataSchema.safeParse({
+      leadId: '11111111-1111-4111-9111-111111111111',
+      fileName: 'proposta.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1024 * 1024,
+    }).success;
+  });
+  t('deleteAttachmentSchema rejeita attachmentId não-UUID', () => {
+    return !deleteAttachmentSchema.safeParse({ attachmentId: 'x' }).success;
+  });
+  t('signedUrlSchema rejeita attachmentId não-UUID', () => {
+    return !signedUrlSchema.safeParse({ attachmentId: 'x' }).success;
   });
 
   const passed = results.filter((r) => r.ok).length;

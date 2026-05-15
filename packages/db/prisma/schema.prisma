@@ -71,6 +71,8 @@ enum AuditAction {
   task_created
   task_completed
   webhook_token_regenerated
+  attachment_uploaded
+  attachment_deleted
 
   @@map("audit_action")
 }
