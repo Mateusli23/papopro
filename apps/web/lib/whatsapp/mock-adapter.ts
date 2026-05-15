@@ -40,6 +40,7 @@ const QR_TTL_MS = 60_000;
 export const mockAdapter: WhatsAppAdapter = {
   async connectInstance(_input): Promise<WhatsAppQrCode> {
     return {
+      externalInstanceId: `mock-instance-${randomBytes(8).toString('hex')}`,
       qrBase64: FAKE_QR_BASE64,
       expiresAt: new Date(Date.now() + QR_TTL_MS),
     };
