@@ -8,7 +8,8 @@ import { ChevronLeft, MessageSquare, MoreVertical, Phone, User } from '@papopro/
 import { getLead } from '@/lib/fixtures/leads';
 import { initialsOf } from '@/lib/utils/format';
 
-import { markConversationRead, useConversation, useMessages } from '../store';
+import { markConversationReadAction } from '../conversation-actions';
+import { useConversation, useMessages } from '../store';
 import { groupMessagesByDay } from '../transforms';
 import type { Conversation } from '../types';
 
@@ -55,7 +56,8 @@ export function MessageThread({ conversationId, onBack, onOpenFicha }: MessageTh
   const unreadCount = conversation?.unreadCount ?? 0;
   React.useEffect(() => {
     if (conversationId && unreadCount > 0) {
-      markConversationRead(conversationId);
+      // Fire-and-forget: realtime atualiza o badge depois.
+      void markConversationReadAction({ conversationId });
     }
   }, [conversationId, unreadCount]);
 

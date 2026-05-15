@@ -10,8 +10,25 @@ import { ConversationList } from '@/features/inbox/components/conversation-list'
 import { LeadFichaPanel } from '@/features/inbox/components/lead-ficha-panel';
 import { MessageThread } from '@/features/inbox/components/message-thread';
 import { MobileFichaDrawer } from '@/features/inbox/components/mobile-ficha-drawer';
-import { useFilteredConversations } from '@/features/inbox/store';
-import type { InboxFilters } from '@/features/inbox/types';
+import { useRealtimeMessages } from '@/features/inbox/hooks/use-realtime-messages';
+import { hydrateInboxFromServer, useFilteredConversations } from '@/features/inbox/store';
+import type {
+  Conversation,
+  InboxFilters,
+  Message,
+  QuickReply,
+  WhatsAppConnection,
+} from '@/features/inbox/types';
+
+interface InboxViewProps {
+  workspaceId: string;
+  initial: {
+    conversations: Conversation[];
+    messages: Message[];
+    quickReplies: ReadonlyArray<QuickReply>;
+    whatsappConnection: WhatsAppConnection;
+  };
+}
 
 /**
  * Container da rota `/inbox` — orquestra os 3 painéis e segura o estado
@@ -32,7 +49,18 @@ import type { InboxFilters } from '@/features/inbox/types';
  */
 const EMPTY_FILTERS: InboxFilters = {};
 
-export function InboxView() {
+export function InboxView({ workspaceId, initial }: InboxViewProps) {
+  // M9#4: hidrata o store a cada mount/refresh do Server Component. `initial`
+  // muda quando `router.refresh()` re-fetcha o page (via realtime). Sem isso
+  // o store ficaria preso ao snapshot de boot.
+  React.useEffect(() => {
+    hydrateInboxFromServer(initial);
+  }, [initial]);
+
+  // M9#4: subscribe ao canal realtime (messages + conversations + quick_replies).
+  // Cada mudança dispara router.refresh() debounced 250ms.
+  useRealtimeMessages(workspaceId);
+
   const [filters, setFilters] = React.useState<InboxFilters>(EMPTY_FILTERS);
   const filteredConversations = useFilteredConversations(filters);
 
