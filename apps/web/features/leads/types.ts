@@ -63,7 +63,8 @@ export type LeadOrigin =
   | 'csv_import'
   | 'manual'
   | 'rd_station'
-  | 'hotmart';
+  | 'hotmart'
+  | 'webhook_generico';
 
 /** Status macro do lead (independente da etapa). */
 export type LeadStatus = 'ativo' | 'arquivado' | 'perdido' | 'ganho';

@@ -2,11 +2,14 @@
 
 import * as React from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { toast } from 'react-hot-toast';
 
 import {
   Badge,
   Button,
+  Checkbox,
   cn,
   Select,
   SelectContent,
@@ -22,23 +25,26 @@ import {
 } from '@papopro/ui';
 import { CheckCircle2, FileText, Upload } from '@papopro/ui/icons';
 
-import { SALES_REPS } from '@/lib/fixtures/sales-reps';
-
-import { CSV_FIELDS, type CsvFieldKey, csvRowSchema } from '../schemas';
-import { importLeads } from '../store';
+import { importLeadsAction, previewImportAction } from '../actions';
+import {
+  CSV_FIELDS,
+  CSV_IMPORT_MAX_ROWS,
+  csvRowSchema,
+  type CsvFieldKey,
+  type LeadImportRowInput,
+} from '../schemas';
 
 /**
- * "Importar CSV" — fluxo em 3 estados na mesma sheet:
- *  1. **Upload**: drop/select de arquivo `.csv`. Parse simples (sem PapaParse,
- *     pra não trazer dep — basta `split('\n')` + split com vírgula/escape simples).
- *     Em M8, a importação real de >1.000 linhas vai pra Edge Function (PLAN.md M8).
- *  2. **Mapeamento**: usuário escolhe qual coluna do CSV vira qual campo do lead.
- *     Auto-mapeia por similaridade de header (nome → name, telefone → phone, etc).
- *  3. **Preview + confirma**: mostra primeiras 10 linhas válidas e summary
- *     (X importáveis, Y com erro). Ao confirmar, chama `importLeads` e fecha.
+ * "Importar CSV" (M8#5) — fluxo em 3 estados na mesma sheet:
+ *  1. **Upload**: drop/select de arquivo `.csv`. Parse simples (sem PapaParse).
+ *  2. **Mapeamento + preview**: usuário escolhe qual coluna do CSV vira qual campo
+ *     do lead. Auto-mapeia por similaridade de header.
+ *  3. **Confirmação LGPD**: checkbox obrigatório + summary "X criar / Y skip".
+ *     Ao confirmar, chama `importLeadsAction` real (Server Action) que persiste
+ *     no DB com round-robin de assignee e activity `lead_created` por linha.
  *
- * Pra demo: aceitamos no máximo 200 linhas de uma vez (o produto real
- * suporta 1.000 síncrono — esse limite é só pra UI mockada não travar).
+ * **Limite hard:** {@link CSV_IMPORT_MAX_ROWS} linhas. Volumes maiores ficam
+ * pra Edge Function em pós-MVP (antivírus quebra dev local Windows).
  */
 
 interface LeadImportSheetProps {
@@ -51,9 +57,8 @@ interface ParsedCsv {
   rows: string[][];
 }
 
-const MAX_ROWS_DEMO = 200;
-
 export function LeadImportSheet({ open, onOpenChange }: LeadImportSheetProps) {
+  const router = useRouter();
   const [parsed, setParsed] = React.useState<ParsedCsv | null>(null);
   const [mapping, setMapping] = React.useState<Record<CsvFieldKey, string>>({
     name: '',
@@ -62,11 +67,19 @@ export function LeadImportSheet({ open, onOpenChange }: LeadImportSheetProps) {
     company: '',
     origin: '',
   });
+  const [consentConfirmed, setConsentConfirmed] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [serverPreview, setServerPreview] = React.useState<{
+    duplicates: number;
+  } | null>(null);
 
   React.useEffect(() => {
     if (!open) {
       setParsed(null);
       setMapping({ name: '', phone: '', email: '', company: '', origin: '' });
+      setConsentConfirmed(false);
+      setSubmitting(false);
+      setServerPreview(null);
     }
   }, [open]);
 
@@ -79,10 +92,15 @@ export function LeadImportSheet({ open, onOpenChange }: LeadImportSheetProps) {
         toast.error('CSV vazio — confira o arquivo.');
         return;
       }
+      if (lines.length - 1 > CSV_IMPORT_MAX_ROWS) {
+        toast.error(`Máximo de ${CSV_IMPORT_MAX_ROWS} linhas por importação — divida o arquivo.`);
+        return;
+      }
       const headers = parseCsvLine(lines[0] ?? '');
-      const rows = lines.slice(1, MAX_ROWS_DEMO + 1).map(parseCsvLine);
+      const rows = lines.slice(1, CSV_IMPORT_MAX_ROWS + 1).map(parseCsvLine);
       setParsed({ headers, rows });
       setMapping(autoMap(headers));
+      setServerPreview(null);
     };
     reader.onerror = () => toast.error('Não consegui ler o arquivo.');
     reader.readAsText(file);
@@ -94,8 +112,8 @@ export function LeadImportSheet({ open, onOpenChange }: LeadImportSheetProps) {
         <SheetHeader>
           <SheetTitle>Importar leads via CSV</SheetTitle>
           <SheetDescription>
-            Suba um arquivo `.csv` com até {MAX_ROWS_DEMO} linhas. Em produção (M8) suportamos 1.000
-            síncrono e arquivos maiores via processamento em background.
+            Suba um arquivo `.csv` com até {CSV_IMPORT_MAX_ROWS} linhas. Volumes maiores são
+            divididos em arquivos menores (background import chega em uma onda futura).
           </SheetDescription>
         </SheetHeader>
 
@@ -103,24 +121,53 @@ export function LeadImportSheet({ open, onOpenChange }: LeadImportSheetProps) {
           {!parsed ? (
             <UploadStep onFile={handleFile} />
           ) : (
-            <MappingPreviewStep
-              parsed={parsed}
-              mapping={mapping}
-              onMappingChange={setMapping}
-              onReset={() => setParsed(null)}
-            />
+            <>
+              <MappingPreviewStep
+                parsed={parsed}
+                mapping={mapping}
+                onMappingChange={setMapping}
+                onReset={() => setParsed(null)}
+                serverPreview={serverPreview}
+              />
+
+              <ConsentCheckbox
+                checked={consentConfirmed}
+                onChange={setConsentConfirmed}
+                disabled={submitting}
+              />
+            </>
           )}
         </div>
 
         <SheetFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancelar
           </Button>
           {parsed && (
             <ImportConfirmButton
               parsed={parsed}
               mapping={mapping}
-              onDone={() => onOpenChange(false)}
+              consentConfirmed={consentConfirmed}
+              submitting={submitting}
+              onPreviewUpdate={setServerPreview}
+              onSubmit={async (rows) => {
+                setSubmitting(true);
+                try {
+                  const result = await importLeadsAction({ rows, consentConfirmed: true });
+                  if (result.ok) {
+                    const { summary } = result;
+                    toast.success(
+                      `${summary.created} lead(s) importado(s). ${summary.skipped} duplicata(s) ignorada(s).`,
+                    );
+                    router.refresh();
+                    onOpenChange(false);
+                  } else {
+                    toast.error(result.error);
+                  }
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
             />
           )}
         </SheetFooter>
@@ -184,9 +231,16 @@ interface MappingProps {
   mapping: Record<CsvFieldKey, string>;
   onMappingChange: (m: Record<CsvFieldKey, string>) => void;
   onReset: () => void;
+  serverPreview: { duplicates: number } | null;
 }
 
-function MappingPreviewStep({ parsed, mapping, onMappingChange, onReset }: MappingProps) {
+function MappingPreviewStep({
+  parsed,
+  mapping,
+  onMappingChange,
+  onReset,
+  serverPreview,
+}: MappingProps) {
   const summary = React.useMemo(() => buildSummary(parsed, mapping), [parsed, mapping]);
 
   return (
@@ -243,6 +297,9 @@ function MappingPreviewStep({ parsed, mapping, onMappingChange, onReset }: Mappi
           <div className="flex items-center gap-2">
             <Badge variant="success">{summary.valid} válidos</Badge>
             {summary.invalid > 0 && <Badge variant="destructive">{summary.invalid} com erro</Badge>}
+            {serverPreview && serverPreview.duplicates > 0 && (
+              <Badge variant="warning">{serverPreview.duplicates} já cadastrados</Badge>
+            )}
           </div>
         </div>
         <p className="text-caption text-muted-foreground mb-2">
@@ -288,6 +345,32 @@ function MappingPreviewStep({ parsed, mapping, onMappingChange, onReset }: Mappi
   );
 }
 
+function ConsentCheckbox({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled: boolean;
+}) {
+  return (
+    <label className="border-warning/40 bg-warning/5 flex cursor-pointer items-start gap-3 rounded-md border p-3">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(v) => onChange(v === true)}
+        disabled={disabled}
+        className="mt-0.5"
+        aria-label="Consentimento LGPD"
+      />
+      <span className="text-caption text-foreground">
+        <strong>Confirmo que todos esses contatos consentiram</strong> em receber contato comercial
+        conforme a LGPD. Sem essa confirmação a importação fica bloqueada.
+      </span>
+    </label>
+  );
+}
+
 interface SummaryRow {
   values: Partial<Record<CsvFieldKey, string>>;
   error?: string;
@@ -328,40 +411,59 @@ function buildSummary(parsed: ParsedCsv, mapping: Record<CsvFieldKey, string>): 
   return { valid, invalid, preview, validRows };
 }
 
+interface ImportConfirmProps {
+  parsed: ParsedCsv;
+  mapping: Record<CsvFieldKey, string>;
+  consentConfirmed: boolean;
+  submitting: boolean;
+  onPreviewUpdate: (preview: { duplicates: number } | null) => void;
+  onSubmit: (rows: LeadImportRowInput[]) => Promise<void>;
+}
+
 function ImportConfirmButton({
   parsed,
   mapping,
-  onDone,
-}: {
-  parsed: ParsedCsv;
-  mapping: Record<CsvFieldKey, string>;
-  onDone: () => void;
-}) {
+  consentConfirmed,
+  submitting,
+  onPreviewUpdate,
+  onSubmit,
+}: ImportConfirmProps) {
   const summary = React.useMemo(() => buildSummary(parsed, mapping), [parsed, mapping]);
-  const disabled = summary.valid === 0;
+  const [previewing, setPreviewing] = React.useState(false);
 
-  function onConfirm() {
-    const defaultRep = SALES_REPS[0]?.id ?? '';
-    const created = importLeads(
-      summary.validRows.map((r) => ({
+  const validImportRows = React.useMemo<LeadImportRowInput[]>(
+    () =>
+      summary.validRows.map((r, idx) => ({
+        line: idx + 2, // header é linha 1
         name: r.values.name ?? '',
         phone: r.values.phone ?? '',
         email: r.values.email,
         company: r.values.company,
-        origin: 'csv_import',
-        stageId: 'novo',
-        assignedTo: defaultRep,
-        valueCents: 0,
-        tags: [],
       })),
-    );
-    toast.success(`${created.length} leads importados.`);
-    onDone();
+    [summary.validRows],
+  );
+
+  const disabled = summary.valid === 0 || !consentConfirmed || submitting || previewing;
+
+  async function previewThenSubmit() {
+    setPreviewing(true);
+    try {
+      const preview = await previewImportAction({ rows: validImportRows });
+      if (!preview.ok) {
+        toast.error(preview.error);
+        onPreviewUpdate(null);
+        return;
+      }
+      onPreviewUpdate({ duplicates: preview.summary.willSkip });
+    } finally {
+      setPreviewing(false);
+    }
+    await onSubmit(validImportRows);
   }
 
   return (
-    <Button onClick={onConfirm} disabled={disabled}>
-      Importar {summary.valid > 0 && `(${summary.valid})`}
+    <Button onClick={previewThenSubmit} disabled={disabled}>
+      {submitting ? 'Importando…' : `Importar${summary.valid > 0 ? ` (${summary.valid})` : ''}`}
     </Button>
   );
 }

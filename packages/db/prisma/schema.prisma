@@ -70,6 +70,7 @@ enum AuditAction {
   deal_stage_changed
   task_created
   task_completed
+  webhook_token_regenerated
 
   @@map("audit_action")
 }
@@ -92,6 +93,7 @@ enum LeadOrigin {
   manual
   rd_station
   hotmart
+  webhook_generico
 
   @@map("lead_origin")
 }
@@ -198,6 +200,11 @@ model Workspace {
   timezone  String    @default("America/Sao_Paulo") @db.VarChar(64)
   locale    String    @default("pt-BR") @db.VarChar(8)
   settings  Json      @default("{}")
+  /// Token URL-safe para o endpoint `POST /api/webhooks/leads/[token]` (M8#5).
+  /// Gerado via `randomBytes(32).toString('base64url')` no `createWorkspaceAction`
+  /// e regenerável por Owner/Admin em Settings → Connections. Unique pra que
+  /// o lookup do route handler seja O(log n) e nunca colida entre workspaces.
+  webhookToken String?  @unique @map("webhook_token") @db.VarChar(64)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
