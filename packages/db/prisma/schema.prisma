@@ -73,6 +73,14 @@ enum AuditAction {
   webhook_token_regenerated
   attachment_uploaded
   attachment_deleted
+  whatsapp_connected
+  whatsapp_disconnected
+  whatsapp_message_sent
+  whatsapp_blocked_optout
+  quick_reply_created
+  quick_reply_deleted
+  conversation_archived
+  conversation_transferred
 
   @@map("audit_action")
 }
@@ -188,6 +196,59 @@ enum CustomFieldType {
 }
 
 // =============================================================================
+// Enums de WhatsApp (M9#1)
+// =============================================================================
+
+/// Direção da mensagem em relação ao workspace.
+///  - `out`: enviada pelo vendedor (vai pro lead)
+///  - `in`: recebida do lead (chegou no número conectado)
+/// Espelha `apps/web/features/inbox/types.ts:MessageDirection`.
+enum MessageDirection {
+  in
+  out
+
+  @@map("message_direction")
+}
+
+/// Tipos de mensagem suportados pelo WhatsApp. M9 entrega só `text` +
+/// `internal_note`; mídia (`image`/`audio`/`document`) entra em M9.x/M10.
+/// `internal_note` NÃO vai pro lead — visível só ao time (sempre out).
+enum MessageKind {
+  text
+  image
+  audio
+  document
+  internal_note
+
+  @@map("message_kind")
+}
+
+/// Status agregado da conversa, denormalizado em `Conversation.status` pra
+/// simplificar filtros sem indexar a última mensagem.
+///  - `awaiting`: vendedor mandou e aguarda resposta
+///  - `responded`: lead respondeu, vendedor precisa agir
+///  - `archived`: conversa resolvida (PRD §3.8)
+enum ConversationStatus {
+  awaiting
+  responded
+  archived
+
+  @@map("conversation_status")
+}
+
+/// Saúde da conexão WhatsApp do workspace (CLAUDE.md §9 Health Score).
+///  - `healthy` (verde): tudo OK, envios autorizados
+///  - `degraded` (amarelo): heartbeat oscilando
+///  - `unhealthy` (vermelho): offline, envios pausados automaticamente
+enum HealthScore {
+  healthy
+  degraded
+  unhealthy
+
+  @@map("health_score")
+}
+
+// =============================================================================
 // Tenant + identidade
 // =============================================================================
 
@@ -224,6 +285,13 @@ model Workspace {
   activities              Activity[]
   attachments             Attachment[]
   customFields            CustomField[]
+  whatsappAccount         WhatsappAccount?
+  whatsappInstances       WhatsappInstance[]
+  conversations           Conversation[]
+  messages                Message[]
+  quickReplies            QuickReply[]
+  blacklist               BlackList[]
+  whatsappEvents          WhatsappEvent[]
 
   @@index([deletedAt])
   @@map("workspaces")
@@ -273,10 +341,12 @@ model WorkspaceMember {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  leadsAssigned    Lead[]     @relation("LeadAssignee")
-  dealsOwned       Deal[]     @relation("DealOwner")
-  tasksAssigned    Task[]     @relation("TaskAssignee")
-  activitiesAuthor Activity[] @relation("ActivityAuthor")
+  leadsAssigned         Lead[]         @relation("LeadAssignee")
+  dealsOwned            Deal[]         @relation("DealOwner")
+  tasksAssigned         Task[]         @relation("TaskAssignee")
+  activitiesAuthor      Activity[]     @relation("ActivityAuthor")
+  conversationsAsVendor Conversation[] @relation("ConversationVendor")
+  messagesAuthored      Message[]      @relation("MessageAuthor")
 
   @@unique([workspaceId, userId])
   @@index([workspaceId])
@@ -464,15 +534,16 @@ model Lead {
   updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt         DateTime?  @map("deleted_at") @db.Timestamptz(6)
 
-  workspace    Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  stage        PipelineStage     @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  assignedTo   WorkspaceMember   @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
-  deals        Deal[]
-  tasks        Task[]
-  activities   Activity[]
-  attachments  Attachment[]
-  tags         LeadTag[]
-  customValues LeadCustomValue[]
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stage         PipelineStage     @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  assignedTo    WorkspaceMember   @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  deals         Deal[]
+  tasks         Task[]
+  activities    Activity[]
+  attachments   Attachment[]
+  tags          LeadTag[]
+  customValues  LeadCustomValue[]
+  conversations Conversation[]
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([workspaceId, status])
@@ -679,4 +750,219 @@ model LeadCustomValue {
   @@unique([leadId, customFieldId])
   @@index([customFieldId])
   @@map("lead_custom_values")
+}
+
+// =============================================================================
+// WhatsApp (M9#1)
+// =============================================================================
+//
+// Schema preparado em M9#1 (sem actions/webhook/heartbeat ainda — esses entram
+// em M9#2..M9#5). Espelha o contrato fechado em `apps/web/features/inbox/types.ts`
+// e `apps/web/features/inbox/schemas.ts`. Decisões fechadas:
+//   - 1 número por workspace (Workspace 1—1 WhatsappAccount).
+//   - MVP só `text` + `internal_note` (mídia em M9.x/M10).
+//   - Lead inbound desconhecido vira lead automático com round-robin (M9#3).
+//   - Opt-out `^(pare|sair|cancelar)$` → BlackList (M9#3).
+
+/// Conta WhatsApp do workspace — 1:1 com Workspace. Cobre o número conectado
+/// via uazapi (Standard, Pro/Pro IA). Cloud API Meta (Enterprise, V2) entra
+/// pelo mesmo modelo, só varia `provider`.
+///
+/// **`phoneNumber`** é a referência humana — gravada quando a sessão fica
+/// `connected` pela primeira vez (uazapi expõe via `getInstanceStatus`). Antes
+/// disso fica vazio mas o registro existe pra ancorar a `WhatsappInstance`.
+model WhatsappAccount {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @unique @map("workspace_id") @db.Uuid
+  phoneNumber String   @default("") @map("phone_number") @db.VarChar(32)
+  displayName String?  @map("display_name") @db.VarChar(120)
+  provider    String   @default("uazapi") @db.VarChar(32)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instance      WhatsappInstance?
+  conversations Conversation[]
+
+  @@map("whatsapp_accounts")
+}
+
+/// Sessão atual da conta WhatsApp — armazena estado dinâmico (status, QR code,
+/// health, anti-ban). Separado de `WhatsappAccount` porque a conta é estável
+/// (1 número por workspace) mas a sessão pode ser reiniciada (regenerar QR,
+/// reconectar) sem perder o histórico de mensagens vinculadas à conta.
+///
+/// **`status`** intencionalmente string (não enum): a evolução de estados
+/// uazapi/cloud é frequente (`connecting`/`pairing`/`connected`/`disconnected`/
+/// `banned`/...) e enum exigiria migration por valor. Validação aplicada na
+/// borda via Zod no M9#2.
+///
+/// **`messagesSent24h`** + **`pausedUntil`**: ganchos do anti-ban (M9#3). O
+/// detector de health score (M9#5) decide quando pausar baseado em queda de
+/// heartbeat ou ratio de bloqueios.
+model WhatsappInstance {
+  id                  String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId         String      @map("workspace_id") @db.Uuid
+  accountId           String      @unique @map("account_id") @db.Uuid
+  externalInstanceId  String?     @map("external_instance_id") @db.VarChar(128)
+  status              String      @default("disconnected") @db.VarChar(24)
+  healthScore         HealthScore @default(healthy) @map("health_score")
+  qrCode              String?     @map("qr_code")
+  qrExpiresAt         DateTime?   @map("qr_expires_at") @db.Timestamptz(6)
+  lastSeenAt          DateTime?   @map("last_seen_at") @db.Timestamptz(6)
+  connectedAt         DateTime?   @map("connected_at") @db.Timestamptz(6)
+  disconnectedAt      DateTime?   @map("disconnected_at") @db.Timestamptz(6)
+  messagesSent24h     Int         @default(0) @map("messages_sent_24h")
+  pausedUntil         DateTime?   @map("paused_until") @db.Timestamptz(6)
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  account   WhatsappAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([lastSeenAt])
+  @@map("whatsapp_instances")
+}
+
+/// Conversa entre o número do workspace e um contato. Espelha
+/// `features/inbox/types.ts:Conversation`. **Unique por `(workspaceId,
+/// contactPhone)`** porque só temos 1 número por workspace (decisão M9 fechada),
+/// então cada telefone gera 1 conversa contínua.
+///
+/// **`status`** é denormalizado (não derivado) — facilita filtros sem indexar
+/// a última mensagem. Atualizado nas mutations (`sendText` → awaiting, inbound
+/// → responded, `archive` → archived).
+///
+/// **`lastMessagePreview`** + **`lastMessageDirection`** + **`lastMessageAt`**
+/// denormalizados pra que a lista de conversas (sidebar Inbox) não precise de
+/// subquery `ORDER BY messages.created_at DESC LIMIT 1` por linha. Renderização
+/// O(1) em workspaces com 1000+ conversas.
+model Conversation {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String              @map("workspace_id") @db.Uuid
+  leadId               String              @map("lead_id") @db.Uuid
+  vendorId             String?             @map("vendor_id") @db.Uuid
+  whatsappAccountId    String              @map("whatsapp_account_id") @db.Uuid
+  contactPhone         String              @map("contact_phone") @db.VarChar(32)
+  status               ConversationStatus  @default(awaiting)
+  lastMessageAt        DateTime?           @map("last_message_at") @db.Timestamptz(6)
+  lastMessagePreview   String?             @map("last_message_preview") @db.VarChar(280)
+  lastMessageDirection MessageDirection?   @map("last_message_direction")
+  unreadCount          Int                 @default(0) @map("unread_count")
+  archivedAt           DateTime?           @map("archived_at") @db.Timestamptz(6)
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead             Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  vendor           WorkspaceMember? @relation("ConversationVendor", fields: [vendorId], references: [id], onDelete: SetNull)
+  whatsappAccount  WhatsappAccount  @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  messages         Message[]
+
+  @@unique([workspaceId, contactPhone])
+  @@index([workspaceId, status, lastMessageAt(sort: Desc)])
+  @@index([workspaceId, vendorId])
+  @@index([leadId])
+  @@map("conversations")
+}
+
+/// Mensagem trocada na conversa. Append-only (sem update do body / direction /
+/// kind — só `readAt` e `deliveredAt` mudam após criação). Espelha
+/// `features/inbox/types.ts:Message`.
+///
+/// **`externalMessageId`** é o ID do provedor (uazapi `message_id`). Usado pra
+/// idempotência inbound — webhook recebe múltiplas entregas do mesmo evento e
+/// dedupa por `(workspaceId, externalMessageId)`. Como é nullable (mensagens
+/// outbound geradas antes de receber ACK podem ainda não ter ID), o unique é
+/// **partial** (`WHERE external_message_id IS NOT NULL`) declarado no SQL
+/// manual — Prisma 5 não suporta `WHERE` em `@@unique`. Aqui só o índice.
+///
+/// **`authorId`** null para inbound (`direction='in'`). Outbound sempre tem
+/// autor (vendedor humano ou agente IA em M11).
+model Message {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String           @map("workspace_id") @db.Uuid
+  conversationId       String           @map("conversation_id") @db.Uuid
+  kind                 MessageKind
+  direction            MessageDirection
+  body                 String?
+  authorId             String?          @map("author_id") @db.Uuid
+  externalMessageId    String?          @map("external_message_id") @db.VarChar(128)
+  deliveredAt          DateTime?        @map("delivered_at") @db.Timestamptz(6)
+  readAt               DateTime?        @map("read_at") @db.Timestamptz(6)
+  mediaName            String?          @map("media_name") @db.VarChar(255)
+  mediaSizeKb          Int?             @map("media_size_kb")
+  mediaDurationSeconds Int?             @map("media_duration_seconds")
+  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author       WorkspaceMember? @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, conversationId, createdAt(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([workspaceId, externalMessageId])
+  @@map("messages")
+}
+
+/// Template de resposta rápida do composer da Inbox (PRD §3.8). Por workspace,
+/// unique por `label` pra evitar chips duplicados na barra. `body` pode conter
+/// placeholders `{nome}` / `{empresa}` / `{produto}` resolvidos contra o lead
+/// da conversa atual no client.
+model QuickReply {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  label       String   @db.VarChar(80)
+  body        String
+  order       Int      @default(0)
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, label])
+  @@index([workspaceId, order])
+  @@map("quick_replies")
+}
+
+/// Opt-out LGPD (CLAUDE.md §7.5). Detecção automática via regex
+/// `^(pare|sair|cancelar)$` no webhook inbound (M9#3) insere row aqui +
+/// activity `opt_out` no lead + audit `whatsapp_blocked_optout`. Anti-ban
+/// (`lib/whatsapp/anti-ban.ts` M9#3) consulta `(workspaceId, phone)` antes de
+/// liberar qualquer envio. `reason` permite distinguir opt-out automático
+/// de bloqueio manual ou marcação de spam.
+model BlackList {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  phone       String   @db.VarChar(32)
+  reason      String   @default("opt_out") @db.VarChar(32)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, phone])
+  @@index([workspaceId])
+  @@map("blacklist")
+}
+
+/// Eventos da sessão WhatsApp — separado de `WebhookEvent` (M7#2/M8#5) que é
+/// genérico por `(source, externalId)`. Aqui armazenamos eventos
+/// específicos do ciclo de vida da conexão (connected/disconnected/qr_refreshed/
+/// heartbeat_ok/heartbeat_fail) pra observability + debug. Append-only.
+model WhatsappEvent {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  instanceId  String?  @map("instance_id") @db.Uuid
+  type        String   @db.VarChar(32)
+  payload     Json
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([instanceId, type, createdAt(sort: Desc)])
+  @@map("whatsapp_events")
 }

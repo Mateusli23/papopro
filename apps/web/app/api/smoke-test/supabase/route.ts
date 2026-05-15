@@ -62,6 +62,7 @@ export async function GET() {
     rollbackResetsContext: { ok: false },
     rlsBlocksOutOfWorkspace: { ok: false },
     rlsDeniesWriteCrossTenant: { ok: false },
+    rlsBlocksWhatsappEventsCrossWorkspace: { ok: false },
     safeNextParamAcceptsConvitePath: { ok: false },
     safeNextParamRejectsProtocolRelative: { ok: false },
     safeNextParamRejectsControlChars: { ok: false },
@@ -161,10 +162,11 @@ export async function GET() {
   try {
     admin = createSupabaseAdminClient();
   } catch (err) {
-    // Sem SUPABASE_SERVICE_ROLE_KEY: pula 5/6 com detail explicativo.
+    // Sem SUPABASE_SERVICE_ROLE_KEY: pula 5/6/7 com detail explicativo.
     const detail = `service role indisponível: ${(err as Error).message}`;
     checks.rlsBlocksOutOfWorkspace = { ok: false, detail };
     checks.rlsDeniesWriteCrossTenant = { ok: false, detail };
+    checks.rlsBlocksWhatsappEventsCrossWorkspace = { ok: false, detail };
   }
 
   if (admin) {
@@ -253,6 +255,46 @@ export async function GET() {
             : `erro inesperado: ${message}`,
         };
       }
+      // ---- Check 7 (M9#1): RLS em whatsapp_events bloqueia cross-tenant -----
+      // Append-only — só SELECT + INSERT policies. Seed via admin, valida que
+      // `withWorkspace(WS_A)` + role authenticated NÃO vê linhas de WS_B.
+      try {
+        await admin.from('whatsapp_events').delete().in('workspace_id', [WS_A_ID, WS_B_ID]);
+        const seedWhatsapp = await admin
+          .from('whatsapp_events')
+          .insert([
+            { workspace_id: WS_A_ID, type: 'smoke', payload: { tag: 'wa-smoke-a' } },
+            { workspace_id: WS_B_ID, type: 'smoke', payload: { tag: 'wa-smoke-b' } },
+          ])
+          .select('id');
+        if (seedWhatsapp.error) {
+          throw new Error(`seed whatsapp_events: ${seedWhatsapp.error.message}`);
+        }
+
+        const rows: Array<{ workspace_id: string }> = await withWorkspace(WS_A_ID, async (tx) => {
+          await tx.$executeRawUnsafe('SET LOCAL ROLE authenticated');
+          return tx.$queryRaw<Array<{ workspace_id: string }>>`
+            SELECT workspace_id FROM public.whatsapp_events
+             WHERE type = 'smoke'
+          `;
+        });
+        const onlyWsA = rows.every((r: { workspace_id: string }) => r.workspace_id === WS_A_ID);
+        const sawAtLeastOne = rows.length >= 1;
+        const sawWsBLeak = rows.some((r: { workspace_id: string }) => r.workspace_id === WS_B_ID);
+        checks.rlsBlocksWhatsappEventsCrossWorkspace = {
+          ok: onlyWsA && sawAtLeastOne && !sawWsBLeak,
+          detail: sawWsBLeak
+            ? `VAZAMENTO whatsapp_events: viu linha de WS_B (${rows.length} rows total)`
+            : `whatsapp_events: viu ${rows.length} linha(s) só de WS_A`,
+        };
+
+        await admin.from('whatsapp_events').delete().in('workspace_id', [WS_A_ID, WS_B_ID]);
+      } catch (err) {
+        checks.rlsBlocksWhatsappEventsCrossWorkspace = {
+          ok: false,
+          detail: (err as Error).message,
+        };
+      }
     } catch (err) {
       const detail = (err as Error).message;
       if (!checks.rlsBlocksOutOfWorkspace?.ok) {
@@ -260,6 +302,9 @@ export async function GET() {
       }
       if (!checks.rlsDeniesWriteCrossTenant?.ok) {
         checks.rlsDeniesWriteCrossTenant = { ok: false, detail };
+      }
+      if (!checks.rlsBlocksWhatsappEventsCrossWorkspace?.ok) {
+        checks.rlsBlocksWhatsappEventsCrossWorkspace = { ok: false, detail };
       }
     } finally {
       // Cleanup: DELETE workspaces (CASCADE limpa audit_logs).
