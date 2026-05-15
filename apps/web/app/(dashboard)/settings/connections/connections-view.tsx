@@ -4,20 +4,24 @@ import * as React from 'react';
 
 import { PageHeader } from '@papopro/ui';
 
+import { WhatsAppConnectionCard } from '@/features/connections/components/whatsapp-connection-card';
+import type { ConnectionUI } from '@/features/connections/types';
 import { DisconnectionHistory } from '@/features/settings/components/disconnection-history';
-import { WhatsAppConnectionCard } from '@/features/settings/components/whatsapp-connection-card';
 import type { WebhookEventListItem } from '@/features/webhooks/queries';
 import { WebhookSettingsCard } from '@/features/workspace/components/webhook-settings-card';
 
 /**
- * `/settings/connections` — em M5 o único canal é WhatsApp via uazapi
- * (mockada). M9 conecta com a uazapi de verdade. M14 (V2) adiciona Cloud API
- * Meta como segundo card aqui mesmo.
+ * `/settings/connections` — em M5 o único canal era WhatsApp via uazapi
+ * (mockada). M9#2 conecta com a uazapi de verdade. M14 (V2) adiciona Cloud
+ * API Meta como segundo card aqui mesmo.
  *
  * **M8#5:** adicionou `WebhookSettingsCard` (captura inbound de leads).
+ * **M9#2:** `WhatsAppConnectionCard` server-fed via `getWorkspaceConnection`.
  */
 
 interface ConnectionsViewProps {
+  whatsappConnection: ConnectionUI;
+  canManageWhatsapp: boolean;
   webhookUrl: string | null;
   webhookEvents: WebhookEventListItem[];
   canRegenerateWebhook: boolean;
@@ -25,6 +29,8 @@ interface ConnectionsViewProps {
 }
 
 export function ConnectionsView({
+  whatsappConnection,
+  canManageWhatsapp,
   webhookUrl,
   webhookEvents,
   canRegenerateWebhook,
@@ -37,7 +43,7 @@ export function ConnectionsView({
         description="WhatsApp, webhook de captura de leads e histórico de quedas."
       />
 
-      <WhatsAppConnectionCard />
+      <WhatsAppConnectionCard initial={whatsappConnection} canConnect={canManageWhatsapp} />
 
       {hasWebhookToken && (
         <WebhookSettingsCard

@@ -2,6 +2,7 @@ import { headers } from 'next/headers';
 
 import type { Metadata } from 'next';
 
+import { getWorkspaceConnection } from '@/features/connections/queries';
 import { getWebhookSettings, listWebhookEvents } from '@/features/webhooks/queries';
 import { requireRole } from '@/lib/auth/require-role';
 
@@ -14,11 +15,12 @@ export const metadata: Metadata = {
 
 /**
  * Server Component que carrega:
- *  - Status WhatsApp (mockado hoje; vira real em M9).
+ *  - Status WhatsApp real (M9#2): WhatsappAccount + WhatsappInstance via Prisma.
  *  - Webhook de captura de leads (M8#5): URL atual + últimos 20 eventos.
  *
- * **RBAC:** Owner/Admin/Manager. Manager vê webhook em read-only (sem botão
- * regenerar). Vendedor/Viewer pega 403 pelo gate de role abaixo.
+ * **RBAC:** Owner/Admin/Manager. Owner/Admin podem conectar/desconectar
+ * WhatsApp e regenerar webhook token. Manager vê tudo em read-only.
+ * Vendedor/Viewer pega 403 pelo gate de role abaixo.
  */
 export const dynamic = 'force-dynamic';
 
@@ -41,15 +43,19 @@ export default async function ConnectionsSettingsPage() {
   const proto = h.get('x-forwarded-proto') ?? 'http';
   const origin = `${proto}://${host}`;
 
-  const [{ token, fullUrl }, events] = await Promise.all([
+  const [{ token, fullUrl }, events, connection] = await Promise.all([
     getWebhookSettings(workspaceId, origin),
     listWebhookEvents(workspaceId, { limit: 20 }),
+    getWorkspaceConnection(workspaceId),
   ]);
 
-  const canRegenerate = role === 'Owner' || role === 'Admin';
+  const canManageWhatsapp = role === 'Owner' || role === 'Admin';
+  const canRegenerate = canManageWhatsapp;
 
   return (
     <ConnectionsView
+      whatsappConnection={connection}
+      canManageWhatsapp={canManageWhatsapp}
       webhookUrl={fullUrl}
       webhookEvents={events}
       canRegenerateWebhook={canRegenerate}
