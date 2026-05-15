@@ -45,6 +45,8 @@ import {
   archiveLeadSchema,
   assignLeadSchema,
   CSV_IMPORT_MAX_ROWS,
+  EXPORT_MAX_ROWS,
+  exportLeadsSchema,
   importLeadsSchema,
   leadCreateSchema,
   leadImportRowSchema,
@@ -70,6 +72,13 @@ import {
   type PrismaTaskRow,
 } from '@/features/tasks/transforms';
 import { webhookLeadPayloadSchema } from '@/features/webhooks/schemas';
+import {
+  escapeCsvValue,
+  serializeCsvRow,
+  serializeLeadsCsv,
+  UTF8_BOM,
+  type LeadCsvRow,
+} from '@/lib/exports/csv';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 import { findDuplicatesPure, type ExistingLeadRef } from '@/lib/leads/dedupe';
@@ -1219,6 +1228,92 @@ export function GET() {
   });
   t('signedUrlSchema rejeita attachmentId não-UUID', () => {
     return !signedUrlSchema.safeParse({ attachmentId: 'x' }).success;
+  });
+
+  // ── M8#7 Export CSV ─────────────────────────────────────────────────────
+  t = run('exports-m8', results);
+
+  t('EXPORT_MAX_ROWS = 5000', () => EXPORT_MAX_ROWS === 5000);
+
+  // escapeCsvValue
+  t('escapeCsvValue: string simples sem mudança', () => escapeCsvValue('João') === 'João');
+  t('escapeCsvValue: vírgula → envolve em aspas', () => {
+    return escapeCsvValue('Silva, João') === '"Silva, João"';
+  });
+  t('escapeCsvValue: aspas → duplica + envolve', () => {
+    return escapeCsvValue('he said "hi"') === '"he said ""hi"""';
+  });
+  t('escapeCsvValue: newline → envolve em aspas', () => {
+    return escapeCsvValue('linha1\nlinha2') === '"linha1\nlinha2"';
+  });
+  t('escapeCsvValue: null → string vazia', () => escapeCsvValue(null) === '');
+  t('escapeCsvValue: undefined → string vazia', () => escapeCsvValue(undefined) === '');
+  t('escapeCsvValue: number → string', () => escapeCsvValue(42) === '42');
+
+  // serializeCsvRow
+  t('serializeCsvRow joina células com vírgula', () => {
+    return serializeCsvRow(['a', 'b', 'c']) === 'a,b,c';
+  });
+  t('serializeCsvRow escapa célula com vírgula', () => {
+    return serializeCsvRow(['Silva, J.', 'OK']) === '"Silva, J.",OK';
+  });
+
+  // serializeLeadsCsv (smoke completo do contrato)
+  const sampleLeadCsv: LeadCsvRow = {
+    name: 'João Silva',
+    email: 'joao@x.com',
+    phone: '+55 11 99999-0000',
+    company: 'Acme Ltda.',
+    position: null,
+    origin: 'manual',
+    status: 'ativo',
+    stageName: 'Em contato',
+    assignedToName: 'Maria',
+    valueCents: 150000,
+    tags: ['imobiliário', 'quente'],
+    notes: null,
+    lastInteractionAt: null,
+    nextActionAt: null,
+    createdAt: new Date('2026-05-15T14:23:00Z'),
+  };
+  t('serializeLeadsCsv começa com BOM UTF-8', () => {
+    const csv = serializeLeadsCsv([sampleLeadCsv]);
+    return csv.startsWith(UTF8_BOM);
+  });
+  t('serializeLeadsCsv tem header em pt-BR', () => {
+    const csv = serializeLeadsCsv([sampleLeadCsv]);
+    return csv.includes('Nome,Email,Telefone,Empresa');
+  });
+  t('serializeLeadsCsv formata valueCents com vírgula decimal', () => {
+    const csv = serializeLeadsCsv([sampleLeadCsv]);
+    return csv.includes('"1500,00"') || csv.includes('1500,00');
+  });
+  t('serializeLeadsCsv joina tags com semicolon', () => {
+    const csv = serializeLeadsCsv([sampleLeadCsv]);
+    return csv.includes('imobiliário; quente');
+  });
+  t('serializeLeadsCsv usa CRLF entre linhas', () => {
+    const csv = serializeLeadsCsv([sampleLeadCsv]);
+    return csv.includes('\r\n');
+  });
+
+  // exportLeadsSchema
+  t('exportLeadsSchema aceita payload vazio', () => {
+    return exportLeadsSchema.safeParse({}).success;
+  });
+  t('exportLeadsSchema rejeita stageId não-UUID', () => {
+    return !exportLeadsSchema.safeParse({ stageIds: ['x'] }).success;
+  });
+  t('exportLeadsSchema rejeita origin fora do enum', () => {
+    return !exportLeadsSchema.safeParse({ origins: ['jamaica'] as never }).success;
+  });
+  t('exportLeadsSchema aceita filtros válidos', () => {
+    return exportLeadsSchema.safeParse({
+      search: 'maria',
+      stageIds: ['11111111-1111-4111-9111-111111111111'],
+      origins: ['meta_ads'],
+      tagNames: ['imobiliário'],
+    }).success;
   });
 
   const passed = results.filter((r) => r.ok).length;
