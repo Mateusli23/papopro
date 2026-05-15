@@ -15,6 +15,7 @@ import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog
 import { DealEditDialog } from '@/features/deals/components/deal-edit-dialog';
 import { DealsKanbanBoard } from '@/features/deals/components/deals-kanban-board';
 import { PipelineStats } from '@/features/deals/components/pipeline-stats';
+import { useRealtimeDeals } from '@/features/deals/hooks/use-realtime-deals';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import { computeOrderBetween } from '@/features/deals/transforms';
 import type { Deal } from '@/features/deals/types';
@@ -41,6 +42,7 @@ import type { Role } from '@/lib/auth/require-role';
  */
 
 interface KanbanViewProps {
+  workspaceId: string;
   initialDeals: Deal[];
   pipeline: Pipeline | null;
   salesReps: SalesRep[];
@@ -60,6 +62,7 @@ export interface DragMoveEvent {
 }
 
 export function KanbanView({
+  workspaceId,
   initialDeals,
   pipeline,
   salesReps,
@@ -70,6 +73,11 @@ export function KanbanView({
   const [defaultStage, setDefaultStage] = React.useState<string | undefined>();
   const [editingDealId, setEditingDealId] = React.useState<string | null>(null);
   const searchParams = useSearchParams();
+
+  // M8#7 — sincroniza em tempo real com outros vendedores do mesmo workspace.
+  // router.refresh() dispara o Server Component pai re-fetchar deals; o
+  // useOptimistic abaixo reconcilia automaticamente.
+  useRealtimeDeals(workspaceId);
 
   const stages = React.useMemo(() => pipeline?.stages ?? [], [pipeline]);
   const validStageIds = React.useMemo(() => new Set(stages.map((s) => s.id)), [stages]);
