@@ -2,6 +2,8 @@
 
 import * as React from 'react';
 
+import Image from 'next/image';
+
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'react-hot-toast';
@@ -229,11 +231,12 @@ export function WhatsAppConnectionCard({ initial, canConnect }: WhatsAppConnecti
 
           <div className="flex flex-col items-center gap-3 py-4">
             {connection.qrBase64 ? (
-              <img
+              <Image
                 src={`data:image/png;base64,${connection.qrBase64}`}
                 alt="QR Code WhatsApp"
                 width={220}
                 height={220}
+                unoptimized
                 className="border-border rounded-md border"
               />
             ) : (
