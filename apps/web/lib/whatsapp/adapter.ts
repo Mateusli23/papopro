@@ -22,8 +22,13 @@ import 'server-only';
  * via Server Action e renderizado em `<img src="data:image/png;base64,...">`.
  * `expiresAt` controla o polling — provedor regenera o QR após ~60s; o cliente
  * pede um novo `connectInstance` se o usuário não escaneou a tempo.
+ *
+ * `externalInstanceId` é o ID que o provedor atribuiu pra essa sessão. App
+ * salva em `WhatsappInstance.externalInstanceId` e usa em todas as chamadas
+ * subsequentes (`getInstanceStatus`, `disconnectInstance`, `sendText`).
  */
 export interface WhatsAppQrCode {
+  externalInstanceId: string;
   qrBase64: string;
   expiresAt: Date;
 }
