@@ -1,14 +1,11 @@
 /**
- * Smoke test WhatsApp — grupos `whatsapp-schema-m9` (M9#1) +
- * `whatsapp-connection-m9` (M9#2) + `whatsapp-webhook-m9` +
- * `whatsapp-antiban-m9` (M9#3).
+ * Smoke test WhatsApp — grupos M9#1+M9#2+M9#3+M9#4.
  *
- * Valida o contrato do schema + adapter + factory + transforms + verificação
- * HMAC + Zod webhook + anti-ban puro — sem tocar rede nem banco. Roda em CI
- * + manual via `curl /api/smoke-test/whatsapp`.
+ * Valida sem tocar rede nem banco: schema + adapter + factory + transforms +
+ * verificação HMAC + Zod webhook + anti-ban + schemas Inbox/QuickReply do
+ * M9#4. Roda em CI + manual via `curl /api/smoke-test/whatsapp`.
  *
- * Em M9#4+ outros grupos entram aqui (`whatsapp-inbox-m9`,
- * `whatsapp-heartbeat-m9`).
+ * Em M9#5 entra `whatsapp-heartbeat-m9`.
  */
 import { createHmac } from 'node:crypto';
 
@@ -33,7 +30,14 @@ import {
   type WhatsappAccountRow,
   type WhatsappInstanceRow,
 } from '@/features/connections/transforms';
+import { fallbackPreview } from '@/features/inbox/queries';
 import { sendInternalNoteSchema, sendTextMessageSchema } from '@/features/inbox/schemas';
+import {
+  createQuickReplySchema,
+  deleteQuickReplySchema,
+  reorderQuickRepliesSchema,
+  updateQuickReplySchema,
+} from '@/features/quick-replies/schemas';
 import {
   type SendTextResult,
   type WhatsAppAdapter,
@@ -533,6 +537,93 @@ export async function GET() {
     return slept >= JITTER_MAX_MS - 10 && slept < JITTER_MAX_MS
       ? true
       : `slept=${slept} esperado ~${JITTER_MAX_MS}`;
+  });
+
+  // ─── Grupo whatsapp-inbox-m9 (M9#4) ──────────────────────────────────────
+  const i = run('whatsapp-inbox-m9', results);
+
+  // 34. fallbackPreview cobre mídia sem caption
+  await i('fallbackPreviewMedia', () => {
+    return (
+      (fallbackPreview('image', null) === '[Imagem]' &&
+        fallbackPreview('audio', null) === '[Áudio]' &&
+        fallbackPreview('document', null) === '[Documento]' &&
+        fallbackPreview('internal_note', null) === '[Nota interna]') ||
+      'fallback inconsistente'
+    );
+  });
+
+  // 35. fallbackPreview prioriza body quando presente
+  await i('fallbackPreviewBodyPriority', () => {
+    return (
+      (fallbackPreview('image', 'Olha essa foto') === 'Olha essa foto' &&
+        fallbackPreview('text', 'oi') === 'oi') ||
+      'body deveria ter prioridade'
+    );
+  });
+
+  // 36. createQuickReplySchema aceita input mínimo válido
+  await i('createQuickReplyValid', () => {
+    return (
+      createQuickReplySchema.safeParse({
+        label: 'Bom dia',
+        body: 'Bom dia, {nome}! Como posso ajudar?',
+      }).success || 'expected valid'
+    );
+  });
+
+  // 37. createQuickReplySchema rejeita label vazio
+  await i('createQuickReplyRejectsEmpty', () => {
+    return (
+      !createQuickReplySchema.safeParse({ label: '   ', body: 'X' }).success || 'expected rejection'
+    );
+  });
+
+  // 38. createQuickReplySchema rejeita body acima de 4096
+  await i('createQuickReplyRejectsLongBody', () => {
+    return (
+      !createQuickReplySchema.safeParse({
+        label: 'X',
+        body: 'a'.repeat(5000),
+      }).success || 'expected rejection'
+    );
+  });
+
+  // 39. updateQuickReplySchema exige ao menos 1 campo além do id
+  await i('updateQuickReplyRequiresAtLeastOneField', () => {
+    return (
+      !updateQuickReplySchema.safeParse({
+        id: '11111111-1111-4111-9111-111111111111',
+      }).success || 'expected rejection sem fields'
+    );
+  });
+
+  // 40. deleteQuickReplySchema rejeita id não-UUID
+  await i('deleteQuickReplyRejectsNonUuid', () => {
+    return !deleteQuickReplySchema.safeParse({ id: 'qr_001' }).success || 'expected rejection';
+  });
+
+  // 41. reorderQuickRepliesSchema rejeita lista vazia
+  await i('reorderQuickRepliesRejectsEmpty', () => {
+    return !reorderQuickRepliesSchema.safeParse({ items: [] }).success || 'expected rejection';
+  });
+
+  // 42. reorderQuickRepliesSchema rejeita order negativo
+  await i('reorderQuickRepliesRejectsNegativeOrder', () => {
+    return (
+      !reorderQuickRepliesSchema.safeParse({
+        items: [{ id: '11111111-1111-4111-9111-111111111111', order: -1 }],
+      }).success || 'expected rejection'
+    );
+  });
+
+  // 43. reorderQuickRepliesSchema aceita 1 item válido
+  await i('reorderQuickRepliesAcceptsValid', () => {
+    return (
+      reorderQuickRepliesSchema.safeParse({
+        items: [{ id: '11111111-1111-4111-9111-111111111111', order: 0 }],
+      }).success || 'expected valid'
+    );
   });
 
   const passed = results.filter((r) => r.ok).length;

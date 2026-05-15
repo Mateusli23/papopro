@@ -9,7 +9,7 @@ import { Lock, Paperclip, Send } from '@papopro/ui/icons';
 
 import { getLead } from '@/lib/fixtures/leads';
 
-import { sendInternalNote, sendMessage, attachMedia } from '../store';
+import { sendInternalNoteAction, sendTextMessageAction } from '../actions';
 import type { PlaceholderContext } from '../transforms';
 
 import { AudioRecordButton } from './audio-record-button';
@@ -96,35 +96,55 @@ export function MessageComposer({ conversationId, leadId, archived }: MessageCom
   // que **muda o comportamento** entre renders.
   // (HIGH #1 do review M5#4b: deps anteriores incluíam `trimmed` que era
   //  nova string a cada render, invalidando o memo.)
-  const handleSubmit = React.useCallback(() => {
+  const handleSubmit = React.useCallback(async () => {
     if (archived) return;
     const trimmed = draftRef.current.trim();
     if (trimmed.length === 0) return;
 
+    if (mode === 'message' && trimmed.length > 4096) {
+      toast.error('Mensagem muito longa.', { duration: 4000 });
+      return;
+    }
+    if (mode === 'note' && trimmed.length > 2000) {
+      toast.error('Nota muito longa.', { duration: 4000 });
+      return;
+    }
+
     setSubmitting(true);
+    // Aviso UX: outbound passa por jitter 30-50s (anti-ban M9#3). Vendedor
+    // vê toast "Enviando…" que persiste; cleanup ao final do envio.
+    const pendingToast =
+      mode === 'message'
+        ? toast.loading('Enviando — pode levar até 50s pelo anti-ban…', { duration: 60_000 })
+        : toast.loading('Salvando nota…', { duration: 5_000 });
+
     try {
       if (mode === 'message') {
-        if (trimmed.length > 4096) {
-          toast.error('Mensagem muito longa.', { duration: 4000 });
+        const result = await sendTextMessageAction({ leadId, body: trimmed });
+        toast.dismiss(pendingToast);
+        if (!result.ok) {
+          toast.error(result.error, { duration: 5_000 });
           return;
         }
-        sendMessage(conversationId, { body: trimmed });
         toast.success('Mensagem enviada.', { duration: 2500 });
       } else {
-        if (trimmed.length > 2000) {
-          toast.error('Nota muito longa.', { duration: 4000 });
+        const result = await sendInternalNoteAction({ leadId, body: trimmed });
+        toast.dismiss(pendingToast);
+        if (!result.ok) {
+          toast.error(result.error, { duration: 5_000 });
           return;
         }
-        sendInternalNote(conversationId, { body: trimmed });
         toast.success('Nota interna salva.', { duration: 2500 });
       }
       setDraft('');
-      // Re-foca textarea pra continuação de digitação (UX WhatsApp Web).
       requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch {
+      toast.dismiss(pendingToast);
+      toast.error('Falha inesperada — tente novamente.', { duration: 5_000 });
     } finally {
       setSubmitting(false);
     }
-  }, [archived, conversationId, mode]);
+  }, [archived, leadId, mode]);
 
   // `canSubmit` é só pra UI (disabled do botão); recomputado em cada render
   // mas não afeta callbacks memoizados.
@@ -194,50 +214,12 @@ export function MessageComposer({ conversationId, leadId, archived }: MessageCom
     });
   }, []);
 
-  async function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    // Detecção de kind por mime-type. Audio aqui só se vendedor escolher um
-    // .mp3/.ogg via "Anexar"; o caminho normal é o `<AudioRecordButton>`.
-    const kind: 'image' | 'audio' | 'document' = file.type.startsWith('image/')
-      ? 'image'
-      : file.type.startsWith('audio/')
-        ? 'audio'
-        : 'document';
-
-    const mediaSizeKb = Math.max(1, Math.round(file.size / 1024));
-
-    // CRITICAL #3 do review: schema exige `mediaDurationSeconds` quando
-    // `kind === 'audio'`. Lemos a duração via `<audio>` em memória; se
-    // falhar (formato inválido, browser sem suporte), degradamos pra
-    // `document` em vez de criar mensagem inconsistente.
-    if (kind === 'audio') {
-      try {
-        const duration = await readAudioDurationSeconds(file);
-        attachMedia(conversationId, {
-          kind: 'audio',
-          mediaName: file.name,
-          mediaSizeKb,
-          mediaDurationSeconds: Math.max(1, Math.round(duration)),
-        });
-      } catch {
-        // Fallback: trata como documento. UX honesta — preview muda de
-        // 🎤 pra 📄 mas a mensagem é registrada e o vendedor pode reenviar.
-        attachMedia(conversationId, {
-          kind: 'document',
-          mediaName: file.name,
-          mediaSizeKb,
-        });
-      }
-    } else {
-      attachMedia(conversationId, { kind, mediaName: file.name, mediaSizeKb });
-    }
-
-    toast.success(`${file.name} anexado.`, { duration: 2500 });
-
-    // Reset do input pra permitir anexar o MESMO arquivo de novo (sem o
-    // reset, `onChange` não dispara segunda vez).
+  function handleFilePicked(event: React.ChangeEvent<HTMLInputElement>) {
+    // M9#4: mídia (image/audio/document) fora do MVP — entra em M9.x/M10
+    // junto com bucket `whatsapp-media`. Composer mantém o botão desabilitado
+    // por enquanto e mostra toast claro se o user conseguir disparar (ex:
+    // arrastar arquivo via drag-and-drop futuro).
+    toast.error('Envio de mídia em breve — M9 polimento.', { duration: 4_000 });
     event.target.value = '';
   }
 
@@ -350,38 +332,6 @@ interface AttachmentButtonProps {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
-
-/**
- * Lê duração (segundos) de um arquivo de áudio via `<audio>` em memória.
- * Resolve com NaN-safe ou rejeita se o browser não conseguir decodificar.
- * Usado pra cumprir o invariante do `attachMediaSchema` (CRITICAL #3 do
- * review M5#4b: kind=audio sem duração viola o schema).
- */
-function readAudioDurationSeconds(file: File): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const el = document.createElement('audio');
-    function cleanup() {
-      URL.revokeObjectURL(url);
-      el.remove();
-    }
-    el.preload = 'metadata';
-    el.onloadedmetadata = () => {
-      const d = el.duration;
-      cleanup();
-      if (!Number.isFinite(d) || d <= 0) {
-        reject(new Error('Duração inválida'));
-        return;
-      }
-      resolve(d);
-    };
-    el.onerror = () => {
-      cleanup();
-      reject(new Error('Não foi possível decodificar o áudio'));
-    };
-    el.src = url;
-  });
-}
 
 function AttachmentButton({ onPick, disabled }: AttachmentButtonProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
