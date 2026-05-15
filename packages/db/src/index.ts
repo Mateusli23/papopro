@@ -62,3 +62,18 @@ export const prisma = new Proxy({} as PrismaClient, {
 });
 
 export type { Prisma } from '@prisma/client';
+
+/**
+ * Re-export de enums Prisma. `@prisma/client` exporta enums como objetos
+ * (não types), então `export type *` perde os valores. M9#1 expõe os enums
+ * WhatsApp + AuditAction pra smoke tests e Server Actions usarem como
+ * `import { AuditAction } from '@papopro/db'`.
+ */
+export {
+  AuditAction,
+  ConversationStatus,
+  HealthScore,
+  MessageDirection,
+  MessageKind,
+  Role,
+} from '@prisma/client';

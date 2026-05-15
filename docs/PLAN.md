@@ -1206,31 +1206,62 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 
 ## M9 — WhatsApp: Adapter, uazapi, Anti-ban e Inbox real
 
-**Branch:** `m9-whatsapp`
+**Estratégia:** 5 sub-PRs sequenciais sobre `dev` (gitflow strict, igual M8). Cada sub-PR é feature isolada com schema/actions/UI/smoke próprio.
 
-**Objetivo:** Caixa de entrada WhatsApp ponta-a-ponta com uazapi, camada anti-ban completa, captura automática de leads, heartbeat com reconexão.
+| Sub-PR   | Escopo                                                                                                                                                                                                                                                                                                                                                                                                                                    | Branch                 | Status      |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------- |
+| **M9#1** | Schema Prisma (7 models + 4 enums + 8 valores AuditAction + RLS) + adapter interface + mockAdapter + smoke schema                                                                                                                                                                                                                                                                                                                         | `m9-whatsapp-schema`   | ✅ entregue |
+| **M9#2** | `lib/whatsapp/uazapi.ts` (HTTP client) + `factory.ts` (env-based) + Server Actions `connectInstance`/`getInstanceStatus`/`disconnectInstance` + UI `WhatsAppConnectionCard` server-fed + QR polling 2s/timeout 60s + monta em `/settings/connections`                                                                                                                                                                                     | `m9-uazapi-connection` | ⏳          |
+| **M9#3** | Webhook `app/api/webhooks/whatsapp/route.ts` (HMAC SHA256 contra `UAZAPI_WEBHOOK_SECRET`, idempotência via `WhatsappEvent`) + auto-cria lead inbound (round-robin via `pickNextAssignee` M8#5) + detecta opt-out `^(pare\|sair\|cancelar)$` → BlackList + bloqueio outbound + `lib/whatsapp/anti-ban.ts` (rate-limit, janela 9-21h timezone-aware, pausa 50 envios, jitter 30-90s, health update) + Server Action `sendTextMessageAction` | `m9-webhook-antiban`   | ⏳          |
+| **M9#4** | Migra `features/inbox/store.ts` (useSyncExternalStore + fixtures) → `features/inbox/queries.ts` (Server Components + TanStack Query) + hook `use-realtime-messages.ts` (canal `workspace:<id>:messages`) + actions `sendInternalNote`/`archive`/`transfer`/`markAsRead`/`quickReply CRUD` + migration adiciona `messages`/`conversations`/`quick_replies` à publication `supabase_realtime` com `REPLICA IDENTITY FULL`                   | `m9-inbox-server-fed`  | ⏳          |
+| **M9#5** | Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno; itera instances `connected`, chama `adapter.getInstanceStatus`, atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`) + deploy via MCP `deploy_edge_function` + migration `pg_cron` agenda invocação a cada 60s                                                                                                                                            | `m9-heartbeat`         | ⏳          |
+
+**Decisões fechadas (não reabrir):**
+
+- **1 número por workspace** (`Workspace 1—1 WhatsappAccount`). Multi-número fica pra Pro+/Enterprise pós-MVP.
+- **MVP só texto + nota interna.** Mídia (imagem/áudio/doc) entra em M9.x ou M10. Bucket `whatsapp-media` adiado.
+- **Lead inbound desconhecido vira lead automático** com round-robin (reusa `lib/leads/pick-assignee.ts` de M8#5), `origin='whatsapp_inbound'`, `name=phone`.
+- **Opt-out regex `^(pare|sair|cancelar)$`** (case-insensitive trim) bloqueia + notifica (CLAUDE.md §7.5 LGPD).
+- **QR via Server Action + polling 2s** (timeout 60s).
+- **Heartbeat via Edge Function + pg_cron** (canônico PRD §6 / CLAUDE.md §6). Deploy via MCP — memória `dev-local-windows-antivirus-tls` impede CLI local.
+
+### M9#1 — Schema + adapter interface (entregue 2026-05-15)
+
+**Branch:** `m9-whatsapp-schema`
+
+**Objetivo:** preparar o terreno persistente do WhatsApp e o contrato do adapter. Zero rotas novas, zero integração externa, zero UI tocada — próximos sub-PRs herdam essa base.
 
 **Entregas:**
 
-- [ ] `lib/whatsapp/adapter.ts` — interface `WhatsAppAdapter { sendText, sendMedia, getStatus, generateQR, disconnect }`
-- [ ] `lib/whatsapp/uazapi.ts` — implementação Standard
-- [ ] `lib/whatsapp/anti-ban.ts` — rate-limit por workspace, jitter aleatório (30–90s), janela horária (default 9h–21h por workspace), pausa a cada 50 envios consecutivos, blacklist por opt-out, escalonamento gradual de até 20%/dia
-- [ ] Schema: `whatsapp_connections`, `conversations`, `messages`, `message_templates`, `quick_replies`, `blacklist`, `whatsapp_health_log`, `bulk_campaigns`
-- [ ] Tela `/settings/connections` com QR Code real, status em tempo real (Realtime), health score visual, histórico de desconexões
-- [ ] Edge Function `whatsapp-heartbeat` agendada a cada 60s via `pg_cron`; queda dispara push + email + pausa cadências em fila
-- [ ] Reconexão automática + processamento de fila acumulada ao restabelecer
-- [ ] Webhook inbound `app/api/webhooks/whatsapp/route.ts` — verifica origem, idempotência por hash, persiste mensagem, sync via Realtime
-- [ ] Inbox (`/inbox`) ligada a dados reais — mocks de M5 substituídos
-- [ ] Envio: texto, imagem, áudio gravado, documento — **todos passam por `anti-ban.ts`** antes de tocar o adapter
-- [ ] Captura automática: primeira mensagem inbound de número novo → cria lead + atribui round-robin + dispara cadência de boas-vindas (placeholder de cadência ainda mock até M10)
-- [ ] Opt-out por palavras-chave (PARE/SAIR/CANCELAR) → adiciona à blacklist + cancela envios pendentes
-- [ ] Variação automática de templates (3+ variações rotativas por template em massa)
-- [ ] Disparador de campanha em massa com agendamento e respeito aos limites anti-ban
-- [ ] Notificações push: nova mensagem recebida, queda de conexão
-- [ ] Storage para mídias trocadas (bucket `whatsapp-media`, cleanup órfão)
-- [ ] Testes de integração: enviar texto → receber resposta → opt-out → blacklist
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — +4 enums (`MessageDirection`, `MessageKind`, `ConversationStatus`, `HealthScore`), +8 valores em `AuditAction` (`whatsapp_connected`, `whatsapp_disconnected`, `whatsapp_message_sent`, `whatsapp_blocked_optout`, `quick_reply_created`, `quick_reply_deleted`, `conversation_archived`, `conversation_transferred`), +7 modelos (`WhatsappAccount` 1:1 Workspace, `WhatsappInstance` 1:1 Account, `Conversation` espelhando `features/inbox/types.ts:Conversation`, `Message` append-only espelhando `features/inbox/types.ts:Message`, `QuickReply`, `BlackList`, `WhatsappEvent`), +relations em `Workspace`/`WorkspaceMember`/`Lead`. Decisão: `WhatsappInstance.status` é `varchar(24)` (não enum) pra evoluir sem migration; `Conversation` unique por `(workspaceId, contactPhone)` por causa de 1 número/WS.
+- [x] [`supabase/migrations/20260518120000_m9_1_whatsapp_schema.sql`](supabase/migrations/20260518120000_m9_1_whatsapp_schema.sql) — DDL idempotente (`CREATE TYPE ... EXCEPTION WHEN duplicate_object`, `CREATE TABLE IF NOT EXISTS`, `ALTER TYPE ... ADD VALUE IF NOT EXISTS`). RLS workspace-scoped em todas 7 tabelas seguindo padrão M7#2/M8#1 (`current_workspace_id()`). `messages` e `whatsapp_events` são append-only (sem DELETE policy); `messages` ganha UPDATE policy preservando `workspace_id` pra liberar `read_at`/`delivered_at`. `messages.external_message_id` tem **UNIQUE PARCIAL** `(workspace_id, external_message_id) WHERE external_message_id IS NOT NULL` — Prisma 5 não suporta `WHERE` em `@@unique`, declarado direto no SQL.
+- [x] [`packages/db/src/index.ts`](packages/db/src/index.ts) — re-export dos enums (`AuditAction`, `ConversationStatus`, `HealthScore`, `MessageDirection`, `MessageKind`, `Role`) pra que `@papopro/db` seja a única fonte. Server Actions e smoke importam direto.
+- [x] [`apps/web/lib/whatsapp/adapter.ts`](apps/web/lib/whatsapp/adapter.ts) — interface `WhatsAppAdapter` com `connectInstance`, `getInstanceStatus`, `disconnectInstance`, `sendText`. Tipos `WhatsAppQrCode`, `WhatsAppInstanceStatus`, `SendTextResult`. `'server-only'` — adapter usa segredos uazapi e bypassa RLS via Service Role.
+- [x] [`apps/web/lib/whatsapp/mock-adapter.ts`](apps/web/lib/whatsapp/mock-adapter.ts) — implementação determinística para smoke + dev sem env uazapi. QR base64 fake (1x1 PNG transparente), `getInstanceStatus` retorna `connected`, `sendText` retorna `externalMessageId = 'mock-<hex>'`. Zero rede.
+- [x] [`apps/web/app/api/smoke-test/whatsapp/route.ts`](apps/web/app/api/smoke-test/whatsapp/route.ts) — grupo `whatsapp-schema-m9` com 6 checks: enums resolvem, AuditAction tem os 8 valores novos, `mockAdapter satisfies WhatsAppAdapter`, `connectInstance` retorna QR com expiração futura, `sendTextMessageSchema`/`sendInternalNoteSchema` continuam intactos (regressão M5), `getInstanceStatus` shape OK.
+- [x] [`apps/web/app/api/smoke-test/supabase/route.ts`](apps/web/app/api/smoke-test/supabase/route.ts) — +1 check `rlsBlocksWhatsappEventsCrossWorkspace`. Seed via admin client (bypass RLS), `withWorkspace(WS_A) + SET LOCAL ROLE authenticated` filtra rows e confirma que policy SELECT bloqueia leitura cross-tenant.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, `pnpm -r typecheck` ✅.
 
-**Commit final:** `feat(whatsapp): uazapi adapter with anti-ban, real-time inbox and capture`
+**Não-objetivos M9#1 (explícitos):**
+
+- `uazapi.ts` (HTTP client real) → M9#2
+- `factory.ts` (escolhe mock vs uazapi por env) → M9#2
+- Server Actions (`connectInstance`, `sendTextMessage`, etc.) → M9#2/M9#3
+- Webhook `app/api/webhooks/whatsapp/route.ts` → M9#3
+- `anti-ban.ts` → M9#3
+- Migrar `features/inbox/store.ts` → M9#4
+- Adicionar `Message`/`Conversation` a publication `supabase_realtime` → M9#4
+- Edge Function `whatsapp-heartbeat` → M9#5
+- Montar `WhatsAppConnectionCard` em `/settings/connections` → M9#2
+
+### M9#2..M9#5 — entregas planejadas (escopo macro)
+
+- [ ] **M9#2** `lib/whatsapp/uazapi.ts` HTTP client (retries 3x, timeout 10s, `reportNonFatal`) + `factory.ts` env-based + Server Actions `connectInstanceAction`/`getInstanceStatusAction`/`disconnectInstanceAction` + hook `use-instance-status-polling.ts` (2s/timeout 60s) + UI `WhatsAppConnectionCard` server-fed + monta em `/settings/connections`. Audit `whatsapp_connected`/`whatsapp_disconnected`.
+- [ ] **M9#3** Webhook `app/api/webhooks/whatsapp/route.ts` (HMAC SHA256 + idempotência via `WhatsappEvent`) + auto-cria lead desconhecido (`pickNextAssignee` M8#5) + detecta opt-out `^(pare|sair|cancelar)$` → BlackList + bloqueio outbound. `lib/whatsapp/anti-ban.ts` (rate-limit por workspace, janela 9-21h timezone-aware, pausa 50 envios, jitter 30-90s, health update). Server Action `sendTextMessageAction`. Audit `whatsapp_message_sent`/`whatsapp_blocked_optout`.
+- [ ] **M9#4** Migra `features/inbox/store.ts` → `features/inbox/queries.ts` (Server Components + TanStack Query) + hook `use-realtime-messages.ts` (canal `workspace:<id>:messages`) + actions `sendInternalNote`/`archive`/`transfer`/`markAsRead`/`quickReply CRUD`. Migration adiciona `messages`/`conversations`/`quick_replies` à publication `supabase_realtime` com `REPLICA IDENTITY FULL`.
+- [ ] **M9#5** Edge Function `supabase/functions/whatsapp-heartbeat/index.ts` (Deno) + deploy via MCP `deploy_edge_function` + migration `pg_cron` 60s. Atualiza `lastSeenAt`/`healthScore`, registra `WhatsappEvent`. Não dispara push/email em M9 (cadências pausadas entram em M10).
+
+**Commit final M9:** `feat(whatsapp): uazapi adapter with anti-ban, real-time inbox and capture`
 
 ---
 
