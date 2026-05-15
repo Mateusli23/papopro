@@ -20,9 +20,13 @@
  * de erro do RHF.
  */
 
+import { revalidatePath } from 'next/cache';
+
 import { prisma, type Prisma } from '@papopro/db';
 
+import { getRequestAuditContext } from '@/lib/audit/context';
 import { getCurrentUser } from '@/lib/auth/get-user';
+import { requireRole } from '@/lib/auth/require-role';
 import {
   clearWorkspaceCookie,
   setWizardCookie,
@@ -31,6 +35,7 @@ import {
 import { reportNonFatal } from '@/lib/observability/report';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 import { isUuid } from '@/lib/utils/uuid';
+import { generateWebhookToken } from '@/lib/webhooks/token';
 import { DEFAULT_PIPELINE_NAME, DEFAULT_PIPELINE_STAGES } from '@/lib/workspace/default-pipeline';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
 
@@ -142,6 +147,9 @@ export async function createWorkspaceAction(
           name: parsed.data.name.trim(),
           slug,
           segment: parsed.data.segment ?? null,
+          // M8#5: gera token URL-safe (43 chars base64url) já na criação.
+          // Owner/Admin pode regenerar depois em Settings → Connections.
+          webhookToken: generateWebhookToken(),
         },
         select: { id: true },
       });
@@ -301,4 +309,65 @@ export type WizardActionResult = { ok: true };
 export async function markWizardCompletedAction(): Promise<WizardActionResult> {
   setWizardCookie();
   return { ok: true };
+}
+
+// =============================================================================
+// M8#5 — Webhook token (workspace.webhook_token)
+// =============================================================================
+
+export type RegenerateWebhookTokenResult =
+  | { ok: true; webhookToken: string }
+  | { ok: false; error: string };
+
+/**
+ * `regenerateWebhookTokenAction` (M8#5) — invalida o token atual e gera um
+ * novo. Owner/Admin only. URLs antigas passam a retornar 404 imediatamente.
+ *
+ * **Audit log:** `webhook_token_regenerated` com `changes.oldTokenPrefix`
+ * (8 chars iniciais — útil pra cruzar com logs de webhook_events sem
+ * expor token completo).
+ */
+export async function regenerateWebhookTokenAction(): Promise<RegenerateWebhookTokenResult> {
+  const auth = await requireRole(['Owner', 'Admin'], {
+    forbiddenMessage: 'Apenas Owner e Admin podem regenerar o token do webhook.',
+  });
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const { userId, workspaceId } = auth.ctx;
+  const { ipAddress, userAgent } = getRequestAuditContext();
+
+  const newToken = generateWebhookToken();
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { webhookToken: true },
+      });
+      const oldTokenPrefix = current?.webhookToken?.slice(0, 8) ?? null;
+
+      await tx.workspace.update({
+        where: { id: workspaceId },
+        data: { webhookToken: newToken },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          userId,
+          action: 'webhook_token_regenerated',
+          entityType: 'workspace',
+          entityId: workspaceId,
+          changes: { oldTokenPrefix } as Prisma.InputJsonValue,
+          ipAddress,
+          userAgent,
+        },
+      });
+    });
+
+    revalidatePath('/settings/connections');
+    return { ok: true, webhookToken: newToken };
+  } catch (err) {
+    reportNonFatal('workspace.regenerate-webhook.tx', err, { workspaceId, userId });
+    return { ok: false, error: 'Não foi possível regenerar o token agora.' };
+  }
 }
