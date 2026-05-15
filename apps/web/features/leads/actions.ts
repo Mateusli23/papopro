@@ -935,18 +935,10 @@ export async function exportLeadsAction(input: ExportLeadsInput): Promise<Export
           createdAt: r.createdAt,
         }));
 
-        return { rows: csvRows, total };
-      },
-    );
-
-    const csv = serializeLeadsCsv(result.rows);
-    const now = new Date();
-    const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const fileName = `leads-${ts}.csv`;
-
-    // Audit log fora da tx — não bloqueia o export se audit falhar.
-    try {
-      await withWorkspace(workspaceId, async (tx) => {
+        // **LGPD §3.4 (CLAUDE.md §7.5):** audit log gravado na MESMA tx do
+        // select. Se audit falhar, o export inteiro é abortado — não pode
+        // sair dado pessoal sem registro de quem exportou e quando. M8#7
+        // original tinha audit best-effort fora da tx — corrigido em M8#7p.
         await tx.auditLog.create({
           data: {
             workspaceId,
@@ -956,17 +948,22 @@ export async function exportLeadsAction(input: ExportLeadsInput): Promise<Export
             entityId: null,
             changes: {
               format: 'csv',
-              rowCount: result.total,
+              rowCount: total,
               filters,
             } as Prisma.InputJsonValue,
             ipAddress,
             userAgent,
           },
         });
-      });
-    } catch (auditErr) {
-      reportNonFatal('leads.export.audit', auditErr, { workspaceId, userId });
-    }
+
+        return { rows: csvRows, total };
+      },
+    );
+
+    const csv = serializeLeadsCsv(result.rows);
+    const now = new Date();
+    const ts = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const fileName = `leads-${ts}.csv`;
 
     return { ok: true, csv, fileName, rowCount: result.total };
   } catch (err) {
