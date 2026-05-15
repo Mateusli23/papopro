@@ -39,8 +39,12 @@ import { calcRotState } from '@/features/leads/rotting';
 import {
   archiveLeadSchema,
   assignLeadSchema,
+  CSV_IMPORT_MAX_ROWS,
+  importLeadsSchema,
   leadCreateSchema,
+  leadImportRowSchema,
   moveStageSchema,
+  previewImportSchema,
   updateLeadSchema,
 } from '@/features/leads/schemas';
 import {
@@ -60,8 +64,12 @@ import {
   toTaskUI,
   type PrismaTaskRow,
 } from '@/features/tasks/transforms';
+import { webhookLeadPayloadSchema } from '@/features/webhooks/schemas';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
+import { findDuplicatesPure, type ExistingLeadRef } from '@/lib/leads/dedupe';
+import { pickNextAssigneePure, type LoadCount, type MemberRef } from '@/lib/leads/pick-assignee';
+import { checkRateLimitPure } from '@/lib/webhooks/rate-limit';
 
 interface CheckResult {
   group: string;
@@ -902,6 +910,182 @@ export function GET() {
   });
   t('enrichStageChangeMeta: meta vazio → null', () => {
     return enrichStageChangeMeta(undefined, FAKE_STAGES) === null;
+  });
+
+  // ── M8#5 CSV import (schemas, dedupe, round-robin) ──────────────────────
+  t = run('csv-import-m8', results);
+
+  t('CSV_IMPORT_MAX_ROWS é 1000', () => CSV_IMPORT_MAX_ROWS === 1000);
+
+  // leadImportRowSchema
+  t('leadImportRowSchema aceita linha mínima válida', () => {
+    return leadImportRowSchema.safeParse({
+      line: 2,
+      name: 'João',
+      phone: '+55 11 9 9999-0000',
+    }).success;
+  });
+  t('leadImportRowSchema rejeita name vazio', () => {
+    return !leadImportRowSchema.safeParse({ line: 2, name: '', phone: '+55 11 9 9999-0000' })
+      .success;
+  });
+  t('leadImportRowSchema rejeita phone com letras', () => {
+    return !leadImportRowSchema.safeParse({ line: 2, name: 'A', phone: 'abc' }).success;
+  });
+
+  // previewImportSchema / importLeadsSchema
+  const validRow = { line: 2, name: 'João', phone: '+55 11 9 9999-0000' };
+  t('previewImportSchema aceita rows array', () => {
+    return previewImportSchema.safeParse({ rows: [validRow] }).success;
+  });
+  t('importLeadsSchema rejeita consentConfirmed=false', () => {
+    return !importLeadsSchema.safeParse({ rows: [validRow], consentConfirmed: false }).success;
+  });
+  t('importLeadsSchema rejeita consentConfirmed omitido', () => {
+    return !importLeadsSchema.safeParse({ rows: [validRow] }).success;
+  });
+  t('importLeadsSchema rejeita >1000 linhas', () => {
+    const rows = Array.from({ length: CSV_IMPORT_MAX_ROWS + 1 }, (_, i) => ({
+      ...validRow,
+      line: i + 2,
+    }));
+    return !importLeadsSchema.safeParse({ rows, consentConfirmed: true }).success;
+  });
+  t('importLeadsSchema aceita ≤1000 + consent true', () => {
+    const rows = Array.from({ length: CSV_IMPORT_MAX_ROWS }, (_, i) => ({
+      ...validRow,
+      line: i + 2,
+    }));
+    return importLeadsSchema.safeParse({ rows, consentConfirmed: true }).success;
+  });
+
+  // findDuplicatesPure
+  const existingLeads: ExistingLeadRef[] = [
+    { id: 'L1', name: 'Ana', phone: '+55 11 99999-1111', email: 'ana@x.com' },
+    { id: 'L2', name: 'Bruno', phone: '+55 11 99999-2222', email: null },
+  ];
+  t('findDuplicates: match por phone', () => {
+    const dups = findDuplicatesPure(existingLeads, [{ phone: '+55 11 99999-1111', email: null }]);
+    return dups.get('+55 11 99999-1111')?.id === 'L1';
+  });
+  t('findDuplicates: match por email (case-insensitive)', () => {
+    const dups = findDuplicatesPure(existingLeads, [{ phone: null, email: 'ANA@X.com' }]);
+    return dups.get('ana@x.com')?.id === 'L1';
+  });
+  t('findDuplicates: sem match → Map vazio', () => {
+    const dups = findDuplicatesPure(existingLeads, [
+      { phone: '+55 11 00000-0000', email: 'novo@x.com' },
+    ]);
+    return dups.size === 0;
+  });
+
+  // pickNextAssigneePure (round-robin)
+  const REF_DATE = new Date('2026-01-01T00:00:00Z');
+  const members: MemberRef[] = [
+    { id: 'V1', role: 'Vendedor', createdAt: new Date(REF_DATE.getTime()) },
+    { id: 'V2', role: 'Vendedor', createdAt: new Date(REF_DATE.getTime() + 86_400_000) },
+    { id: 'V3', role: 'Manager', createdAt: new Date(REF_DATE.getTime() + 2 * 86_400_000) },
+    { id: 'O1', role: 'Owner', createdAt: new Date(REF_DATE.getTime() - 86_400_000) },
+  ];
+  t('pickNextAssignee: menor count vence', () => {
+    const loads: LoadCount[] = [
+      { memberId: 'V1', count: 10 },
+      { memberId: 'V2', count: 5 },
+      { memberId: 'V3', count: 7 },
+    ];
+    return pickNextAssigneePure(members, loads) === 'V2';
+  });
+  t('pickNextAssignee: tie por count → createdAt ASC desempata', () => {
+    const loads: LoadCount[] = [
+      { memberId: 'V1', count: 5 },
+      { memberId: 'V2', count: 5 },
+      { memberId: 'V3', count: 5 },
+    ];
+    return pickNextAssigneePure(members, loads) === 'V1';
+  });
+  t('pickNextAssignee: fallback Owner se não houver Vendedor/Manager', () => {
+    const ownerOnly: MemberRef[] = members.filter((m) => m.role === 'Owner');
+    return pickNextAssigneePure(ownerOnly, []) === 'O1';
+  });
+  t('pickNextAssignee: sem ninguém → null', () => {
+    return pickNextAssigneePure([], []) === null;
+  });
+  t('pickNextAssignee: Vendedor sem leads vence Manager com leads', () => {
+    const loads: LoadCount[] = [
+      { memberId: 'V1', count: 3 },
+      { memberId: 'V2', count: 3 },
+      { memberId: 'V3', count: 0 },
+    ];
+    return pickNextAssigneePure(members, loads) === 'V3';
+  });
+
+  // ── M8#5 Webhook (payload schema + rate limit) ──────────────────────────
+  t = run('webhook-leads-m8', results);
+
+  t('webhookLeadPayloadSchema aceita name + phone', () => {
+    return webhookLeadPayloadSchema.safeParse({
+      name: 'Carlos',
+      phone: '+55 11 99999-0000',
+    }).success;
+  });
+  t('webhookLeadPayloadSchema aceita name + phone + email + source', () => {
+    return webhookLeadPayloadSchema.safeParse({
+      name: 'Carlos',
+      phone: '+55 11 99999-0000',
+      email: 'c@x.com',
+      source: 'meta_ads',
+    }).success;
+  });
+  t('webhookLeadPayloadSchema rejeita sem name', () => {
+    return !webhookLeadPayloadSchema.safeParse({ phone: '+55 11 99999-0000' }).success;
+  });
+  t('webhookLeadPayloadSchema rejeita sem phone', () => {
+    return !webhookLeadPayloadSchema.safeParse({ name: 'X', email: 'x@x.com' }).success;
+  });
+  t('webhookLeadPayloadSchema rejeita source fora do enum', () => {
+    return !webhookLeadPayloadSchema.safeParse({
+      name: 'X',
+      phone: '+55 11 99999-0000',
+      source: 'jamaica',
+    }).success;
+  });
+  t('webhookLeadPayloadSchema rejeita >8 tags', () => {
+    const tags = Array.from({ length: 9 }, (_, i) => `tag${i}`);
+    return !webhookLeadPayloadSchema.safeParse({
+      name: 'X',
+      phone: '+55 11 99999-0000',
+      tags,
+    }).success;
+  });
+  t('webhookLeadPayloadSchema aceita custom_fields como record<string,string>', () => {
+    return webhookLeadPayloadSchema.safeParse({
+      name: 'X',
+      phone: '+55 11 99999-0000',
+      custom_fields: { metragem: '120', andar: '7' },
+    }).success;
+  });
+
+  // Rate limit puro
+  t('rate limit: dentro do limite → ok', () => {
+    const store = new Map();
+    return checkRateLimitPure(store, 'tok1', 0, 100, 60_000).ok === true;
+  });
+  t('rate limit: excedeu limite → ok=false + retryAfterMs', () => {
+    const store = new Map();
+    for (let i = 0; i < 100; i++) checkRateLimitPure(store, 'tok2', 0, 100, 60_000);
+    const result = checkRateLimitPure(store, 'tok2', 0, 100, 60_000);
+    return result.ok === false && result.retryAfterMs > 0;
+  });
+  t('rate limit: janela expirada → reseta', () => {
+    const store = new Map();
+    for (let i = 0; i < 100; i++) checkRateLimitPure(store, 'tok3', 0, 100, 60_000);
+    // Avança 70s, fora da janela
+    return checkRateLimitPure(store, 'tok3', 70_000, 100, 60_000).ok === true;
+  });
+  t('rate limit: cada chave tem bucket separado', () => {
+    const store = new Map();
+    for (let i = 0; i < 100; i++) checkRateLimitPure(store, 'A', 0, 100, 60_000);
+    return checkRateLimitPure(store, 'B', 0, 100, 60_000).ok === true;
   });
 
   const passed = results.filter((r) => r.ok).length;

@@ -25,6 +25,7 @@ export const LEAD_ORIGINS: { value: LeadOrigin; label: string }[] = [
   { value: 'csv_import', label: 'Importação CSV' },
   { value: 'rd_station', label: 'RD Station' },
   { value: 'hotmart', label: 'Hotmart' },
+  { value: 'webhook_generico', label: 'Webhook genérico' },
 ];
 
 export const leadCreateSchema = z.object({
@@ -56,6 +57,7 @@ export const leadCreateSchema = z.object({
     'manual',
     'rd_station',
     'hotmart',
+    'webhook_generico',
   ]),
   // `valueCents` e `tags` ficam obrigatórios no schema (sem `.default()`
   // pra evitar incompatibilidade z.input × z.output que confunde o RHF
@@ -136,3 +138,59 @@ export const CSV_FIELDS = [
 ] as const;
 
 export type CsvFieldKey = (typeof CSV_FIELDS)[number]['key'];
+
+/**
+ * Limite hard de linhas por importação síncrona (M8#5). Acima disso o
+ * usuário precisa dividir o arquivo — Edge Function pra background bulk
+ * fica pra pós-MVP (decisão: antivírus + TLS quebra dev local Windows).
+ */
+export const CSV_IMPORT_MAX_ROWS = 1000;
+
+/**
+ * Schema da linha passada do client pro Server Action de import. Difere de
+ * `csvRowSchema` porque inclui o índice da linha (pra mensagens "linha N:")
+ * e admite os campos extras úteis pro CRM.
+ */
+export const leadImportRowSchema = z.object({
+  line: z.number().int().nonnegative('Índice de linha inválido'),
+  name: z.string().min(1, 'Informe o nome').max(120, 'Nome muito longo'),
+  phone: z
+    .string()
+    .regex(PHONE_REGEX, 'Telefone inválido — use só números, espaço, parênteses ou hífen'),
+  email: z
+    .string()
+    .email('Email inválido')
+    .optional()
+    .or(z.literal('').transform(() => undefined)),
+  company: z.string().max(120, 'Empresa muito longa').optional(),
+  position: z.string().max(80, 'Cargo muito longo').optional(),
+  notes: z.string().max(2000, 'Notas muito longas').optional(),
+});
+
+export type LeadImportRowInput = z.infer<typeof leadImportRowSchema>;
+
+/** Schema do payload de `previewImportAction` (M8#5). Não persiste nada. */
+export const previewImportSchema = z.object({
+  rows: z
+    .array(leadImportRowSchema)
+    .max(CSV_IMPORT_MAX_ROWS, `Máximo de ${CSV_IMPORT_MAX_ROWS} linhas por importação.`),
+});
+
+export type PreviewImportInput = z.infer<typeof previewImportSchema>;
+
+/**
+ * Schema do payload de `importLeadsAction` (M8#5). `consentConfirmed` é
+ * required `true` literal — Zod rejeita `false`/undefined direto, sem precisar
+ * de validação extra no action. LGPD §7 (consentimento explícito).
+ */
+export const importLeadsSchema = z.object({
+  rows: z
+    .array(leadImportRowSchema)
+    .min(1, 'Selecione pelo menos uma linha para importar.')
+    .max(CSV_IMPORT_MAX_ROWS, `Máximo de ${CSV_IMPORT_MAX_ROWS} linhas por importação.`),
+  consentConfirmed: z.literal(true, {
+    message: 'Confirme o consentimento LGPD antes de importar.',
+  }),
+});
+
+export type ImportLeadsInput = z.infer<typeof importLeadsSchema>;
