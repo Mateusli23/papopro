@@ -42,11 +42,14 @@ interface MonthViewProps {
   currentDate: Date;
   onDayClick?: (date: Date) => void;
   onTaskClick?: (task: Task) => void;
+  /** Tasks pra renderizar. Quando omitido, usa o store (compat fixture). */
+  tasks?: Task[];
 }
 
-export function MonthView({ currentDate, onDayClick, onTaskClick }: MonthViewProps) {
-  const tasks = useTasks();
-  const grouped = React.useMemo(() => groupTasksByDay(tasks), [tasks]);
+export function MonthView({ currentDate, onDayClick, onTaskClick, tasks }: MonthViewProps) {
+  const fromStore = useTasks();
+  const effective = tasks ?? fromStore;
+  const grouped = React.useMemo(() => groupTasksByDay(effective), [effective]);
 
   const days = React.useMemo(() => {
     const monthStart = startOfMonth(currentDate);

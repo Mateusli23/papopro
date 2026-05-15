@@ -13,7 +13,92 @@
 import { addDays, endOfDay, format, isWithinInterval, parseISO, startOfDay } from 'date-fns';
 
 import type { TaskCreateInput, TaskUpdateInput } from './schemas';
-import type { Task } from './types';
+import type { Task, TaskKind, TaskStatus } from './types';
+
+// =============================================================================
+// Prisma row → UI shape (M8#4 — server-fed tasks)
+// =============================================================================
+
+/**
+ * Shape mínimo da row Prisma `Task` (com `lead` opcional via include) que
+ * `toTaskUI` espera. Definido aqui pra desacoplar transforms de `@papopro/db`
+ * em runtime — qualquer arquivo client/smoke pode usar sem puxar engine.
+ */
+export interface PrismaTaskRow {
+  id: string;
+  leadId: string;
+  kind: TaskKind;
+  title: string;
+  notes: string | null;
+  dueAt: Date;
+  status: TaskStatus;
+  assignedToId: string;
+  doneAt: Date | null;
+  createdAt: Date;
+  /** Opcional via `include: { lead: { ... } }` — `/tasks` precisa do nome do lead. */
+  lead?: { id: string; name: string; company: string | null };
+}
+
+/**
+ * Task UI estendida que carrega nome do lead pra renderizar em /tasks
+ * sem fetch adicional. Quando o caller é a ficha do lead (já tem o lead),
+ * `leadName`/`leadCompany` ficam undefined.
+ */
+export interface TaskWithLead extends Task {
+  leadName?: string;
+  leadCompany?: string;
+}
+
+export function toTaskUI(row: PrismaTaskRow): TaskWithLead {
+  return {
+    id: row.id,
+    leadId: row.leadId,
+    kind: row.kind,
+    title: row.title,
+    notes: row.notes ?? undefined,
+    dueAt: row.dueAt.toISOString(),
+    status: row.status,
+    assignedTo: row.assignedToId,
+    doneAt: row.doneAt?.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    leadName: row.lead?.name,
+    leadCompany: row.lead?.company ?? undefined,
+  };
+}
+
+// =============================================================================
+// Next action computation (M8#4 — denormalização Lead.nextActionAt/Label)
+// =============================================================================
+
+/**
+ * Calcula qual é a "próxima ação" pendente do lead. Retorna `null` quando
+ * não há tasks pending. Ordem: `dueAt ASC` (mais cedo primeiro), critério
+ * de desempate `createdAt ASC` (criada antes vence).
+ *
+ * Reusada na Server Action `recomputeLeadNextAction` (mas implementada
+ * separadamente lá com Prisma `findFirst`).
+ */
+export interface PendingTaskRef {
+  dueAt: string;
+  title: string;
+  createdAt: string;
+  status: TaskStatus;
+}
+
+export function computeNextActionFromTasks(
+  tasks: readonly PendingTaskRef[],
+): { dueAt: string; title: string } | null {
+  const pending = tasks.filter((t) => t.status === 'pending');
+  if (pending.length === 0) return null;
+  // Sort estável: dueAt asc, depois createdAt asc.
+  const sorted = [...pending].sort((a, b) => {
+    const byDue = a.dueAt.localeCompare(b.dueAt);
+    if (byDue !== 0) return byDue;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+  const next = sorted[0]!;
+  return { dueAt: next.dueAt, title: next.title };
+}
 
 // ─── Mutações puras ───────────────────────────────────────────────────────
 

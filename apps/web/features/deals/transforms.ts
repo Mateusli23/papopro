@@ -15,6 +15,95 @@
 import type { DealCreateInput } from './schemas';
 import type { Deal, DealStatus } from './types';
 
+// =============================================================================
+// Prisma row → UI shape (M8#3 — server-fed kanban)
+// =============================================================================
+
+/**
+ * Shape mínimo da Prisma `Deal` row (com `stage` + `lead` via include) que
+ * `toDealUI` espera. Definido aqui pra desacoplar transforms de `@papopro/db`
+ * em runtime — qualquer arquivo client/smoke pode usar sem puxar Prisma engine.
+ *
+ * `queries.ts:listDeals` faz exatamente esse include e o tipo bate.
+ */
+export interface PrismaDealRow {
+  id: string;
+  title: string;
+  leadId: string;
+  stageId: string;
+  valueCents: number;
+  ownerId: string;
+  probability: number | null;
+  dueAt: Date | null;
+  description: string | null;
+  status: DealStatus;
+  lostReason: string | null;
+  orderInStage: number;
+  closedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  /** Stage relation — `slug` alimenta `getStageStyle()`, `name` aparece em toasts. */
+  stage: { slug: string; name: string };
+  /** Lead relation — `name` no card, `company` no subtítulo. */
+  lead: { id: string; name: string; company: string | null };
+}
+
+/**
+ * Converte `Prisma.Deal` (com relações) na shape `Deal` que a UI consome
+ * desde M4. Mantém shape estável e isola adaptação (Date → ISO, null →
+ * undefined, denormaliza stage.slug e lead.name).
+ */
+export function toDealUI(row: PrismaDealRow): Deal {
+  return {
+    id: row.id,
+    title: row.title,
+    leadId: row.leadId,
+    stageId: row.stageId,
+    stageSlug: row.stage.slug,
+    valueCents: row.valueCents,
+    ownerId: row.ownerId,
+    probability: row.probability ?? undefined,
+    dueAt: row.dueAt?.toISOString(),
+    description: row.description ?? undefined,
+    status: row.status,
+    lostReason: row.lostReason ?? undefined,
+    orderInStage: row.orderInStage,
+    leadName: row.lead.name,
+    leadCompany: row.lead.company ?? undefined,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    closedAt: row.closedAt?.toISOString(),
+  };
+}
+
+// =============================================================================
+// Ordering helpers (M8#3 — drag-and-drop)
+// =============================================================================
+
+/** Espaçamento default entre vizinhos. Escolhido grande pra dar muito espaço
+ * pra inserções midpoint sucessivas antes de precisar de rebalanceamento. */
+export const ORDER_STEP = 1000;
+
+/**
+ * Calcula o `orderInStage` de um drop a partir dos vizinhos imediatos.
+ *
+ *  - Drop no início (só `after`): `after.orderInStage - ORDER_STEP`
+ *  - Drop no final (só `before`): `before.orderInStage + ORDER_STEP`
+ *  - Drop no meio: midpoint inteiro entre os dois (Math.floor)
+ *  - Coluna vazia (ambos undefined): `0`
+ *
+ * **Colisão.** Quando o midpoint colapsa (ex: vizinhos com orders 5 e 6, midpoint
+ * = 5), o caller decide rebalancear a coluna (UPDATE em batch espaçando
+ * múltiplos de ORDER_STEP). Aqui só sinalizamos retornando o piso.
+ */
+export function computeOrderBetween(beforeOrder: number | null, afterOrder: number | null): number {
+  if (beforeOrder === null && afterOrder === null) return 0;
+  if (beforeOrder === null && afterOrder !== null) return afterOrder - ORDER_STEP;
+  if (afterOrder === null && beforeOrder !== null) return beforeOrder + ORDER_STEP;
+  // Ambos definidos — midpoint inteiro.
+  return Math.floor(((beforeOrder ?? 0) + (afterOrder ?? 0)) / 2);
+}
+
 /** Probabilidade default por etapa — heurística simples, ajustada em M11. */
 export function defaultProbabilityFor(stageId: string): number | undefined {
   switch (stageId) {

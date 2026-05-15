@@ -3,25 +3,27 @@
 import * as React from 'react';
 
 import { Badge, Button, cn, EmptyState } from '@papopro/ui';
-import { Activity as ActivityIconLucide } from '@papopro/ui/icons';
+import { Activity as ActivityIconLucide, PlusCircle } from '@papopro/ui/icons';
 
-import { getActivitiesForLead } from '@/lib/fixtures/activities';
-import { getRepName, SYSTEM_AUTHOR } from '@/lib/fixtures/sales-reps';
+import { NoteCreateDialog } from '@/features/activities/components/note-create-dialog';
+import { enrichStageChangeMeta, type ActivityWithAuthor } from '@/features/activities/transforms';
 import { formatDateTime, formatRelative } from '@/lib/utils/format';
 
-import type { ActivityType } from '../types';
+import type { ActivityType, PipelineStage } from '../types';
 
 import { ActivityIcon, ACTIVITY_META } from './activity-icon';
 
 /**
- * Timeline cronológica reversa do lead. Cada item tem ícone + corpo + autor +
- * timestamp relativo. Filtro no topo permite ver só notas, só WhatsApp, etc.
+ * Timeline cronológica reversa do lead (M8#4 — server-fed).
  *
- * Notas internas têm fundo `accent` sutil (amarelo da marca) — sinaliza que
- * é informação interna, fora da conversa com o lead. Mensagens WhatsApp
- * recebidas vs enviadas usam alinhamento diferente (left vs left, mas com
- * indicador "→" / "←") sem virar bolha de chat — esta é a timeline, não
- * a inbox (essa vem em M5 com layout de 3 painéis).
+ * Recebe `initialActivities` (com `authorName` resolvido) + `stages`
+ * (pra resolver `stage_change` em nomes) por prop do parent server-fed.
+ *
+ * **M8#4 changes:**
+ *  - Não usa mais `getActivitiesForLead` fixture
+ *  - Botão "Adicionar nota" abre `NoteCreateDialog` → `createNoteActivityAction`
+ *  - `stage_change` mostra "De X para Y" usando `enrichStageChangeMeta`
+ *  - `task` activities mostram "Tarefa criada"/"Tarefa concluída" baseado em meta.eventKind
  */
 
 type FilterValue = 'all' | 'comm' | 'meeting' | 'note' | 'system';
@@ -42,120 +44,169 @@ const FILTER_LABEL: Record<FilterValue, string> = {
   system: 'Sistema',
 };
 
-export function LeadTimeline({ leadId }: { leadId: string }) {
-  const all = React.useMemo(() => getActivitiesForLead(leadId), [leadId]);
+interface LeadTimelineProps {
+  leadId: string;
+  initialActivities: ActivityWithAuthor[];
+  stages: PipelineStage[];
+  /** Quando true, mostra botão "Adicionar nota". Viewer recebe false. */
+  canAddNote: boolean;
+}
+
+export function LeadTimeline({ leadId, initialActivities, stages, canAddNote }: LeadTimelineProps) {
   const [filter, setFilter] = React.useState<FilterValue>('all');
+  const [noteOpen, setNoteOpen] = React.useState(false);
 
   const filtered = React.useMemo(() => {
     const allowed = new Set(FILTER_GROUPS[filter]);
-    return all.filter((a) => allowed.has(a.type));
-  }, [all, filter]);
+    return initialActivities.filter((a) => allowed.has(a.type));
+  }, [initialActivities, filter]);
 
   return (
-    <section
-      aria-label="Histórico do lead"
-      className="border-border bg-card flex flex-col rounded-lg border"
-    >
-      <header className="border-border flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-title text-foreground">Histórico</h2>
-          <span className="text-caption text-muted-foreground">
-            {all.length} eventos · ordem cronológica reversa
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por tipo">
-          {(Object.keys(FILTER_LABEL) as FilterValue[]).map((f) => (
-            <Button
-              key={f}
-              role="tab"
-              aria-selected={filter === f}
-              variant={filter === f ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setFilter(f)}
-              className="h-7 px-2.5"
-            >
-              {FILTER_LABEL[f]}
-            </Button>
-          ))}
-        </div>
-      </header>
+    <>
+      <section
+        aria-label="Histórico do lead"
+        className="border-border bg-card flex flex-col rounded-lg border"
+      >
+        <header className="border-border flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-title text-foreground">Histórico</h2>
+            <span className="text-caption text-muted-foreground">
+              {initialActivities.length} eventos · ordem cronológica reversa
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filtrar por tipo">
+              {(Object.keys(FILTER_LABEL) as FilterValue[]).map((f) => (
+                <Button
+                  key={f}
+                  role="tab"
+                  aria-selected={filter === f}
+                  variant={filter === f ? 'default' : 'ghost'}
+                  size="sm"
+                  onClick={() => setFilter(f)}
+                  className="h-7 px-2.5"
+                >
+                  {FILTER_LABEL[f]}
+                </Button>
+              ))}
+            </div>
+            {canAddNote && (
+              <Button size="sm" variant="outline" onClick={() => setNoteOpen(true)}>
+                <PlusCircle /> Adicionar nota
+              </Button>
+            )}
+          </div>
+        </header>
 
-      {filtered.length === 0 ? (
-        <div className="p-6">
-          <EmptyState
-            icon={ActivityIconLucide}
-            title="Sem eventos nesse filtro"
-            description="Troque o filtro acima ou crie uma nota/atividade pra começar o histórico."
-          />
-        </div>
-      ) : (
-        <ol className="flex flex-col gap-3 p-4">
-          {filtered.map((activity) => {
-            const isNote = activity.type === 'note';
-            const isWhatsAppIn = activity.type === 'whatsapp_in';
-            const author =
-              activity.authorId === 'system' ? SYSTEM_AUTHOR.name : getRepName(activity.authorId);
-            return (
-              <li
-                key={activity.id}
-                className={cn(
-                  'border-border bg-background flex gap-3 rounded-md border p-3',
-                  isNote && 'bg-accent/10 border-accent/30',
-                )}
-              >
-                <ActivityIcon type={activity.type} />
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <div className="flex flex-wrap items-baseline gap-2">
-                      <span className="text-body text-foreground font-medium">
-                        {ACTIVITY_META[activity.type].label}
-                      </span>
-                      {isWhatsAppIn && (
-                        <Badge variant="secondary" className="h-5 px-1.5">
-                          recebida
-                        </Badge>
-                      )}
-                      {isNote && (
-                        <Badge variant="warning" className="h-5 px-1.5">
-                          interno · só o time vê
-                        </Badge>
-                      )}
-                      <span className="text-caption text-muted-foreground">por {author}</span>
-                    </div>
-                    <time
-                      className="text-caption text-muted-foreground"
-                      dateTime={activity.createdAt}
-                      title={formatDateTime(activity.createdAt)}
-                    >
-                      {formatRelative(activity.createdAt)}
-                    </time>
-                  </div>
-                  {activity.body && (
-                    <p className="text-body text-foreground whitespace-pre-line">{activity.body}</p>
-                  )}
-                  {activity.meta?.fileName && (
-                    <span className="text-caption text-muted-foreground inline-flex items-center gap-1">
-                      📎 {activity.meta.fileName}
-                      {activity.meta.fileSizeKb && ` · ${formatFileSize(activity.meta.fileSizeKb)}`}
-                    </span>
-                  )}
-                  {activity.meta?.durationSeconds && (
-                    <span className="text-caption text-muted-foreground">
-                      Duração: {formatDuration(activity.meta.durationSeconds)}
-                    </span>
-                  )}
-                  {activity.meta?.location && (
-                    <span className="text-caption text-muted-foreground">
-                      📍 {activity.meta.location}
-                    </span>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+        {filtered.length === 0 ? (
+          <div className="p-6">
+            <EmptyState
+              icon={ActivityIconLucide}
+              title="Sem eventos nesse filtro"
+              description={
+                canAddNote
+                  ? 'Troque o filtro acima ou adicione uma nota pra começar o histórico.'
+                  : 'Troque o filtro acima.'
+              }
+            />
+          </div>
+        ) : (
+          <ol className="flex flex-col gap-3 p-4">
+            {filtered.map((activity) => (
+              <ActivityListItem key={activity.id} activity={activity} stages={stages} />
+            ))}
+          </ol>
+        )}
+      </section>
+
+      {canAddNote && (
+        <NoteCreateDialog open={noteOpen} onOpenChange={setNoteOpen} leadId={leadId} />
       )}
-    </section>
+    </>
+  );
+}
+
+interface ActivityListItemProps {
+  activity: ActivityWithAuthor;
+  stages: PipelineStage[];
+}
+
+function ActivityListItem({ activity, stages }: ActivityListItemProps) {
+  const isNote = activity.type === 'note';
+  const isWhatsAppIn = activity.type === 'whatsapp_in';
+  const isStageChange = activity.type === 'stage_change';
+  const isTask = activity.type === 'task';
+
+  const author = activity.authorName ?? 'Sistema';
+  const meta = ACTIVITY_META[activity.type];
+
+  // Label dinâmico pra activities com sub-eventos.
+  const dynamicLabel = React.useMemo(() => {
+    if (isTask && activity.meta?.eventKind === 'completed') return 'Tarefa concluída';
+    if (isTask && activity.meta?.eventKind === 'created') return 'Tarefa criada';
+    return meta.label;
+  }, [isTask, activity.meta, meta.label]);
+
+  // Resolve stage_change meta pra "De X para Y".
+  const stageChangeText = React.useMemo(() => {
+    if (!isStageChange) return null;
+    const enriched = enrichStageChangeMeta(activity.meta, stages);
+    if (!enriched) return null;
+    return `${enriched.fromStageName} → ${enriched.toStageName}`;
+  }, [isStageChange, activity.meta, stages]);
+
+  return (
+    <li
+      className={cn(
+        'border-border bg-background flex gap-3 rounded-md border p-3',
+        isNote && 'bg-accent/10 border-accent/30',
+      )}
+    >
+      <ActivityIcon type={activity.type} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="text-body text-foreground font-medium">{dynamicLabel}</span>
+            {isWhatsAppIn && (
+              <Badge variant="secondary" className="h-5 px-1.5">
+                recebida
+              </Badge>
+            )}
+            {isNote && (
+              <Badge variant="warning" className="h-5 px-1.5">
+                interno · só o time vê
+              </Badge>
+            )}
+            <span className="text-caption text-muted-foreground">por {author}</span>
+          </div>
+          <time
+            className="text-caption text-muted-foreground"
+            dateTime={activity.createdAt}
+            title={formatDateTime(activity.createdAt)}
+          >
+            {formatRelative(activity.createdAt)}
+          </time>
+        </div>
+        {stageChangeText && <p className="text-body text-foreground">{stageChangeText}</p>}
+        {activity.body && !isStageChange && (
+          <p className="text-body text-foreground whitespace-pre-line">{activity.body}</p>
+        )}
+        {activity.meta?.fileName && (
+          <span className="text-caption text-muted-foreground inline-flex items-center gap-1">
+            📎 {activity.meta.fileName}
+            {activity.meta.fileSizeKb && ` · ${formatFileSize(activity.meta.fileSizeKb)}`}
+          </span>
+        )}
+        {activity.meta?.durationSeconds && (
+          <span className="text-caption text-muted-foreground">
+            Duração: {formatDuration(activity.meta.durationSeconds)}
+          </span>
+        )}
+        {activity.meta?.location && (
+          <span className="text-caption text-muted-foreground">📍 {activity.meta.location}</span>
+        )}
+      </div>
+    </li>
   );
 }
 

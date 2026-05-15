@@ -5,14 +5,12 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { addDays, format as fmtDate } from 'date-fns';
+import { format as fmtDate, parseISO } from 'date-fns';
 import { Controller, useForm } from 'react-hook-form';
 import { toast } from 'react-hot-toast';
 
 import {
   Button,
-  Combobox,
-  type ComboboxOption,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -31,68 +29,50 @@ import {
 import { Loader2 } from '@papopro/ui/icons';
 
 import type { SalesRep } from '@/features/leads/types';
-import { createTaskAction } from '@/features/tasks/actions';
-import type { LeadComboboxOption } from '@/features/tasks/queries';
+import { updateTaskAction } from '@/features/tasks/actions';
 
-import { TASK_KINDS, taskCreateSchema, type TaskCreateInput } from '../schemas';
+import { TASK_KINDS, updateTaskSchema, type UpdateTaskInput } from '../schemas';
+import type { Task } from '../types';
 
 import { TASK_KIND_META } from './task-kind-icon';
 
 /**
- * Modal "Nova tarefa" (M8#4) — invoca `createTaskAction` no submit.
- *
- * Leads, salesReps vêm por prop do Server Component pai (já são dados reais
- * do workspace). Default `assignedTo` é o primeiro rep, `dueAt` é "hoje +1
- * dia 09:00" (padrão razoável pra follow-up). On success: `router.refresh()`.
+ * Dialog de edição de tarefa (M8#4). Edita título, tipo, vendedor
+ * responsável, prazo e notas. Mudança de status (pending/done) tem fluxo
+ * próprio via `completeTaskAction`/`reopenTaskAction` chamados no row.
  */
 
-interface TaskCreateDialogProps {
+interface TaskEditDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Lead pré-selecionado (vindo do detalhe do lead). */
-  defaultLeadId?: string;
-  /** Data pré-selecionada (vindo de um click numa célula do calendário). */
-  defaultDueDate?: Date;
+  task: Task;
   salesReps: SalesRep[];
-  leadOptions: LeadComboboxOption[];
 }
 
-function buildDefaults(
-  leadId: string | undefined,
-  dueDate: Date | undefined,
-  salesReps: SalesRep[],
-): TaskCreateInput {
-  const due = dueDate ?? addDays(new Date(), 1);
-  due.setHours(9, 0, 0, 0);
+function isoToDateInput(iso: string | undefined): string {
+  if (!iso) return '';
+  try {
+    return fmtDate(parseISO(iso), 'yyyy-MM-dd');
+  } catch {
+    return '';
+  }
+}
+
+function buildDefaults(task: Task): UpdateTaskInput {
   return {
-    title: '',
-    leadId: leadId ?? '',
-    kind: 'follow_up',
-    assignedTo: salesReps[0]?.id ?? '',
-    dueAt: due.toISOString(),
+    taskId: task.id,
+    kind: task.kind,
+    title: task.title,
+    notes: task.notes ?? '',
+    assignedToId: task.assignedTo,
+    dueAt: task.dueAt,
   };
 }
 
-export function TaskCreateDialog({
-  open,
-  onOpenChange,
-  defaultLeadId,
-  defaultDueDate,
-  salesReps,
-  leadOptions,
-}: TaskCreateDialogProps) {
+export function TaskEditDialog({ open, onOpenChange, task, salesReps }: TaskEditDialogProps) {
   const router = useRouter();
   const [isPending, startTransition] = React.useTransition();
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-
-  const leadComboboxOptions: ComboboxOption[] = React.useMemo(
-    () =>
-      leadOptions.map((l) => ({
-        value: l.id,
-        label: l.company ? `${l.name} — ${l.company}` : l.name,
-      })),
-    [leadOptions],
-  );
 
   const {
     register,
@@ -101,31 +81,30 @@ export function TaskCreateDialog({
     reset,
     setValue,
     formState: { errors },
-  } = useForm<TaskCreateInput>({
-    resolver: zodResolver(taskCreateSchema),
-    defaultValues: buildDefaults(defaultLeadId, defaultDueDate, salesReps),
+  } = useForm<UpdateTaskInput>({
+    resolver: zodResolver(updateTaskSchema),
+    defaultValues: buildDefaults(task),
   });
 
-  const initialDate = defaultDueDate ?? addDays(new Date(), 1);
-  const [dueDisplay, setDueDisplay] = React.useState(fmtDate(initialDate, 'yyyy-MM-dd'));
+  const [dueDisplay, setDueDisplay] = React.useState(isoToDateInput(task.dueAt));
 
   React.useEffect(() => {
     if (open) {
-      reset(buildDefaults(defaultLeadId, defaultDueDate, salesReps));
-      setDueDisplay(fmtDate(defaultDueDate ?? addDays(new Date(), 1), 'yyyy-MM-dd'));
+      reset(buildDefaults(task));
+      setDueDisplay(isoToDateInput(task.dueAt));
       setSubmitError(null);
     }
-  }, [open, defaultLeadId, defaultDueDate, salesReps, reset]);
+  }, [open, task, reset]);
 
-  function onSubmit(data: TaskCreateInput) {
+  function onSubmit(data: UpdateTaskInput) {
     setSubmitError(null);
     startTransition(async () => {
-      const result = await createTaskAction(data);
+      const result = await updateTaskAction(data);
       if (!result.ok) {
         setSubmitError(result.error);
         return;
       }
-      toast.success(`Tarefa "${data.title}" criada.`, { duration: 4000 });
+      toast.success('Tarefa atualizada.', { duration: 3000 });
       router.refresh();
       onOpenChange(false);
     });
@@ -135,34 +114,15 @@ export function TaskCreateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Nova tarefa</DialogTitle>
+          <DialogTitle>Editar tarefa</DialogTitle>
           <DialogDescription>
-            Crie uma tarefa pendente vinculada a um lead. Você pode editar e marcar como concluída
-            depois.
+            Atualize título, tipo, prazo e responsável. Pra marcar como concluída, use o checkbox na
+            lista.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-          <Field label="Lead vinculado*" error={errors.leadId?.message}>
-            <Controller
-              control={control}
-              name="leadId"
-              render={({ field }) => (
-                <Combobox
-                  value={field.value || null}
-                  onChange={(v) => field.onChange(v ?? '')}
-                  options={leadComboboxOptions}
-                  placeholder={
-                    leadComboboxOptions.length > 0
-                      ? 'Selecione um lead…'
-                      : 'Crie um lead antes de adicionar tarefa'
-                  }
-                  searchPlaceholder="Buscar por nome ou empresa…"
-                  emptyMessage="Nenhum lead encontrado"
-                />
-              )}
-            />
-          </Field>
+          <input type="hidden" {...register('taskId')} />
 
           <Field label="Título da tarefa*" error={errors.title?.message}>
             <Input
@@ -179,7 +139,7 @@ export function TaskCreateDialog({
                 control={control}
                 name="kind"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select value={field.value ?? task.kind} onValueChange={field.onChange}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -195,12 +155,12 @@ export function TaskCreateDialog({
               />
             </Field>
 
-            <Field label="Vendedor responsável*" error={errors.assignedTo?.message}>
+            <Field label="Vendedor responsável*" error={errors.assignedToId?.message}>
               <Controller
                 control={control}
-                name="assignedTo"
+                name="assignedToId"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select value={field.value ?? task.assignedTo} onValueChange={field.onChange}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -248,7 +208,7 @@ export function TaskCreateDialog({
             </Button>
             <Button type="submit" disabled={isPending}>
               {isPending && <Loader2 className="animate-spin" />}
-              Criar tarefa
+              Salvar
             </Button>
           </DialogFooter>
         </form>

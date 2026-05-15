@@ -14,10 +14,9 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { toast } from 'react-hot-toast';
 
-import { useDeals, moveDealToStage } from '@/features/deals/store';
-import { DEFAULT_STAGES, getStageName } from '@/lib/fixtures/pipelines';
+import type { DragMoveEvent } from '@/app/(dashboard)/kanban/kanban-view';
+import type { PipelineStage } from '@/features/leads/types';
 
 import type { Deal } from '../types';
 
@@ -25,138 +24,161 @@ import { DealCard } from './deal-card';
 import { DealsKanbanColumn } from './deals-kanban-column';
 
 /**
- * Pipeline Kanban dos deals — mostra TODAS as 6 etapas (incluindo Ganho
- * e Perdido). Drag-and-drop entre quaisquer colunas; mover pra Ganho
- * marca `status=won` + `closedAt`, pra Perdido marca `status=lost`.
+ * Pipeline Kanban dos deals — versão M8#3 (server-fed, controlada).
  *
- * Sensor com `activationConstraint: { distance: 6 }` — clicks <6px
- * navegam pelo Link interno do card; arrastes >6px ativam o drag e o
- * dnd-kit cancela o click sintético.
+ * Componente **controlado**: recebe `deals` por prop (estado otimista
+ * gerenciado pelo container `KanbanView`) e emite `onDrop(DragMoveEvent)`
+ * a cada drag finalizado. Não tem state interno de deals.
  *
- * Em M8 a Server Action `moveDealStage` confirma assincronamente; aqui
- * a mutação é síncrona via store in-memory + toast.
+ * Sensores idênticos ao M4 (PointerSensor + TouchSensor + KeyboardSensor)
+ * — mudar agora só por causa do server seria regressão de UX. Cf.
+ * commits anteriores pra contexto histórico do `delay: 250` no Touch.
  */
 
 interface DealsKanbanBoardProps {
-  /** Quando informado, cada coluna ganha botão "+ Adicionar negócio". */
+  deals: Deal[];
+  stages: PipelineStage[];
+  canEdit: boolean;
   onAddDeal?: (stageId: string) => void;
+  onDrop: (event: DragMoveEvent) => void;
+  /** Quando passado, cards mostram menu "Editar negócio" no canto. */
+  onEditDeal?: (deal: Deal) => void;
 }
 
-export function DealsKanbanBoard({ onAddDeal }: DealsKanbanBoardProps = {}) {
-  const deals = useDeals();
+export function DealsKanbanBoard({
+  deals,
+  stages,
+  canEdit,
+  onAddDeal,
+  onDrop,
+  onEditDeal,
+}: DealsKanbanBoardProps) {
   const [activeId, setActiveId] = React.useState<string | null>(null);
 
-  // Três sensores para cobrir todos os inputs sem que um sabote o outro:
-  //
-  //  - PointerSensor com `distance: 6` cobre mouse + caneta. Click <6px navega
-  //    pelo Link interno do card; arraste >6px ativa o drag (dnd-kit cancela
-  //    o synthetic click). Em touch, o PointerSensor poderia disparar com
-  //    apenas 6px de movimento — o que destruiria o gesto de scroll horizontal
-  //    em mobile. O TouchSensor abaixo sequestra touch antes disso.
-  //
-  //  - TouchSensor com `delay: 250 + tolerance: 5` só fecha contrato com
-  //    touch real (não mouse). Long-press de 250ms ativa o drag, igual
-  //    Trello/Pipedrive mobile. Movimento >5px durante o delay cancela
-  //    a ativação — o gesto vira scroll natural do carrossel/coluna.
-  //
-  //  - KeyboardSensor + sortableKeyboardCoordinates: Tab no card → Space
-  //    pega → Arrow move → Space solta. Anúncios via live region default
-  //    (em inglês — i18n PT-BR fica como follow-up).
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // Agrupa deals por stage, mantendo a ordem persistida em `orderInStage`.
+  // Tie-break por `createdAt` desc (mais novo primeiro) cobre fixtures sem
+  // `orderInStage` (todos com 0) — sort estável dá a ordem visual desejada.
   const dealsByStage = React.useMemo(() => {
     const map = new Map<string, Deal[]>();
-    for (const stage of DEFAULT_STAGES) map.set(stage.id, []);
+    for (const stage of stages) map.set(stage.id, []);
     for (const deal of deals) {
       const list = map.get(deal.stageId);
       if (list) list.push(deal);
     }
-    // Sort: por valor decrescente nas etapas ativas, por closedAt nas terminais.
-    for (const [stageId, list] of map) {
-      const isTerminal = stageId === 'ganho' || stageId === 'perdido';
+    for (const [, list] of map) {
       list.sort((a, b) => {
-        if (isTerminal) {
-          const ca = a.closedAt ?? a.updatedAt;
-          const cb = b.closedAt ?? b.updatedAt;
-          return cb.localeCompare(ca);
-        }
-        return b.valueCents - a.valueCents;
+        const oa = a.orderInStage ?? 0;
+        const ob = b.orderInStage ?? 0;
+        if (oa !== ob) return oa - ob;
+        // Tie-break: mais recente primeiro
+        return b.createdAt.localeCompare(a.createdAt);
       });
     }
     return map;
-  }, [deals]);
+  }, [deals, stages]);
 
   const activeDeal = React.useMemo(
     () => (activeId ? (deals.find((d) => d.id === activeId) ?? null) : null),
     [deals, activeId],
   );
 
-  function onDragStart(event: DragStartEvent) {
+  function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
   }
 
-  function onDragEnd(event: DragEndEvent) {
+  function handleDragEnd(event: DragEndEvent) {
     setActiveId(null);
+    if (!canEdit) return; // defesa-em-profundidade — sensors já desativados se !canEdit
     const { active, over } = event;
     if (!over) return;
 
-    const deal = deals.find((d) => d.id === active.id);
+    const dealId = String(active.id);
+    const deal = deals.find((d) => d.id === dealId);
     if (!deal) return;
 
     const overData = over.data.current as
       | { type?: string; stageId?: string; deal?: Deal }
       | undefined;
+
+    // Drop direto numa coluna vazia: `over.data.type === 'column'`.
+    // Drop sobre outro deal: `over.data.deal` carrega o vizinho.
     const targetStageId =
       overData?.type === 'column' && overData.stageId
         ? overData.stageId
         : (overData?.deal?.stageId ?? null);
+    if (!targetStageId) return;
 
-    if (!targetStageId || targetStageId === deal.stageId) return;
+    // Calcula `beforeId`/`afterId` no contexto do destino.
+    const targetList = dealsByStage.get(targetStageId) ?? [];
+    let beforeId: string | undefined;
+    let afterId: string | undefined;
 
-    moveDealToStage(deal.id, targetStageId);
-
-    // Toast contextual por destino — terminais ganham mensagem mais celebratória.
-    if (targetStageId === 'ganho') {
-      toast.success(`🏆 ${deal.title} fechado como ganho!`, { duration: 3500 });
-    } else if (targetStageId === 'perdido') {
-      toast(`${deal.title} marcado como perdido.`, { icon: '✖️', duration: 3000 });
-    } else {
-      toast.success(`${deal.title} movido para ${getStageName(targetStageId)}.`, {
-        duration: 2500,
-      });
+    if (overData?.type === 'column') {
+      // Drop direto na coluna: vai pro FINAL (após o último deal).
+      const last = targetList.filter((d) => d.id !== dealId).slice(-1)[0];
+      beforeId = last?.id;
+      afterId = undefined;
+    } else if (overData?.deal) {
+      // Drop sobre outro deal. Determina before/after considerando que estamos
+      // entre o deal alvo e o seu vizinho (decisão simplificada: cai antes do alvo).
+      const overDealId = overData.deal.id;
+      const overIdx = targetList.findIndex((d) => d.id === overDealId);
+      if (overIdx >= 0) {
+        // Filtra o próprio deal sendo movido (cross-stage não precisa, intra-stage sim).
+        const idxAdjusted =
+          deal.stageId === targetStageId
+            ? targetList.findIndex((d) => d.id === overDealId)
+            : overIdx;
+        const prevDeal = targetList[idxAdjusted - 1];
+        beforeId = prevDeal && prevDeal.id !== dealId ? prevDeal.id : undefined;
+        afterId = overDealId !== dealId ? overDealId : undefined;
+      }
     }
+
+    // Bail-out: drop no mesmo lugar exato (mesma stage + mesma posição).
+    if (
+      deal.stageId === targetStageId &&
+      beforeId === undefined &&
+      afterId === undefined &&
+      targetList.length === 1
+    ) {
+      return;
+    }
+
+    onDrop({
+      dealId,
+      toStageId: targetStageId,
+      beforeId,
+      afterId,
+    });
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      <div
-        // Scroll horizontal estilo Pipedrive — colunas têm largura fixa e
-        // rolagem suave via CSS scroll-snap (helpa quando passa de 4-5 colunas).
-        // `touch-pan-x` instrui o browser a entregar o pan horizontal
-        // pra ele mesmo (60fps nativo); só verticais e taps chegam ao
-        // dnd-kit. Combinado com TouchSensor `delay: 250`, dá a UX
-        // canônica mobile: swipe = scroll, hold = drag.
-        className="-mx-4 flex touch-pan-x snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8"
-      >
-        {DEFAULT_STAGES.map((stage) => (
+    <DndContext
+      sensors={canEdit ? sensors : []}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
+      <div className="-mx-4 flex touch-pan-x snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        {stages.map((stage) => (
           <div key={stage.id} data-stage={stage.id} className="snap-start">
             <DealsKanbanColumn
               stage={stage}
               deals={dealsByStage.get(stage.id) ?? []}
-              onAddDeal={onAddDeal}
+              onAddDeal={canEdit ? onAddDeal : undefined}
+              onEditDeal={canEdit ? onEditDeal : undefined}
             />
           </div>
         ))}
       </div>
 
-      <DragOverlay
-        // Dropping animation curta + cursor de "agarrando"
-        dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }}
-      >
+      <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }}>
         {activeDeal ? (
           <div className="w-[300px]">
             <DealCard deal={activeDeal} isOverlay />

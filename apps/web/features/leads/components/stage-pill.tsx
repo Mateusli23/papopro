@@ -2,15 +2,24 @@ import { cn } from '@papopro/ui';
 
 import { getStage } from '@/lib/fixtures/pipelines';
 
+import type { PipelineStage } from '../types';
+
 /**
  * Pill compacto pra exibir a etapa do funil em tabelas e cards. Cor segue
  * a etapa terminal (success/destructive) ou tom neutro pras intermediárias.
  *
- * Em M8 a etapa vem do servidor (com `stage.color` opcional); aqui derivamos
- * de `getStage`.
+ * **Duas formas de uso:**
+ *  - Server-fed (M8+): passar `stage` resolvido (`{ name, tone }`) — render direto.
+ *  - Legacy fixture (M4-M7): passar `stageId` slug — faz lookup em `getStage`.
+ *
+ * O fallback `{stageId}` cru existia em M4 e mostrava algo legível ("novo");
+ * agora com UUIDs do DB, mostraria o UUID na tela. A prop `stage` evita isso.
  */
 interface StagePillProps {
-  stageId: string;
+  /** Stage resolvido (preferido em M8+). Quando passado, `stageId` é ignorado. */
+  stage?: Pick<PipelineStage, 'name' | 'tone'>;
+  /** Slug/ID legacy — só usado se `stage` não vier (compat fixtures). */
+  stageId?: string;
   className?: string;
 }
 
@@ -20,9 +29,12 @@ const TONE_CLASS: Record<string, string> = {
   destructive: 'bg-destructive/15 text-destructive',
 };
 
-export function StagePill({ stageId, className }: StagePillProps) {
-  const stage = getStage(stageId);
-  const tone = stage?.tone ?? 'default';
+export function StagePill({ stage, stageId, className }: StagePillProps) {
+  // M8+: caller passa `stage` resolvido. Fallback: lookup nas fixtures M4
+  // (legado — vai sumir quando todo consumer migrar). Último recurso: "—".
+  const resolved = stage ?? (stageId ? getStage(stageId) : undefined);
+  const tone = resolved?.tone ?? 'default';
+  const label = resolved?.name ?? '—';
   return (
     <span
       className={cn(
@@ -31,7 +43,7 @@ export function StagePill({ stageId, className }: StagePillProps) {
         className,
       )}
     >
-      {stage?.name ?? stageId}
+      {label}
     </span>
   );
 }

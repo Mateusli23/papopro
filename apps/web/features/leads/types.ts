@@ -24,6 +24,12 @@ export type DefaultStageId =
 
 export interface PipelineStage {
   id: DefaultStageId | string;
+  /**
+   * Slug estável (M8#3) — referencia o `getStageStyle()` cromático e
+   * sobrevive a rename do `name`. Fixtures legadas usam `id === slug`;
+   * stages reais do DB têm UUID em `id` e slug separado.
+   */
+  slug?: DefaultStageId | string;
   name: string;
   /** Ordem visual no Kanban e em selects. */
   order: number;
@@ -129,6 +135,16 @@ export interface Activity {
     /** attachment: nome/tamanho. */
     fileName?: string;
     fileSizeKb?: number;
+    /**
+     * task activity sub-event (M8#4):
+     *  - `'created'` → "Tarefa criada"
+     *  - `'completed'` → "Tarefa concluída"
+     */
+    eventKind?: 'created' | 'completed';
+    /** task activity ref (M8#4). */
+    taskId?: string;
+    /** task kind (M8#4). */
+    kind?: string;
   };
 }
 

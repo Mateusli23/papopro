@@ -35,18 +35,23 @@ interface DealsKanbanColumnProps {
   stage: PipelineStage;
   deals: Deal[];
   onAddDeal?: (stageId: string) => void;
+  /** Callback de edição propagado pra cada card. */
+  onEditDeal?: (deal: Deal) => void;
 }
 
-export function DealsKanbanColumn({ stage, deals, onAddDeal }: DealsKanbanColumnProps) {
+export function DealsKanbanColumn({ stage, deals, onAddDeal, onEditDeal }: DealsKanbanColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `column:${stage.id}`,
     data: { stageId: stage.id, type: 'column' },
   });
 
-  const style = getStageStyle(stage.id);
+  // M8#3: stage.id pode ser UUID (server-fed) ou slug (fixture).
+  // `stage.slug` é o canônico pra style/terminal-check.
+  const lookupSlug = stage.slug ?? stage.id;
+  const style = getStageStyle(lookupSlug);
   const totalCents = deals.reduce((acc, d) => acc + d.valueCents, 0);
-  const isWonColumn = stage.id === 'ganho';
-  const isLostColumn = stage.id === 'perdido';
+  const isWonColumn = lookupSlug === 'ganho' || stage.tone === 'success';
+  const isLostColumn = lookupSlug === 'perdido' || stage.tone === 'destructive';
   const HeaderIcon = isWonColumn ? Trophy : isLostColumn ? XIcon : null;
 
   return (
@@ -94,9 +99,11 @@ export function DealsKanbanColumn({ stage, deals, onAddDeal }: DealsKanbanColumn
       >
         <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
           {deals.length === 0 ? (
-            <ColumnEmptyState stageId={stage.id} />
+            // ColumnEmptyState quer slug pra escolher o hint contextual. Cai
+            // pro fallback genérico ("Sem deals nesta etapa.") se for UUID.
+            <ColumnEmptyState stageId={lookupSlug} />
           ) : (
-            deals.map((deal) => <DealCard key={deal.id} deal={deal} />)
+            deals.map((deal) => <DealCard key={deal.id} deal={deal} onEdit={onEditDeal} />)
           )}
         </SortableContext>
       </div>

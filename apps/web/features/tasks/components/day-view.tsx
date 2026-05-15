@@ -8,8 +8,10 @@ import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, EmptyState } from '@papopro/ui';
 import { Calendar } from '@papopro/ui/icons';
 
+import type { SalesRep } from '@/features/leads/types';
 import { useTasks } from '@/features/tasks/store';
 import { getTasksOnDay } from '@/features/tasks/transforms';
+import type { TaskWithLead } from '@/features/tasks/transforms';
 import type { Task } from '@/features/tasks/types';
 
 import { TaskRow } from './task-row';
@@ -30,13 +32,26 @@ interface DayViewProps {
   onTaskClick?: (task: Task) => void;
   /** Hook opcional pra trigar criação de task com data pré-selecionada. */
   onCreateForDay?: (date: Date) => void;
+  tasks?: TaskWithLead[];
+  salesReps?: SalesRep[];
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-export function DayView({ currentDate, onTaskClick, onCreateForDay }: DayViewProps) {
-  const tasks = useTasks();
+export function DayView({
+  currentDate,
+  onTaskClick,
+  onCreateForDay,
+  tasks: tasksProp,
+  salesReps = [],
+  canEdit = false,
+  canDelete = false,
+}: DayViewProps) {
+  const fromStore = useTasks();
+  const effective = (tasksProp ?? (fromStore as unknown as TaskWithLead[])) as TaskWithLead[];
   const dayTasks = React.useMemo(
-    () => getTasksOnDay(tasks, currentDate).sort((a, b) => a.dueAt.localeCompare(b.dueAt)),
-    [tasks, currentDate],
+    () => getTasksOnDay(effective, currentDate).sort((a, b) => a.dueAt.localeCompare(b.dueAt)),
+    [effective, currentDate],
   );
 
   const today = isToday(currentDate);
@@ -72,7 +87,12 @@ export function DayView({ currentDate, onTaskClick, onCreateForDay }: DayViewPro
           <ul className="flex flex-col gap-2">
             {dayTasks.map((task) => (
               <li key={task.id} onClick={() => onTaskClick?.(task)}>
-                <TaskRow task={task} />
+                <TaskRow
+                  task={task}
+                  salesReps={salesReps}
+                  canEdit={canEdit}
+                  canDelete={canDelete}
+                />
               </li>
             ))}
           </ul>

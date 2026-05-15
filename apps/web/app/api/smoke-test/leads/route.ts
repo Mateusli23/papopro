@@ -11,14 +11,28 @@
  */
 import { NextResponse } from 'next/server';
 
-import { dealCreateSchema } from '@/features/deals/schemas';
+import { createNoteSchema } from '@/features/activities/schemas';
+import {
+  enrichStageChangeMeta,
+  toActivityUI,
+  type PrismaActivityRow,
+} from '@/features/activities/transforms';
+import {
+  dealCreateSchema,
+  moveDealStageSchema,
+  updateDealOrderSchema,
+} from '@/features/deals/schemas';
 import {
   aggregateByStage,
   applyCreateDeal,
   applyMoveDeal,
+  computeOrderBetween,
   defaultProbabilityFor,
+  ORDER_STEP,
   statusForStage,
   sumOpenPipelineCents,
+  toDealUI,
+  type PrismaDealRow,
 } from '@/features/deals/transforms';
 import { applyLeadFilters } from '@/features/leads/filters';
 import { calcRotState } from '@/features/leads/rotting';
@@ -34,6 +48,18 @@ import {
   flattenLeadTags,
   type PrismaLeadTagRow,
 } from '@/features/leads/transforms';
+import {
+  completeTaskSchema,
+  deleteTaskSchema,
+  reopenTaskSchema,
+  taskCreateSchema,
+  updateTaskSchema,
+} from '@/features/tasks/schemas';
+import {
+  computeNextActionFromTasks,
+  toTaskUI,
+  type PrismaTaskRow,
+} from '@/features/tasks/transforms';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { ALL_TAGS, FAKE_LEADS } from '@/lib/fixtures/leads';
 
@@ -250,13 +276,19 @@ export function GET() {
   });
 
   // ── Validação Zod (dealCreateSchema) ────────────────────────────────────
+  // M8#3: leadId, stageId, ownerId viraram .uuid() (eram .min(1) em M4 por
+  // causa de slugs em fixture). Usar UUIDs válidos quaisquer — schema só
+  // valida formato, FK real é checada na Server Action via Prisma.
   t = run('zod-deal', results);
+  const UUID_A = '11111111-1111-4111-9111-111111111111';
+  const UUID_B = '22222222-2222-4222-9222-222222222222';
+  const UUID_C = '33333333-3333-4333-9333-333333333333';
   const baseValidDeal = {
     title: 'Demo deal de teste',
-    leadId: 'lead_001',
-    stageId: 'novo',
+    leadId: UUID_A,
+    stageId: UUID_B,
     valueCents: 500_000_00,
-    ownerId: 'user_mateus',
+    ownerId: UUID_C,
   };
   t('input mínimo de deal válido', () => dealCreateSchema.safeParse(baseValidDeal).success);
   t(
@@ -268,12 +300,16 @@ export function GET() {
     () => !dealCreateSchema.safeParse({ ...baseValidDeal, title: 'AB' }).success,
   );
   t(
-    'leadId vazio é rejeitado',
-    () => !dealCreateSchema.safeParse({ ...baseValidDeal, leadId: '' }).success,
+    'leadId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, leadId: 'lead_001' }).success,
   );
   t(
-    'stageId vazio é rejeitado',
-    () => !dealCreateSchema.safeParse({ ...baseValidDeal, stageId: '' }).success,
+    'stageId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, stageId: 'novo' }).success,
+  );
+  t(
+    'ownerId não-UUID é rejeitado',
+    () => !dealCreateSchema.safeParse({ ...baseValidDeal, ownerId: 'user_mateus' }).success,
   );
   t(
     'valueCents negativo é rejeitado',
@@ -571,6 +607,301 @@ export function GET() {
   });
   t('updateLeadSchema rejeita leadId não-UUID', () => {
     return !updateLeadSchema.safeParse({ leadId: 'not-uuid' }).success;
+  });
+
+  // ── M8#3 deals: ordering + transforms server-fed (puro, sem banco) ─────
+  t = run('deals-m8', results);
+
+  const UUID_D = '44444444-4444-4444-9444-444444444444';
+
+  // Schemas
+  t('moveDealStageSchema rejeita dealId não-UUID', () => {
+    return !moveDealStageSchema.safeParse({ dealId: 'deal_001', stageId: UUID_B }).success;
+  });
+  t('moveDealStageSchema aceita UUIDs', () => {
+    return moveDealStageSchema.safeParse({ dealId: UUID_A, stageId: UUID_B }).success;
+  });
+  t('moveDealStageSchema aceita beforeId/afterId opcionais', () => {
+    return moveDealStageSchema.safeParse({
+      dealId: UUID_A,
+      stageId: UUID_B,
+      beforeId: UUID_C,
+      afterId: UUID_D,
+    }).success;
+  });
+  t('updateDealOrderSchema aceita só dealId', () => {
+    return updateDealOrderSchema.safeParse({ dealId: UUID_A }).success;
+  });
+  t('updateDealOrderSchema rejeita beforeId não-UUID', () => {
+    return !updateDealOrderSchema.safeParse({ dealId: UUID_A, beforeId: 'deal_x' }).success;
+  });
+
+  // computeOrderBetween
+  t('computeOrderBetween: ambos null → 0', () => computeOrderBetween(null, null) === 0);
+  t('computeOrderBetween: só before (drop no fim) → before + ORDER_STEP', () => {
+    return computeOrderBetween(2000, null) === 2000 + ORDER_STEP;
+  });
+  t('computeOrderBetween: só after (drop no início) → after - ORDER_STEP', () => {
+    return computeOrderBetween(null, 5000) === 5000 - ORDER_STEP;
+  });
+  t('computeOrderBetween: midpoint entre 1000 e 3000 = 2000', () => {
+    return computeOrderBetween(1000, 3000) === 2000;
+  });
+  t('computeOrderBetween: vizinhos colapsados (gap=1) retorna piso (sinal pra rebalance)', () => {
+    // Math.floor((5 + 6) / 2) = 5 — caller detecta colisão (== beforeOrder)
+    return computeOrderBetween(5, 6) === 5;
+  });
+  t('ORDER_STEP é múltiplo grande pra muitas inserções midpoint', () => ORDER_STEP >= 100);
+
+  // toDealUI
+  const sampleRow: PrismaDealRow = {
+    id: UUID_A,
+    title: 'Apartamento Vértice',
+    leadId: UUID_B,
+    stageId: UUID_C,
+    valueCents: 1_500_000_00,
+    ownerId: UUID_D,
+    probability: 60,
+    dueAt: new Date('2026-06-15T12:00:00-03:00'),
+    description: 'Cliente em segunda visita',
+    status: 'open',
+    lostReason: null,
+    orderInStage: 2000,
+    closedAt: null,
+    createdAt: new Date('2026-05-10T10:00:00-03:00'),
+    updatedAt: new Date('2026-05-13T15:00:00-03:00'),
+    stage: { slug: 'proposta', name: 'Proposta' },
+    lead: { id: UUID_B, name: 'Mariana Souza', company: 'Construtora HX' },
+  };
+  t('toDealUI denormaliza stage.slug e lead.name', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.stageSlug === 'proposta' && ui.leadName === 'Mariana Souza';
+  });
+  t('toDealUI preserva orderInStage', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.orderInStage === 2000;
+  });
+  t('toDealUI converte Date → ISO string', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.createdAt.includes('T') && ui.dueAt?.includes('T') === true;
+  });
+  t('toDealUI: closedAt=null vira undefined', () => {
+    const ui = toDealUI(sampleRow);
+    return ui.closedAt === undefined;
+  });
+  t('toDealUI: row won com closedAt definido', () => {
+    const wonRow: PrismaDealRow = {
+      ...sampleRow,
+      status: 'won',
+      closedAt: new Date('2026-05-14T10:00:00-03:00'),
+      stage: { slug: 'ganho', name: 'Ganho' },
+    };
+    const ui = toDealUI(wonRow);
+    return ui.status === 'won' && typeof ui.closedAt === 'string' && ui.stageSlug === 'ganho';
+  });
+  t('toDealUI: company null vira undefined', () => {
+    const noCo: PrismaDealRow = { ...sampleRow, lead: { ...sampleRow.lead, company: null } };
+    return toDealUI(noCo).leadCompany === undefined;
+  });
+
+  // ── M8#4 tasks: schemas + transforms (puro, sem banco) ──────────────────
+  t = run('tasks-m8', results);
+
+  const UUID_T = '55555555-5555-4555-9555-555555555555';
+  const UUID_U = '66666666-6666-4666-9666-666666666666';
+
+  // Schemas Zod
+  t('taskCreateSchema aceita input mínimo válido', () => {
+    return taskCreateSchema.safeParse({
+      leadId: VALID_UUID,
+      kind: 'follow_up',
+      title: 'Ligar pra confirmar',
+      assignedTo: VALID_UUID_2,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('taskCreateSchema rejeita leadId não-UUID', () => {
+    return !taskCreateSchema.safeParse({
+      leadId: 'lead_001',
+      kind: 'follow_up',
+      title: 'X',
+      assignedTo: VALID_UUID,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('taskCreateSchema rejeita kind inválido', () => {
+    return !taskCreateSchema.safeParse({
+      leadId: VALID_UUID,
+      kind: 'jamaica' as never,
+      title: 'X',
+      assignedTo: VALID_UUID_2,
+      dueAt: new Date().toISOString(),
+    }).success;
+  });
+  t('updateTaskSchema aceita só taskId (patch vazio)', () => {
+    return updateTaskSchema.safeParse({ taskId: VALID_UUID }).success;
+  });
+  t('completeTaskSchema rejeita taskId não-UUID', () => {
+    return !completeTaskSchema.safeParse({ taskId: 'task_x' }).success;
+  });
+  t('reopenTaskSchema aceita UUID', () => {
+    return reopenTaskSchema.safeParse({ taskId: VALID_UUID }).success;
+  });
+  t('deleteTaskSchema rejeita taskId não-UUID', () => {
+    return !deleteTaskSchema.safeParse({ taskId: 'x' }).success;
+  });
+
+  // computeNextActionFromTasks
+  t('computeNextActionFromTasks: array vazio → null', () => {
+    return computeNextActionFromTasks([]) === null;
+  });
+  t('computeNextActionFromTasks: só done → null', () => {
+    return (
+      computeNextActionFromTasks([
+        {
+          status: 'done',
+          dueAt: '2026-05-10T09:00:00Z',
+          title: 'X',
+          createdAt: '2026-05-01T00:00:00Z',
+        },
+      ]) === null
+    );
+  });
+  t('computeNextActionFromTasks: pega o pending de dueAt mais cedo', () => {
+    const next = computeNextActionFromTasks([
+      {
+        status: 'pending',
+        dueAt: '2026-05-20T09:00:00Z',
+        title: 'Tarde',
+        createdAt: '2026-05-01T00:00:00Z',
+      },
+      {
+        status: 'pending',
+        dueAt: '2026-05-15T09:00:00Z',
+        title: 'Cedo',
+        createdAt: '2026-05-02T00:00:00Z',
+      },
+      {
+        status: 'done',
+        dueAt: '2026-05-10T09:00:00Z',
+        title: 'Já feito',
+        createdAt: '2026-05-01T00:00:00Z',
+      },
+    ]);
+    return next?.title === 'Cedo';
+  });
+  t('computeNextActionFromTasks: desempate por createdAt mais antigo', () => {
+    const sameDue = '2026-05-15T09:00:00Z';
+    const next = computeNextActionFromTasks([
+      { status: 'pending', dueAt: sameDue, title: 'Nova', createdAt: '2026-05-03T00:00:00Z' },
+      { status: 'pending', dueAt: sameDue, title: 'Antiga', createdAt: '2026-05-01T00:00:00Z' },
+    ]);
+    return next?.title === 'Antiga';
+  });
+
+  // toTaskUI
+  const sampleTaskRow: PrismaTaskRow = {
+    id: UUID_T,
+    leadId: VALID_UUID,
+    kind: 'call',
+    title: 'Ligar pra Mariana',
+    notes: null,
+    dueAt: new Date('2026-05-20T09:00:00-03:00'),
+    status: 'pending',
+    assignedToId: VALID_UUID_2,
+    doneAt: null,
+    createdAt: new Date('2026-05-10T10:00:00-03:00'),
+    lead: { id: VALID_UUID, name: 'Mariana Souza', company: 'Construtora HX' },
+  };
+  t('toTaskUI converte Date → ISO + denormaliza lead.name', () => {
+    const ui = toTaskUI(sampleTaskRow);
+    return (
+      ui.leadName === 'Mariana Souza' &&
+      ui.leadCompany === 'Construtora HX' &&
+      ui.dueAt.includes('T') &&
+      ui.notes === undefined
+    );
+  });
+  t('toTaskUI: doneAt null vira undefined', () => {
+    const ui = toTaskUI(sampleTaskRow);
+    return ui.doneAt === undefined;
+  });
+  t('toTaskUI: task done preserva doneAt como ISO', () => {
+    const done: PrismaTaskRow = {
+      ...sampleTaskRow,
+      status: 'done',
+      doneAt: new Date('2026-05-14T18:00:00-03:00'),
+    };
+    const ui = toTaskUI(done);
+    return ui.status === 'done' && typeof ui.doneAt === 'string';
+  });
+
+  // ── M8#4 activities: schemas + transforms (puro, sem banco) ─────────────
+  t = run('activities-m8', results);
+
+  // Schema
+  t('createNoteSchema aceita body válido', () => {
+    return createNoteSchema.safeParse({ leadId: VALID_UUID, body: 'Cliente pediu desconto' })
+      .success;
+  });
+  t('createNoteSchema rejeita body vazio', () => {
+    return !createNoteSchema.safeParse({ leadId: VALID_UUID, body: '' }).success;
+  });
+  t('createNoteSchema rejeita leadId não-UUID', () => {
+    return !createNoteSchema.safeParse({ leadId: 'lead_x', body: 'X' }).success;
+  });
+
+  // toActivityUI
+  const sampleActivityRow: PrismaActivityRow = {
+    id: UUID_U,
+    leadId: VALID_UUID,
+    type: 'note',
+    body: 'Cliente pediu desconto',
+    authorId: VALID_UUID_2,
+    meta: null,
+    createdAt: new Date('2026-05-14T10:00:00-03:00'),
+    author: {
+      id: VALID_UUID_2,
+      user: { name: 'Mateus', email: 'mateus@x.com' },
+    },
+  };
+  t('toActivityUI converte row + resolve authorName', () => {
+    const ui = toActivityUI(sampleActivityRow);
+    return (
+      ui.authorName === 'Mateus' &&
+      ui.body === 'Cliente pediu desconto' &&
+      ui.createdAt.includes('T')
+    );
+  });
+  t('toActivityUI: author null → authorName undefined + authorId "system"', () => {
+    const noAuthor: PrismaActivityRow = { ...sampleActivityRow, author: null, authorId: null };
+    const ui = toActivityUI(noAuthor);
+    return ui.authorName === undefined && ui.authorId === 'system';
+  });
+  t('toActivityUI: author sem name usa fallback email', () => {
+    const fallback: PrismaActivityRow = {
+      ...sampleActivityRow,
+      author: { id: VALID_UUID_2, user: { name: null, email: 'maria@x.com' } },
+    };
+    const ui = toActivityUI(fallback);
+    return ui.authorName === 'maria';
+  });
+
+  // enrichStageChangeMeta
+  const FAKE_STAGES = [
+    { id: 'aaa', slug: 'em_contato', name: 'Em contato', order: 1, rotDays: 14 },
+    { id: 'bbb', slug: 'proposta', name: 'Proposta', order: 2, rotDays: 7 },
+  ];
+  t('enrichStageChangeMeta resolve from/to em nomes', () => {
+    const enriched = enrichStageChangeMeta({ fromStageId: 'aaa', toStageId: 'bbb' }, FAKE_STAGES);
+    return enriched?.fromStageName === 'Em contato' && enriched?.toStageName === 'Proposta';
+  });
+  t('enrichStageChangeMeta: stage desconhecida cai em "?"', () => {
+    const enriched = enrichStageChangeMeta({ fromStageId: 'aaa', toStageId: 'ccc' }, FAKE_STAGES);
+    return enriched?.toStageName === '?';
+  });
+  t('enrichStageChangeMeta: meta vazio → null', () => {
+    return enrichStageChangeMeta(undefined, FAKE_STAGES) === null;
   });
 
   const passed = results.filter((r) => r.ok).length;

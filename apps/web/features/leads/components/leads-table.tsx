@@ -17,7 +17,7 @@ import { Mail, Phone, PlusCircle, Tag, Users } from '@papopro/ui/icons';
 
 import { formatCentsCompact, formatRelative } from '@/lib/utils/format';
 
-import type { Lead } from '../types';
+import type { Lead, PipelineStage } from '../types';
 
 import { RepAvatar } from './rep-avatar';
 import { StagePill } from './stage-pill';
@@ -37,6 +37,11 @@ import { StagePill } from './stage-pill';
 
 interface LeadsTableProps {
   leads: Lead[];
+  /**
+   * Stages do pipeline ativo (M8#2+). Usado pra resolver `stageId` → nome/tom
+   * na coluna "Etapa" sem cair no fallback que mostraria UUID literal.
+   */
+  stages?: PipelineStage[];
   /** Action a renderizar quando o filtro vazia o resultado. */
   onClearFilters?: () => void;
   /** Action quando a base inteira está vazia. */
@@ -46,10 +51,18 @@ interface LeadsTableProps {
 
 export function LeadsTable({
   leads,
+  stages,
   onClearFilters,
   onCreateLead,
   hasFiltersActive = false,
 }: LeadsTableProps) {
+  // Resolve `stageId` → stage uma vez por render. Volume MVP (<10 stages) torna
+  // o Map redundante, mas mantém legibilidade quando lista cresce.
+  const stageById = React.useMemo(() => {
+    const map = new Map<string, PipelineStage>();
+    for (const s of stages ?? []) map.set(s.id, s);
+    return map;
+  }, [stages]);
   if (leads.length === 0) {
     return (
       <EmptyState
@@ -93,7 +106,7 @@ export function LeadsTable({
             </thead>
             <tbody>
               {leads.map((lead) => (
-                <LeadRow key={lead.id} lead={lead} />
+                <LeadRow key={lead.id} lead={lead} stage={stageById.get(lead.stageId)} />
               ))}
             </tbody>
           </table>
@@ -102,7 +115,7 @@ export function LeadsTable({
 
       {/* Mobile: cards empilhados */}
       <div className="md:hidden">
-        <LeadsMobileList leads={leads} />
+        <LeadsMobileList leads={leads} stageById={stageById} />
       </div>
     </>
   );
@@ -116,7 +129,7 @@ function Th({ children, className }: { children: React.ReactNode; className?: st
   );
 }
 
-function LeadRow({ lead }: { lead: Lead }) {
+function LeadRow({ lead, stage }: { lead: Lead; stage?: PipelineStage }) {
   return (
     <tr className="border-border hover:bg-muted/30 group border-b transition-colors last:border-0">
       <td className="px-4 py-2.5">
@@ -151,7 +164,7 @@ function LeadRow({ lead }: { lead: Lead }) {
         </div>
       </td>
       <td className="px-4 py-2.5">
-        <StagePill stageId={lead.stageId} />
+        <StagePill stage={stage} stageId={lead.stageId} />
       </td>
       <td className="px-4 py-2.5">
         <RepAvatar repId={lead.assignedTo} />
@@ -183,7 +196,13 @@ function LeadRow({ lead }: { lead: Lead }) {
   );
 }
 
-function LeadsMobileList({ leads }: { leads: Lead[] }) {
+function LeadsMobileList({
+  leads,
+  stageById,
+}: {
+  leads: Lead[];
+  stageById: Map<string, PipelineStage>;
+}) {
   return (
     <ul className="flex flex-col gap-2">
       {leads.map((lead) => (
@@ -206,7 +225,7 @@ function LeadsMobileList({ leads }: { leads: Lead[] }) {
               <TemperatureBadge temperature={lead.temperature} iconOnly />
             </div>
             <div className="flex items-center justify-between gap-2">
-              <StagePill stageId={lead.stageId} />
+              <StagePill stage={stageById.get(lead.stageId)} stageId={lead.stageId} />
               <span className="text-body text-foreground font-medium tabular-nums">
                 {formatCentsCompact(lead.valueCents)}
               </span>
