@@ -1420,28 +1420,62 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 
 ## M10 — Motor de Cadência + Alertas de Lead Frio
 
-**Branch:** `m10-cadence-engine`
+**Estratégia:** 5 sub-PRs sequenciais sobre `dev` (gitflow strict, igual M8/M9). Sub-PR único M10 ficaria com 30+ arquivos cruzando SQL/Deno/TS/React — fatiar permite validação incremental (cadência funciona antes do cold detector, UI conectada antes do reports).
 
-**Objetivo:** Cadências automáticas executando com pausa inteligente, alertas de lead frio disparando push/in-app, métricas por cadência.
+| Sub-PR    | Escopo                                                                                                                                                                                                                              | Branch                 | Status      |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------- |
+| **M10#1** | Schema das 6 tabelas + ALTER `leads` (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` em `messages` + seed inline dos 3 templates + 5 cold thresholds default por workspace + backfill                          | `m10-1-schema-seed`    | ✅ entregue |
+| **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration                              | `m10-2-cadence-runner` | ⏳ próximo  |
+| **M10#3** | UI conectada: store cadences `useSyncExternalStore` → TanStack Query, Server Actions reais, métricas reais do banco, seção "Cadências" na página do lead (inscrever/pausar/reativar), settings `/settings/cadences/cold-thresholds` | `m10-3-ui-wiring`      | ⏳ pendente |
+| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor (matriz PRD §3.2) + badge global no app shell                                             | `m10-4-cold-detector`  | ⏳ pendente |
+| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint `/api/smoke-test/cadences` (lifecycle + idempotência + RLS) + atualização final de PLAN.md                                 | `m10-5-reports-smoke`  | ⏳ pendente |
+
+**Decisões fechadas (não reabrir):**
+
+- **PR único M10 era inicialmente o plano**, mas fatiamento bateu com padrão M8/M9 que já se mostrou superior — review rápido, revert isolado, validação incremental. Decisão tomada antes de M10#1 abrir.
+- **Email é stub no MVP** — runner só processa `channel='whatsapp'`; steps `'email'` recebem `cadence_step_runs.status='skipped' skip_reason='email_stub'`. Resend entra em milestone futuro junto com webhook de bounce. UI/templates mantêm a opção email visível pra evitar refactor quando integrar.
+- **Pausa automática via trigger SQL** em `messages AFTER INSERT WHERE direction='in'` — não no runner. Latência ~ms (não ~5min), zero overhead no tick do runner, e re-aquece lead frio (cold→warm) ao mesmo tempo sem degradar `'hot'`.
+- **Templates seedados em SQL inline** (não importando de TS) — função `seed_default_cadences_for_workspace(workspace_id)` cria as 3 cadências com 17 steps total fielmente copiados de [apps/web/lib/fixtures/cadence-templates.ts](apps/web/lib/fixtures/cadence-templates.ts). Cadências template criadas como `status='paused'` por default — usuário ativa explicitamente.
+- **Backfill no fim da migration** roda `seed_default_*` pra todos workspaces existentes; chamada também é exposta pra Server Action de signup integrar em M10#3.
+- **Edge Function delega anti-ban pro Next** — `cadence-runner` em Deno só agenda + idempotência; envio real passa por `/api/internal/cadence-dispatch` (Next API route protegida por shared secret) que reusa exatamente `lib/whatsapp/uazapi.ts` + `anti-ban.ts` sem reimplementar em Deno.
+
+**Commit final M10 (release):** `feat(cadence): automated follow-up engine with smart pause and cold lead alerts`
+
+### M10#1 — Schema + seed + trigger pausa (entregue 2026-05-15)
+
+**Branch:** `m10-1-schema-seed`
+
+**Objetivo:** preparar o terreno persistente do motor de cadência. Zero rotas novas, zero integração externa, zero UI tocada — próximos sub-PRs herdam essa base.
 
 **Entregas:**
 
-- [ ] Schema: `cadences`, `cadence_steps`, `cadence_enrollments`, `cadence_step_runs`, `cold_lead_thresholds`, `cold_lead_alerts`
-- [ ] Editor visual de cadência por etapa (M5 já tem UI; aqui conecta ao backend)
-- [ ] Templates pré-configurados (imobiliário, B2B, alto ticket) seedados
-- [ ] Edge Function `cadence-runner` agendada a cada 5 min via `pg_cron`
-- [ ] Resolver de placeholders ({nome}, {empresa}, {produto}) por lead
-- [ ] **Pausa automática quando cliente responde** (cancela `pending` enrollments do lead até reativação manual)
-- [ ] Reativação manual de cadência pelo vendedor
-- [ ] Edge Function `cold-lead-detector` agendada a cada 1h
-- [ ] Defaults configuráveis por workspace: 7d Novo, 14d Em Contato, 7d Proposta, 5d Negociação, 30d global
-- [ ] Notificação push + in-app para vendedor + gestor quando lead esfria
-- [ ] Métricas por cadência: enrollments ativos, taxa de resposta, taxa de avanço de etapa, taxa de conversão final
-- [ ] Tela `/reports` complementada com seção "Cadências" (volume disparado, performance por cadência)
-- [ ] Testes de integração: enroll → step 1 envia → cliente responde → pausa → vendedor reativa → step 2 envia
-- [ ] Testes de integração: lead criado → 7 dias sem interação → alerta dispara
+- [x] [`supabase/migrations/20260521120000_m10_1_cadence_schema.sql`](supabase/migrations/20260521120000_m10_1_cadence_schema.sql) — 8 enums novos (`cadence_status`, `cadence_step_channel`, `cadence_template_key`, `cadence_enrollment_status`, `cadence_enrollment_pause_reason`, `cadence_step_run_status`, `cadence_step_run_skip_reason`, `lead_temperature`), 12 valores novos em `audit_action` (`cadence_*` + `cold_lead_*` + `cold_threshold_updated`), ALTER `leads` (`temperature` default `'warm'`, `cold_alerted_at` nullable) + índice `(workspace_id, temperature)`, 6 tabelas (`cadences`, `cadence_steps`, `cadence_enrollments`, `cadence_step_runs`, `cold_lead_thresholds`, `cold_lead_alerts`) com FKs, 15 índices (vários parciais — ex: `cadence_enrollments_runner_idx (status, next_run_at) WHERE status='active'`), 5 triggers `touch_updated_at` + 1 trigger `pause_cadence_on_inbound`, 24 policies RLS (4 × 6 — `cadence_steps` herda via subquery do `cadences`, padrão M8 `pipeline_stages`), 2 funções de seed idempotentes.
+- [x] **Trigger `pause_cadence_on_inbound`** (`SECURITY DEFINER`) em `messages` AFTER INSERT WHERE `direction='in'` — pausa todos `cadence_enrollments` active do lead com `paused_reason='lead_replied'`, atualiza `leads.last_interaction_at`, re-aquece se temperature='cold' (cold→warm). **NÃO degrada `'hot'` pra `'warm'`** via `CASE WHEN temperature='cold' THEN 'warm' ELSE temperature END` — preserva sinal de alta intenção.
+- [x] **Função `seed_default_cold_thresholds_for_workspace(workspace_id uuid)`** — cria 5 thresholds default: 7d Novo, 14d Em Contato, 7d Proposta, 5d Negociação, 30d Global (`stage_id IS NULL`). Idempotente via UNIQUE NULLS NOT DISTINCT (Postgres 15+).
+- [x] **Função `seed_default_cadences_for_workspace(workspace_id uuid)`** — cria 3 cadências paused com 17 steps total: Imobiliário (6 steps, etapa Novo), B2B Consultivo (5 steps, Em Contato), Alto Ticket (6 steps, Proposta). Conteúdo dos steps inline em SQL (fielmente copiado de [apps/web/lib/fixtures/cadence-templates.ts](apps/web/lib/fixtures/cadence-templates.ts)). Idempotente via `NOT EXISTS (SELECT 1 FROM cadences WHERE workspace_id=p AND template_key=k)`. Aborta silenciosamente se pipeline default ainda não foi seedado pro workspace.
+- [x] **Backfill DO block** no fim da migration — itera todos workspaces existentes chamando as 2 funções de seed.
+- [x] **Enum `cadence_template_key` alinhado com frontend** — usa `'alto-ticket'` (com hífen) em vez de `'alto_ticket'`, batendo com `TEMPLATE_KEY_VALUES` em [apps/web/features/cadences/schemas.ts](apps/web/features/cadences/schemas.ts). Evita mapping em runtime na Server Action de M10#3.
+- [x] **Validação local end-to-end** via `supabase db reset` + script SQL: 6 tabelas + 24 policies + RLS habilitada + 12 audit_action novos + trigger instalado, seed gera 5 thresholds + 3 cadences (17 steps) idempotente, trigger pausa em inbound (cold→warm) + ignora outbound + preserva hot. **Pré-requisito local**: M8#6 precisa do fix de `COMMENT ON POLICY storage.objects` envolvido em DO + EXCEPTION (Docker `postgres` não é owner desse schema) — fix vai num PR à parte (não bloqueia CI, só dev local).
 
-**Commit final:** `feat(cadence): automated follow-up engine with smart pause and cold lead alerts`
+**Decisões fechadas M10#1:**
+
+- **Templates seedados como `status='paused'`** — usuário ativa explicitamente em 1 clique. Evita disparo acidental quando o motor virar (M10#2).
+- **Backfill no fim da migration roda pra workspaces existentes** — funções são idempotentes, então a Server Action de signup (M10#3) pode chamar de novo sem duplicar. Workspaces criados antes de M10#1 não ficam sem defaults.
+- **`messages` NÃO ganha coluna `from_lead`** — `direction='in'`/`'out'` já existe desde M9 e o trigger consulta direto. Evita coluna redundante e migration de backfill.
+- **Trigger é `SECURITY DEFINER`** — webhook inbound pode rodar como service role ou no contexto da tx; função precisa atravessar RLS pra atualizar `cadence_enrollments` cross-table. `search_path = pg_catalog, public` previne path-shadowing.
+- **`cold_lead_thresholds.stage_id` é nullable** — NULL representa fallback global do workspace; constraint `UNIQUE NULLS NOT DISTINCT (workspace_id, stage_id)` (PG 15+) garante unique mesmo com null.
+
+**Não-objetivos M10#1 (explícitos):**
+
+- Edge Function `cadence-runner` (Deno) → M10#2
+- Cron schedule `pg_cron` pro runner → M10#2
+- Rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) → M10#2
+- Resolver de placeholders `{nome}/{empresa}/{produto}` → M10#2
+- Server Actions de cadência reais (createCadence/enrollLead/etc.) → M10#3
+- Migrar store de `useSyncExternalStore` pra TanStack Query → M10#3
+- Edge Function `cold-lead-detector` → M10#4
+- Notificações push/in-app de lead frio → M10#4
+- Seção "Cadências" em `/reports` + smoke endpoint → M10#5
 
 ---
 
