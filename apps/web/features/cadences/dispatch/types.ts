@@ -1,34 +1,23 @@
 /**
- * Tipos internos do motor de despacho (M10#2).
+ * Re-export dos enums de cadência do Prisma client (M10#3).
  *
- * **Por que string literals e não enums Prisma**: M10#1 criou os ENUMs no
- * Postgres (`cadence_step_run_status`, `cadence_step_run_skip_reason`,
- * `cadence_enrollment_status`, `cadence_enrollment_pause_reason`) mas NÃO
- * adicionou os modelos correspondentes em `schema.prisma`. Em M10#2 a rota
- * dispatch usa `$queryRaw`/`$executeRaw` pra acessar essas tabelas, então
- * tipamos via union local. Quando M10#3 adicionar os modelos Prisma, este
- * arquivo pode re-exportar de `@papopro/db` sem quebrar o resto.
+ * **Histórico**: M10#1 criou os ENUMs no Postgres (`cadence_step_run_status`,
+ * `cadence_step_run_skip_reason`, etc.) sem adicionar os modelos
+ * correspondentes em `schema.prisma`. M10#2 usou string literal types locais
+ * pra não bloquear na falta dos modelos Prisma. M10#3 finalmente adiciona os
+ * 6 modelos + 8 enums em schema.prisma; este arquivo agora só re-exporta de
+ * `@papopro/db` mantendo a API pública que `route.ts` e
+ * `map-antiban-reason.ts` consomem.
+ *
+ * **Defense-in-depth**: os tipos importados aqui são derivados do Prisma
+ * client, então qualquer mudança no enum no schema.prisma propaga
+ * automaticamente. Não há risco de drift com o SQL.
  */
 
-export type CadenceStepRunStatus = 'pending' | 'sent' | 'skipped' | 'failed';
-
-export type CadenceStepRunSkipReason =
-  | 'email_stub'
-  | 'outside_business_hours'
-  | 'blacklist'
-  | 'rate_limit'
-  | 'unhealthy'
-  | 'no_phone'
-  | 'lead_deleted'
-  | 'workspace_paused';
-
-export type CadenceEnrollmentStatus = 'active' | 'paused' | 'completed' | 'cancelled';
-
-export type CadenceEnrollmentPauseReason =
-  | 'lead_replied'
-  | 'manual'
-  | 'stage_changed'
-  | 'disconnected'
-  | 'admin';
-
-export type CadenceStepChannel = 'whatsapp' | 'email';
+export {
+  CadenceStepRunStatus,
+  CadenceStepRunSkipReason,
+  CadenceEnrollmentStatus,
+  CadenceEnrollmentPauseReason,
+  CadenceStepChannel,
+} from '@papopro/db';

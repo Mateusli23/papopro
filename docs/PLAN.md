@@ -1422,13 +1422,13 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 
 **Estratégia:** 5 sub-PRs sequenciais sobre `dev` (gitflow strict, igual M8/M9). Sub-PR único M10 ficaria com 30+ arquivos cruzando SQL/Deno/TS/React — fatiar permite validação incremental.
 
-| Sub-PR    | Escopo                                                                                                                                                                                                                              | Branch                 | Status      |
-| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------- |
-| **M10#1** | Schema das 6 tabelas + ALTER `leads` (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` em `messages` + seed inline dos 3 templates + 5 cold thresholds default por workspace + backfill                          | `m10-1-schema-seed`    | ✅ entregue |
-| **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration + helpers puros + smoke      | `m10-2-cadence-runner` | ✅ entregue |
-| **M10#3** | UI conectada: store cadences `useSyncExternalStore` → TanStack Query, Server Actions reais, métricas reais do banco, seção "Cadências" na página do lead (inscrever/pausar/reativar), settings `/settings/cadences/cold-thresholds` | `m10-3-ui-wiring`      | ⏳ pendente |
-| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor + badge global no app shell                                                               | `m10-4-cold-detector`  | ⏳ pendente |
-| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint lifecycle end-to-end + atualização final de PLAN.md                                                                        | `m10-5-reports-smoke`  | ⏳ pendente |
+| Sub-PR    | Escopo                                                                                                                                                                                                                                                         | Branch                 | Status      |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------- |
+| **M10#1** | Schema das 6 tabelas + ALTER `leads` (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` em `messages` + seed inline dos 3 templates + 5 cold thresholds default por workspace + backfill                                                     | `m10-1-schema-seed`    | ✅ entregue |
+| **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration + helpers puros + smoke                                 | `m10-2-cadence-runner` | ✅ entregue |
+| **M10#3** | UI conectada (hydrate-from-server), Server Actions reais de CRUD + steps + enrollments, modelos Prisma das 6 tabelas cadence\_\*, métricas reais agregadas, seção "Cadências" na página do lead, settings `/settings/cadences/cold-thresholds`, seed em signup | `m10-3-ui-wiring`      | ✅ entregue |
+| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor + badge global no app shell                                                                                          | `m10-4-cold-detector`  | ⏳ pendente |
+| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint lifecycle end-to-end + atualização final de PLAN.md                                                                                                   | `m10-5-reports-smoke`  | ⏳ pendente |
 
 **Decisões fechadas (não reabrir):**
 
@@ -1517,6 +1517,62 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 3. SQL no Editor: `ALTER DATABASE postgres SET app.cadence_runner_secret = '<mesmo>';` (`app.supabase_url` já configurado em M9#5).
 4. Aplicar migration via MCP `apply_migration name=m10_2_cadence_runner_cron` (após #69 ter sido aplicada).
 5. Validar: `SELECT cron.job WHERE jobname = 'cadence-runner-every-5-min'`; `SELECT * FROM cron.job_run_details ORDER BY end_time DESC LIMIT 5` deve mostrar invocações sucessivas a cada 5 min.
+
+### M10#3 — UI conectada + Prisma models + Server Actions reais (entregue 2026-05-16)
+
+**Branch:** `m10-3-ui-wiring`
+
+**Objetivo:** transformar o `features/cadences` de fixture mockada (M5/M6) em produto funcional ponta-a-ponta. Backend (M10#1 schema + M10#2 motor) já está em `dev`; M10#3 conecta a UI existente (10 componentes prontos) ao banco real, adiciona Prisma models, abre seção "Cadências" na página do lead e settings cold-thresholds.
+
+**Entregas:**
+
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — **+8 enums** (`CadenceStatus`, `CadenceStepChannel`, `CadenceTemplateKey` com `alto_ticket @map("alto-ticket")`, `CadenceEnrollmentStatus`, `CadenceEnrollmentPauseReason`, `CadenceStepRunStatus`, `CadenceStepRunSkipReason`, `LeadTemperature`) + **6 models** (`Cadence`, `CadenceStep`, `CadenceEnrollment`, `CadenceStepRun`, `ColdLeadThreshold`, `ColdLeadAlert`) mapeando as tabelas criadas em M10#1 SQL. Adiciona campos `temperature` (default `warm`) e `coldAlertedAt` em `Lead` (espelhando ALTER do M10#1). +relations em `Workspace`/`PipelineStage`/`Lead`/`Message`/`User` (cadencesCreated, coldLeadAlertsAcked).
+- [x] [`packages/db/src/index.ts`](packages/db/src/index.ts) — re-export dos 8 enums novos pra que `@papopro/db` seja a única fonte. `apps/web/features/cadences/dispatch/types.ts` (M10#2) agora apenas re-exporta de `@papopro/db` em vez de manter string literal types.
+- [x] [`apps/web/features/cadences/queries.ts`](apps/web/features/cadences/queries.ts) — 5 queries server-only: `listCadences(workspaceId)` (todas + steps + métricas agregadas via `$queryRaw` GROUP BY pra evitar N+1), `getCadence(workspaceId, id)`, `getCadenceMetrics(workspaceId, cadenceId)`, `listLeadEnrollments(workspaceId, leadId)` (com `cadenceName`/`stepsSent`/`stepsTotal`), `listColdThresholds(workspaceId)`, `listAvailableCadencesForLead(workspaceId)` (cadências `active` pra o dialog de inscrição). Métricas reais: `activeEnrollments`, `totalDispatched` (step_runs `sent`), `responseRate` (% com `paused_reason='lead_replied'`). `stageAdvanceRate` fica em 0 — exige snapshot pós-enrollment do `deal.stageId` em M10#5/reports.
+- [x] [`apps/web/features/cadences/actions.ts`](apps/web/features/cadences/actions.ts) — **12 Server Actions** com padrão idiomático M8/M9 (Zod safeParse → `requireRole` → `getRequestAuditContext` → `withWorkspace(tx)` → audit log MESMA tx → `revalidatePath`):
+  - **Cadências** (Owner/Admin/Manager): `createCadenceAction` (clona steps do template via `getTemplate`), `updateCadenceAction`, `toggleCadenceStatusAction`, `duplicateCadenceAction` (com `templateKey='custom'` + `status='paused'` + ` (cópia)` no nome), `deleteCadenceAction` (Owner/Admin only — Manager não pode deletar)
+  - **Steps** (Owner/Admin/Manager): `addStepAction` (calcula `order_index = max + 1` no mesmo `day_offset`), `updateStepAction` (recalcula order ao mudar `day_offset`), `deleteStepAction`
+  - **Enrollments** (Owner/Admin/Manager/Vendedor — Vendedor RBAC fino só do próprio lead): `enrollLeadAction` (rejeita duplicata via UNIQUE P2002), `pauseEnrollmentAction` (no-op se já pausado; preserva `lead_replied` reason quando manual override), `resumeEnrollmentAction` (rejeita reativar `cancelled`/`completed`)
+  - **Cold thresholds** (Owner/Admin only): `updateColdThresholdAction`
+- [x] [`apps/web/features/cadences/store.ts`](apps/web/features/cadences/store.ts) — refatorado pra **hydrate-from-server pattern** (padrão M9#4 Inbox): remove `FAKE_CADENCES` init + mutações in-memory (createCadence/toggle/etc); mantém apenas `useCadences()`/`useCadence(id)` + adiciona `hydrateCadencesFromServer(initial)` que substitui snapshot. Decisão arquitetural: **pessimismo total** (toast loading → action → revalidatePath → re-render) em vez de otimismo client-side — elimina dupla fonte de verdade. Otimismo entra em M10#5 se UX exigir.
+- [x] [`apps/web/app/(dashboard)/cadences/page.tsx`](<apps/web/app/(dashboard)/cadences/page.tsx>) — Server Component com `dynamic = 'force-dynamic'`. Lê `getCurrentUserContext()` + `readWorkspaceCookie()` (padrão `/leads/page.tsx`), chama `listCadences(workspaceId)`, passa `initialCadences` pro `<CadencesView>`. `redirect('/login')` se sem auth; `redirect('/onboarding')` se membership inexistente.
+- [x] [`apps/web/app/(dashboard)/cadences/cadences-view.tsx`](<apps/web/app/(dashboard)/cadences/cadences-view.tsx>) — recebe `initialCadences` + `useEffect([initial])` chama `hydrateCadencesFromServer`. Resto inalterado (search/filter/groups/empty state).
+- [x] [`apps/web/app/(dashboard)/cadences/[id]/page.tsx`](<apps/web/app/(dashboard)/cadences/[id]/page.tsx>) — Server Component carrega `getCadence(workspaceId, id)`; `notFound()` se inexistente ou de outro workspace (Prisma respeita RLS via `withWorkspace`).
+- [x] [`apps/web/app/(dashboard)/cadences/[id]/cadence-editor-view.tsx`](<apps/web/app/(dashboard)/cadences/[id]/cadence-editor-view.tsx>) — recebe `initialCadence: Cadence` em vez de `id: string`. Handlers `handleDuplicate`/`handleDelete`/`handleToggleStatus`/`handleDeleteStep` viram `async` chamando Server Actions com toast loading + dismiss + erro/sucesso.
+- [x] [`apps/web/features/cadences/components/cadence-create-dialog.tsx`](apps/web/features/cadences/components/cadence-create-dialog.tsx) + [`cadence-status-toggle.tsx`](apps/web/features/cadences/components/cadence-status-toggle.tsx) + [`step-edit-dialog.tsx`](apps/web/features/cadences/components/step-edit-dialog.tsx) — substitui chamadas a `store.createCadence`/`toggleCadenceStatus`/`addStep`/`updateStep` por Server Actions. State `pending` no toggle previne double-click.
+- [x] [`apps/web/features/cadences/components/lead-enrollments-section.tsx`](apps/web/features/cadences/components/lead-enrollments-section.tsx) — **novo componente**. Card "Cadências" na página do lead que lista enrollments (active/paused/completed/cancelled) com status badge + `nextRunAt` relativo (date-fns ptBR) + `stepsSent/stepsTotal`. Botões Pausar/Reativar inline (Server Actions). Mensagem específica pra `paused_reason='lead_replied'`. Botão "Inscrever" abre `<EnrollLeadDialog>`.
+- [x] [`apps/web/features/cadences/components/enroll-lead-dialog.tsx`](apps/web/features/cadences/components/enroll-lead-dialog.tsx) — **novo componente**. Select de cadências `active` do workspace, filtra fora as que o lead já está inscrito (`alreadyEnrolledIds`). Chama `enrollLeadAction`. Empty state quando todas cadências já inscritas.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/page.tsx`](<apps/web/app/(dashboard)/leads/[id]/page.tsx>) — adiciona `listLeadEnrollments` + `listAvailableCadencesForLead` ao `Promise.all` de queries. Passa props pra view.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx`](<apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx>) — encaixa `<LeadEnrollmentsSection>` no desktop (3ª coluna, acima de `LeadNextActions`) e como 5ª aba "Cadências" no mobile.
+- [x] [`apps/web/app/(dashboard)/settings/cadences/cold-thresholds/page.tsx`](<apps/web/app/(dashboard)/settings/cadences/cold-thresholds/page.tsx>) + [`cold-thresholds-view.tsx`](<apps/web/app/(dashboard)/settings/cadences/cold-thresholds/cold-thresholds-view.tsx>) — **nova rota Owner/Admin only** (redirect `/settings` pra outros papéis). Tabela editável com 5 thresholds default seedados, auto-save em blur (input numérico 1-365) + toggle enabled. Padrão "configuração inline" sem botão Salvar (Linear/Notion).
+- [x] [`apps/web/features/settings/components/settings-nav-config.ts`](apps/web/features/settings/components/settings-nav-config.ts) — adiciona item "Lead frio" (ícone Snowflake, ownerOnly). [`packages/ui/src/icons.ts`](packages/ui/src/icons.ts) — exporta `Snowflake` (novo).
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) — `createWorkspaceAction` chama `seed_default_cold_thresholds_for_workspace` + `seed_default_cadences_for_workspace` na MESMA tx do signup (best-effort com try/catch — erro loga e segue, não derruba signup). Funções SQL M10#1 são idempotentes (`ON CONFLICT DO NOTHING`) — workspaces backfilled não duplicam.
+- [x] [`apps/web/app/api/smoke-test/cadences/route.ts`](apps/web/app/api/smoke-test/cadences/route.ts) — **+7 checks no grupo `cadences-actions-m10`**: `cadenceCreateSchema` accept `alto-ticket` / reject unknown templateKey / reject stage terminal; `stepCreateSchema` reject invalid `dayOffset` (5/10/60) + reject body curto + accept body com placeholders + accept channel `email`. Total cadences: **95/95 verde** (17 M10#2 + 7 M10#3 + 71 pre-existentes).
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅ (rota `/settings/cadences/cold-thresholds` registrada).
+
+**Decisões fechadas M10#3:**
+
+- **Hydrate-from-server em vez de TanStack Query** — padrão M9#4 Inbox já validado; mantém API pública `useCadences()`/`useCadence(id)` inalterada; zero nova dep. TanStack Query entra em M11 quando agentes IA precisarem de cache server-state mais complexo.
+- **Pessimismo total nas mutações** — sem otimismo client-side. Toast loading → Server Action → revalidatePath → re-render. Elimina dupla fonte de verdade (race conditions). Otimismo entra em M10#5 se UX exigir.
+- **Editor de cadência recebe prop `initialCadence`** (não usa store) — Server Component carrega; mutações revalidam path; Next refetcha. Mais simples + testável.
+- **Manager NÃO pode deletar cadência** — `deleteCadenceAction` exige Owner/Admin. Cascade impacta enrollments + step_runs, ação irrecuperável.
+- **Vendedor enroll/pause/resume só do próprio lead** — RBAC fino check `lead.assignedTo.userId === userId`. Owner/Admin/Manager livre.
+- **Settings cold-thresholds em auto-save** sem botão Salvar — padrão Linear/Notion. Erro reverte ao último valor válido.
+- **Seed em signup é best-effort** — try/catch dentro da tx evita derrubar criação de workspace se M10#1 não rodou em ambiente legacy. M10#1 backfill já cobriu workspaces existentes.
+
+**Não-objetivos M10#3 (explícitos):**
+
+- TanStack Query install + migration → M11 (decisão fechada)
+- Optimistic UI agressivo nas mutações → M10#5 se necessário
+- Edge Function `cold-lead-detector` + cron 1h → M10#4
+- Notificações push/in-app de lead frio → M10#4 (depende de notification system)
+- Tela de reports com volume disparado / performance por cadência → M10#5
+- Smoke endpoint lifecycle end-to-end (enroll → dispatch → step_run) → M10#5
+- Validação local end-to-end com `supabase db reset` + DB real — Docker Desktop precisa estar rodando; helpers puros + Zod validados via smoke 95/95.
+
+**Pré-requisito de operação:**
+
+- Smoke endpoint não exercita o banco. Validação manual end-to-end exige Docker Desktop subir o stack local Supabase (`supabase start` + `supabase db reset` aplica M10#1 + M10#2 + outras migrations).
 
 ---
 

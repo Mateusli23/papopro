@@ -35,8 +35,8 @@ import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 // reordenamentos futuros do funil default.
 const DEFAULT_FALLBACK_STAGE = ACTIVE_STAGES[0]?.id ?? 'novo';
 
+import { createCadenceAction } from '../actions';
 import { cadenceCreateSchema, type CadenceCreateInput } from '../schemas';
-import { createCadence } from '../store';
 import type { CadenceTemplateKey } from '../types';
 
 import { TemplatePicker } from './template-picker';
@@ -126,11 +126,17 @@ export function CadenceCreateDialog({
     setStep('template');
   }
 
-  function onSubmit(data: CadenceCreateInput) {
-    const cadence = createCadence(data);
-    toast.success(`Cadência "${cadence.name}" criada.`, { duration: 4000 });
+  async function onSubmit(data: CadenceCreateInput) {
+    const loadingId = toast.loading('Criando cadência…');
+    const result = await createCadenceAction(data);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Cadência "${data.name}" criada.`, { duration: 4000 });
     onOpenChange(false);
-    router.push(`/cadences/${cadence.id}`);
+    router.push(`/cadences/${result.id}`);
   }
 
   return (

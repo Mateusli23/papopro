@@ -1,4 +1,10 @@
+import { redirect } from 'next/navigation';
+
 import type { Metadata } from 'next';
+
+import { listCadences } from '@/features/cadences/queries';
+import { getCurrentUserContext } from '@/lib/auth/get-user';
+import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
 import { CadencesView } from './cadences-view';
 
@@ -7,6 +13,37 @@ export const metadata: Metadata = {
   description: 'Sequências automáticas de follow-up por etapa do funil.',
 };
 
-export default function CadencesPage() {
-  return <CadencesView />;
+/**
+ * `dynamic = 'force-dynamic'` (M10#3): página depende do cookie httpOnly
+ * `papopro_workspace_id` + sessão Supabase + queries com workspace ativo.
+ * Sem o flag, Next tenta prerender em CI sem `.env.local` e crasha.
+ */
+export const dynamic = 'force-dynamic';
+
+/**
+ * `/cadences` — Server Component carrega cadências (com steps + métricas
+ * agregadas) do workspace ativo e passa pra `CadencesView` como snapshot
+ * inicial. Client Component hidrata via `hydrateCadencesFromServer` no mount
+ * (padrão M9#4 Inbox).
+ *
+ * Mutações nas cadências (create/update/toggle/delete) acontecem via
+ * Server Actions em `features/cadences/actions.ts`, que revalidam o path —
+ * isso re-renderiza essa página e atualiza o snapshot.
+ */
+export default async function CadencesPage() {
+  const ctx = await getCurrentUserContext();
+  const workspaceId = readWorkspaceCookie();
+
+  if (!ctx || !workspaceId) {
+    redirect('/login');
+  }
+
+  const callerMembership = ctx.memberships.find((m) => m.workspaceId === workspaceId);
+  if (!callerMembership) {
+    redirect('/onboarding');
+  }
+
+  const initialCadences = await listCadences(workspaceId);
+
+  return <CadencesView initialCadences={initialCadences} />;
 }

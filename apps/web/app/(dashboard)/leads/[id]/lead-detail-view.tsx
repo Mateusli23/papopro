@@ -10,6 +10,8 @@ import { ArrowLeft, MessageCircle, Phone, PlusCircle, Sparkles } from '@papopro/
 import type { ActivityWithAuthor } from '@/features/activities/transforms';
 import { LeadAttachmentsCard } from '@/features/attachments/components/lead-attachments-card';
 import type { AttachmentUI } from '@/features/attachments/transforms';
+import { LeadEnrollmentsSection } from '@/features/cadences/components/lead-enrollments-section';
+import type { LeadEnrollmentUI } from '@/features/cadences/queries';
 import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import { LeadDetailCard } from '@/features/leads/components/lead-detail-card';
@@ -45,6 +47,8 @@ interface LeadDetailViewProps {
   initialActivities: ActivityWithAuthor[];
   initialTasks: TaskWithLead[];
   initialAttachments: AttachmentUI[];
+  initialEnrollments: LeadEnrollmentUI[];
+  availableCadences: Array<{ id: string; name: string }>;
   callerUserId: string;
   callerRole: Role;
 }
@@ -56,6 +60,8 @@ export function LeadDetailView({
   initialActivities,
   initialTasks,
   initialAttachments,
+  initialEnrollments,
+  availableCadences,
   callerUserId,
   callerRole,
 }: LeadDetailViewProps) {
@@ -139,6 +145,13 @@ export function LeadDetailView({
           canAddNote={canAddNote}
         />
         <div className="flex flex-col gap-6">
+          <LeadEnrollmentsSection
+            leadId={lead.id}
+            leadName={lead.name}
+            initialEnrollments={initialEnrollments}
+            availableCadences={availableCadences}
+            canEnroll={canEdit}
+          />
           <LeadNextActions
             leadId={lead.id}
             initialTasks={initialTasks}
@@ -171,6 +184,9 @@ export function LeadDetailView({
             </TabsTrigger>
             <TabsTrigger value="anexos" className="flex-1">
               Anexos
+            </TabsTrigger>
+            <TabsTrigger value="cadencias" className="flex-1">
+              Cadências
             </TabsTrigger>
           </TabsList>
           <TabsContent value="ficha" className="mt-4">
@@ -205,6 +221,15 @@ export function LeadDetailView({
               initialAttachments={initialAttachments}
               callerUserId={callerUserId}
               callerRole={callerRole}
+            />
+          </TabsContent>
+          <TabsContent value="cadencias" className="mt-4">
+            <LeadEnrollmentsSection
+              leadId={lead.id}
+              leadName={lead.name}
+              initialEnrollments={initialEnrollments}
+              availableCadences={availableCadences}
+              canEnroll={canEdit}
             />
           </TabsContent>
         </Tabs>

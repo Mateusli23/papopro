@@ -209,6 +209,21 @@ export async function createWorkspaceAction(
         },
       });
 
+      // M10#3 — seed cold thresholds + cadências template pro novo workspace.
+      // Funções SQL definidas em M10#1; idempotentes via ON CONFLICT DO NOTHING.
+      // Best-effort: erro aqui (ex: migration M10#1 não rodou em ambiente local
+      // antigo) loga mas não derruba o signup. M10#1 backfill já rodou pra
+      // workspaces existentes; apenas signups novos precisam disso.
+      try {
+        await tx.$executeRaw`SELECT public.seed_default_cold_thresholds_for_workspace(${workspace.id}::uuid)`;
+        await tx.$executeRaw`SELECT public.seed_default_cadences_for_workspace(${workspace.id}::uuid)`;
+      } catch (seedErr) {
+        reportNonFatal('workspace.create.seed_cadences', seedErr, {
+          userId: user.id,
+          workspaceId: workspace.id,
+        });
+      }
+
       return workspace;
     });
 

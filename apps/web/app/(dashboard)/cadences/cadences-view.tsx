@@ -7,13 +7,18 @@ import { PlusCircle, Repeat, Search } from '@papopro/ui/icons';
 
 import { CadenceCreateDialog } from '@/features/cadences/components/cadence-create-dialog';
 import { CadenceList } from '@/features/cadences/components/cadence-list';
-import { useCadences } from '@/features/cadences/store';
+import { hydrateCadencesFromServer, useCadences } from '@/features/cadences/store';
 import {
   countCadences,
   filterCadences,
   groupCadencesByStage,
   sumActiveEnrollments,
 } from '@/features/cadences/transforms';
+import type { Cadence } from '@/features/cadences/types';
+
+interface CadencesViewProps {
+  initialCadences: Cadence[];
+}
 
 /**
  * `/cadences` — central de cadências do workspace.
@@ -26,10 +31,15 @@ import {
  * Quando o workspace não tem nenhuma cadência cadastrada, mostramos
  * EmptyState grande no centro com CTA pra criar a primeira.
  *
- * Em M8 vira Server Component lendo `cadences` via Prisma + RLS; este
- * componente fica "use client" só pra busca/dialog/atalhos.
+ * **M10#3:** Server Component pai (`cadences/page.tsx`) carrega
+ * `initialCadences` via `listCadences()` e injeta aqui. `useEffect`
+ * hidrata o store a cada novo snapshot (revalidatePath → re-render).
  */
-export function CadencesView() {
+export function CadencesView({ initialCadences }: CadencesViewProps) {
+  React.useEffect(() => {
+    hydrateCadencesFromServer(initialCadences);
+  }, [initialCadences]);
+
   const cadences = useCadences();
   const [search, setSearch] = React.useState('');
   const [createOpen, setCreateOpen] = React.useState(false);

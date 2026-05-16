@@ -698,6 +698,87 @@ export function GET() {
     return out === expected || `recebi: ${out}`;
   });
 
+  // ── M10#3 — Server Actions (Zod schemas + transforms puros) ─────────────
+  // Valida APENAS Zod schemas + helpers de transforms. Não exercita o banco
+  // (RBAC + withWorkspace exigem sessão Supabase). Lifecycle end-to-end
+  // (enroll → dispatch → step_run) fica pra smoke E2E em M10#5.
+  t = run('cadences-actions-m10', results);
+
+  // cadenceCreateSchema aceita templateKey 'alto-ticket' com hífen
+  // (alinhado SQL enum, sem precisar mapping em runtime).
+  t('cadenceCreateSchema_acceptsAltoTicketHyphen', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Cadência alto ticket',
+      stageId: 'proposta',
+      templateKey: 'alto-ticket',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // cadenceCreateSchema rejeita templateKey desconhecido
+  t('cadenceCreateSchema_rejectsUnknownTemplateKey', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Teste',
+      stageId: 'novo',
+      templateKey: 'inexistente',
+    });
+    return r.success === false;
+  });
+
+  // cadenceCreateSchema rejeita stage terminal (ganho)
+  t('cadenceCreateSchema_rejectsTerminalStage', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Não permitida',
+      stageId: 'ganho',
+      templateKey: 'blank',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema rejeita dayOffset fora do enum (5, 10, 60, etc.)
+  t('stepCreateSchema_rejectsInvalidDayOffset', () => {
+    const offenders = [-1, 2, 5, 10, 60, 100];
+    const allRejected = offenders.every(
+      (d) =>
+        !stepCreateSchema.safeParse({
+          dayOffset: d as 0,
+          channel: 'whatsapp',
+          templateBody: 'corpo válido com mais de dez',
+        }).success,
+    );
+    return allRejected;
+  });
+
+  // stepCreateSchema rejeita templateBody muito curto (<10 chars)
+  t('stepCreateSchema_rejectsShortBody', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 0,
+      channel: 'whatsapp',
+      templateBody: 'oi',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema aceita body com placeholders {nome}/{empresa}/{produto}
+  t('stepCreateSchema_acceptsBodyWithPlaceholders', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 1,
+      channel: 'whatsapp',
+      templateBody: 'Olá {nome}, sobre {produto}, da {empresa}.',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // stepCreateSchema aceita channel='email' mesmo com email-stub no runner
+  t('stepCreateSchema_acceptsEmailChannel', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 7,
+      channel: 'email',
+      templateBody: 'Email com mais de dez caracteres',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
   const allOk = failed === 0;
