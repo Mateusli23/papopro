@@ -81,6 +81,22 @@ enum AuditAction {
   quick_reply_deleted
   conversation_archived
   conversation_transferred
+  // M10#1 — motor de cadência + cold lead detector (PG enum values criados via
+  // ALTER TYPE ADD VALUE em supabase/migrations/20260521120000_m10_1_cadence_schema.sql).
+  // M10#2 declara aqui pro Prisma client tipar `tx.auditLog.create({action: 'cadence_step_sent', ...})`
+  // sem TS error. Ordem espelha a do SQL.
+  cadence_created
+  cadence_updated
+  cadence_deleted
+  cadence_enrolled
+  cadence_paused
+  cadence_reactivated
+  cadence_completed
+  cadence_step_sent
+  cadence_step_failed
+  cold_lead_alerted
+  cold_lead_acknowledged
+  cold_threshold_updated
 
   @@map("audit_action")
 }

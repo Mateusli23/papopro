@@ -12,6 +12,18 @@
  */
 import { NextResponse } from 'next/server';
 
+import { AuditAction } from '@papopro/db';
+
+import {
+  computeBackoffNextRunAt,
+  computeNextRunAt,
+} from '@/features/cadences/dispatch/compute-next-run-at';
+import {
+  isPermanentBlock,
+  mapAntiBanToSkipReason,
+} from '@/features/cadences/dispatch/map-antiban-reason';
+import { dispatchPayloadSchema } from '@/features/cadences/dispatch/schemas';
+import { pickNextStep, type StepCandidate } from '@/features/cadences/dispatch/select-next-step';
 import {
   CADENCE_CHANNELS,
   CADENCE_STATUSES,
@@ -34,6 +46,7 @@ import {
   groupCadencesByStage,
   sumActiveEnrollments,
 } from '@/features/cadences/transforms';
+import { resolvePlaceholders } from '@/features/inbox/transforms';
 import { CADENCE_TEMPLATES, getTemplate } from '@/lib/fixtures/cadence-templates';
 import { FAKE_CADENCES } from '@/lib/fixtures/cadences';
 import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
@@ -508,6 +521,181 @@ export function GET() {
   t('CADENCE_STATUSES contém active e paused', () => {
     const set = new Set(CADENCE_STATUSES);
     return set.has('active') && set.has('paused');
+  });
+
+  // ── M10#2 — Dispatch helpers ────────────────────────────────────────────
+  // Motor de cadência: mapping anti-ban→skip_reason, cálculo de next_run_at,
+  // seleção de step, schema Zod do payload da rota /api/internal/cadence-dispatch.
+  t = run('cadence-dispatch-m10', results);
+
+  // AuditAction extension (M10#1 SQL + M10#2 schema.prisma sync).
+  const M10_AUDIT_ACTIONS = [
+    'cadence_created',
+    'cadence_updated',
+    'cadence_deleted',
+    'cadence_enrolled',
+    'cadence_paused',
+    'cadence_reactivated',
+    'cadence_completed',
+    'cadence_step_sent',
+    'cadence_step_failed',
+    'cold_lead_alerted',
+    'cold_lead_acknowledged',
+    'cold_threshold_updated',
+  ] as const;
+  t('auditActionM10Extension', () => {
+    const present = Object.values(AuditAction);
+    const missing = M10_AUDIT_ACTIONS.filter((v) => !present.includes(v as AuditAction));
+    return missing.length === 0 || `faltam: ${missing.join(', ')}`;
+  });
+
+  // mapAntiBanToSkipReason cobre as 6 razões do M9#3.
+  t('mapAntiBan_blacklisted', () => {
+    return mapAntiBanToSkipReason('blacklisted') === 'blacklist';
+  });
+  t('mapAntiBan_disconnected', () => {
+    return mapAntiBanToSkipReason('instance_disconnected') === 'workspace_paused';
+  });
+  t('mapAntiBan_unhealthy', () => {
+    return mapAntiBanToSkipReason('instance_unhealthy') === 'unhealthy';
+  });
+  t('mapAntiBan_paused', () => {
+    return mapAntiBanToSkipReason('instance_paused') === 'rate_limit';
+  });
+  t('mapAntiBan_outsideHours', () => {
+    return mapAntiBanToSkipReason('outside_business_hours') === 'outside_business_hours';
+  });
+  t('mapAntiBan_rateLimit24h', () => {
+    return mapAntiBanToSkipReason('rate_limit_24h') === 'rate_limit';
+  });
+
+  // isPermanentBlock: só blacklisted é permanente (cancela enrollment).
+  t('isPermanentBlock_onlyBlacklisted', () => {
+    if (!isPermanentBlock('blacklisted')) return 'blacklisted deveria ser permanente';
+    const transient = [
+      'instance_disconnected',
+      'instance_unhealthy',
+      'instance_paused',
+      'outside_business_hours',
+      'rate_limit_24h',
+    ] as const;
+    const offender = transient.find((r) => isPermanentBlock(r));
+    return !offender || `${offender} foi classificada como permanente`;
+  });
+
+  // computeNextRunAt avança pro próximo day_offset.
+  t('computeNextRunAt_advancesToNextOffset', () => {
+    const enrolledAt = new Date('2026-05-01T12:00:00Z');
+    const result = computeNextRunAt(enrolledAt, 1, [0, 1, 3, 7]);
+    const expected = new Date('2026-05-04T12:00:00Z');
+    if (result.isComplete) return 'esperava !isComplete';
+    return (
+      result.nextRunAt?.getTime() === expected.getTime() ||
+      `nextRunAt=${result.nextRunAt?.toISOString()}`
+    );
+  });
+
+  // computeNextRunAt sem próximo step → completed.
+  t('computeNextRunAt_completesWhenNoNext', () => {
+    const enrolledAt = new Date('2026-05-01T12:00:00Z');
+    const result = computeNextRunAt(enrolledAt, 30, [0, 1, 3, 7, 14, 30]);
+    return (
+      (result.isComplete && result.nextRunAt === null) ||
+      `nextRunAt=${result.nextRunAt} isComplete=${result.isComplete}`
+    );
+  });
+
+  // computeBackoffNextRunAt — backoff +30min default.
+  t('computeBackoffNextRunAt_default30min', () => {
+    const now = new Date('2026-05-16T10:00:00Z');
+    const result = computeBackoffNextRunAt(now);
+    const expected = new Date('2026-05-16T10:30:00Z');
+    return result.getTime() === expected.getTime() || `recebi ${result.toISOString()}`;
+  });
+
+  // pickNextStep ordena por (day_offset, order_index) e ignora executed.
+  t('pickNextStep_ordersAndSkipsExecuted', () => {
+    const steps: StepCandidate[] = [
+      { id: 's7', day_offset: 7, order_index: 0, channel: 'whatsapp', template_body: 'a' },
+      { id: 's1a', day_offset: 1, order_index: 0, channel: 'whatsapp', template_body: 'b' },
+      { id: 's1b', day_offset: 1, order_index: 1, channel: 'whatsapp', template_body: 'c' },
+      { id: 's0', day_offset: 0, order_index: 0, channel: 'whatsapp', template_body: 'd' },
+    ];
+    const executed = new Set(['s0', 's1a']);
+    const next = pickNextStep(steps, executed);
+    return next?.id === 's1b' || `esperava 's1b', recebi '${next?.id}'`;
+  });
+
+  t('pickNextStep_returnsNullWhenAllExecuted', () => {
+    const steps: StepCandidate[] = [
+      { id: 's0', day_offset: 0, order_index: 0, channel: 'whatsapp', template_body: 'a' },
+    ];
+    return pickNextStep(steps, new Set(['s0'])) === null;
+  });
+
+  // dispatchPayloadSchema — strict + uuid validation. Zod 4 valida RFC 4122
+  // version 1-8 (não aceita zeros no version nibble), então fixtures usam
+  // UUIDs v4 reais.
+  const VALID_UUIDS = {
+    workspace: 'a1b2c3d4-1234-4567-8901-1234567890ab',
+    enrollment: 'b2c3d4e5-1234-4567-8901-2234567890bc',
+    lead: 'c3d4e5f6-1234-4567-8901-3234567890cd',
+    cadence: 'd4e5f6a7-1234-4567-8901-4234567890de',
+    step: 'e5f6a7b8-1234-4567-8901-5234567890ef',
+    stepRun: 'f6a7b8c9-1234-4567-8901-6234567890f0',
+  };
+
+  t('dispatchPayloadSchema_acceptsValid', () => {
+    const payload = {
+      workspace_id: VALID_UUIDS.workspace,
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+    };
+    const r = dispatchPayloadSchema.safeParse(payload);
+    return r.success || `falhou: ${JSON.stringify(r.error.issues)}`;
+  });
+
+  t('dispatchPayloadSchema_rejectsExtraProps', () => {
+    const payload = {
+      workspace_id: VALID_UUIDS.workspace,
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+      extra_field: 'should reject',
+    };
+    return (
+      !dispatchPayloadSchema.safeParse(payload).success || 'aceitou prop extra (strict falhou)'
+    );
+  });
+
+  t('dispatchPayloadSchema_rejectsInvalidUuid', () => {
+    const payload = {
+      workspace_id: 'not-a-uuid',
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+    };
+    return !dispatchPayloadSchema.safeParse(payload).success || 'aceitou uuid inválido';
+  });
+
+  // resolvePlaceholders — regressão (usada pela rota dispatch antes do adapter).
+  t('resolvePlaceholders_substitutesAndLeavesUnknownLiteral', () => {
+    const out = resolvePlaceholders('Olá {nome} da {empresa}, sobre {produto} e {desconhecido}', {
+      nome: 'João',
+      empresa: 'Acme',
+    });
+    const expected = 'Olá João da Acme, sobre {produto} e {desconhecido}';
+    return out === expected || `recebi: ${out}`;
   });
 
   const passed = results.filter((r) => r.ok).length;

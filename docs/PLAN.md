@@ -1420,24 +1420,26 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 
 ## M10 — Motor de Cadência + Alertas de Lead Frio
 
-**Estratégia:** 5 sub-PRs sequenciais sobre `dev` (gitflow strict, igual M8/M9). Sub-PR único M10 ficaria com 30+ arquivos cruzando SQL/Deno/TS/React — fatiar permite validação incremental (cadência funciona antes do cold detector, UI conectada antes do reports).
+**Estratégia:** 5 sub-PRs sequenciais sobre `dev` (gitflow strict, igual M8/M9). Sub-PR único M10 ficaria com 30+ arquivos cruzando SQL/Deno/TS/React — fatiar permite validação incremental.
 
 | Sub-PR    | Escopo                                                                                                                                                                                                                              | Branch                 | Status      |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------- |
 | **M10#1** | Schema das 6 tabelas + ALTER `leads` (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` em `messages` + seed inline dos 3 templates + 5 cold thresholds default por workspace + backfill                          | `m10-1-schema-seed`    | ✅ entregue |
-| **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration                              | `m10-2-cadence-runner` | ⏳ próximo  |
+| **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration + helpers puros + smoke      | `m10-2-cadence-runner` | ✅ entregue |
 | **M10#3** | UI conectada: store cadences `useSyncExternalStore` → TanStack Query, Server Actions reais, métricas reais do banco, seção "Cadências" na página do lead (inscrever/pausar/reativar), settings `/settings/cadences/cold-thresholds` | `m10-3-ui-wiring`      | ⏳ pendente |
-| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor (matriz PRD §3.2) + badge global no app shell                                             | `m10-4-cold-detector`  | ⏳ pendente |
-| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint `/api/smoke-test/cadences` (lifecycle + idempotência + RLS) + atualização final de PLAN.md                                 | `m10-5-reports-smoke`  | ⏳ pendente |
+| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor + badge global no app shell                                                               | `m10-4-cold-detector`  | ⏳ pendente |
+| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint lifecycle end-to-end + atualização final de PLAN.md                                                                        | `m10-5-reports-smoke`  | ⏳ pendente |
 
 **Decisões fechadas (não reabrir):**
 
 - **PR único M10 era inicialmente o plano**, mas fatiamento bateu com padrão M8/M9 que já se mostrou superior — review rápido, revert isolado, validação incremental. Decisão tomada antes de M10#1 abrir.
-- **Email é stub no MVP** — runner só processa `channel='whatsapp'`; steps `'email'` recebem `cadence_step_runs.status='skipped' skip_reason='email_stub'`. Resend entra em milestone futuro junto com webhook de bounce. UI/templates mantêm a opção email visível pra evitar refactor quando integrar.
+- **Email é stub no MVP** — runner só processa `channel='whatsapp'`; steps `'email'` recebem `cadence_step_runs.status='skipped' skip_reason='email_stub'` e enrollment avança. Resend entra em milestone futuro junto com webhook de bounce. UI/templates mantêm a opção email visível pra evitar refactor quando integrar.
 - **Pausa automática via trigger SQL** em `messages AFTER INSERT WHERE direction='in'` — não no runner. Latência ~ms (não ~5min), zero overhead no tick do runner, e re-aquece lead frio (cold→warm) ao mesmo tempo sem degradar `'hot'`.
 - **Templates seedados em SQL inline** (não importando de TS) — função `seed_default_cadences_for_workspace(workspace_id)` cria as 3 cadências com 17 steps total fielmente copiados de [apps/web/lib/fixtures/cadence-templates.ts](apps/web/lib/fixtures/cadence-templates.ts). Cadências template criadas como `status='paused'` por default — usuário ativa explicitamente.
 - **Backfill no fim da migration** roda `seed_default_*` pra todos workspaces existentes; chamada também é exposta pra Server Action de signup integrar em M10#3.
-- **Edge Function delega anti-ban pro Next** — `cadence-runner` em Deno só agenda + idempotência; envio real passa por `/api/internal/cadence-dispatch` (Next API route protegida por shared secret) que reusa exatamente `lib/whatsapp/uazapi.ts` + `anti-ban.ts` sem reimplementar em Deno.
+- **Edge Function delega anti-ban pro Next** — `cadence-runner` em Deno só agenda + idempotência (claim slot via INSERT ON CONFLICT DO NOTHING no `UNIQUE(enrollment_id, step_id)` do M10#1). Envio real passa por `/api/internal/cadence-dispatch` (Next API route protegida por `timingSafeEqual(Bearer CADENCE_DISPATCH_SECRET)`) que reusa exatamente `lib/whatsapp/uazapi.ts` + `lib/whatsapp/anti-ban.ts` + `resolvePlaceholders` do M9 sem reimplementar em Deno.
+- **Backoff transiente vs cancelamento permanente** — anti-ban `blacklisted` (LGPD opt-out) cancela enrollment definitivamente + audit `cadence_paused` com `meta.reason='blacklist'`. Anti-ban transiente (`rate_limit`/`unhealthy`/`outside_business_hours`/`workspace_paused`) faz step_run skipped + adia `enrollment.next_run_at = NOW() + 30min` mas enrollment continua active.
+- **Backoff transiente avança o step** — o LEFT JOIN da RPC `cadence_runner_pick_candidates` trata QUALQUER `cadence_step_runs` row (sent/skipped/failed) como "executada". Retry do MESMO step em rate_limit transient exigiria DELETE do skipped row antes do backoff — adiado pra M10.x. Trade-off escolhido em M10#2: simples e previsível.
 
 **Commit final M10 (release):** `feat(cadence): automated follow-up engine with smart pause and cold lead alerts`
 
@@ -1476,6 +1478,45 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - Edge Function `cold-lead-detector` → M10#4
 - Notificações push/in-app de lead frio → M10#4
 - Seção "Cadências" em `/reports` + smoke endpoint → M10#5
+
+### M10#2 — cadence-runner Edge Function + rota interna de dispatch (entregue 2026-05-16)
+
+**Branch:** `m10-2-cadence-runner`
+
+**Objetivo:** transformar `cadence_enrollments active` em mensagens reais WhatsApp. M10#1 entregou o schema; M10#2 entrega o motor que executa. **Diferencial nº 1 do PRD finalmente funcional.**
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260522120000_m10_2_cadence_runner_cron.sql`](supabase/migrations/20260522120000_m10_2_cadence_runner_cron.sql) — Extensões `pg_cron` + `pg_net` (idempotente, também criadas em M9#5); RPC `public.cadence_runner_pick_candidates(p_limit int DEFAULT 100)` LANGUAGE sql SECURITY DEFINER que faz LATERAL JOIN do próximo step não-executado (LEFT JOIN `cadence_step_runs` + `r.id IS NULL`) ordenado por `(day_offset, order_index)`; função `public.invoke_cadence_runner()` SECURITY DEFINER que lê `app.supabase_url` + `app.cadence_runner_secret` via `current_setting(..., true)` e dispara `extensions.http_post` (assíncrono, timeout 30s) pra `/functions/v1/cadence-runner`; `cron.schedule('cadence-runner-every-5-min', '*/5 * * * *', …)` idempotente via `cron.unschedule` prévia. Por que 5 min e não 1 min: cadência tem granularidade de dias; 5 min é imperceptível e reduz pressão no DB+Edge ~12×.
+- [x] [`supabase/functions/cadence-runner/index.ts`](supabase/functions/cadence-runner/index.ts) — Edge Function Deno. `Deno.serve` valida header `x-cadence-runner-secret` contra env `CADENCE_RUNNER_SECRET` (simple equality). Cria Service Role client (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`) com `auth.persistSession=false`. Chama RPC `cadence_runner_pick_candidates(100)` cross-tenant. Pra cada candidato: INSERT em `cadence_step_runs (workspace_id, enrollment_id, step_id, status='pending', scheduled_for)` — Postgres `23505` unique violation = outro runner já claimou, skip silenciosamente. Pra cada slot reivindicado: `fetch POST` pra `/api/internal/cadence-dispatch` com `Authorization: Bearer ${CADENCE_DISPATCH_SECRET}` em batches de 5 (Promise.allSettled), timeout 60s por request. Retorna `{ok, summary: {picked, claimed, dispatched, errors}, outcomes, errors}`. `eslint-disable` + `deno-lint-ignore-file` no topo (runtime Deno, sem package.json).
+- [x] [`apps/web/app/api/internal/cadence-dispatch/route.ts`](apps/web/app/api/internal/cadence-dispatch/route.ts) — POST handler Next runtime nodejs. Auth via `timingSafeEqual(Bearer CADENCE_DISPATCH_SECRET)` (mesmo padrão da `cleanup-attachments` M8#6). Valida payload Zod (`workspace_id`, `enrollment_id`, `lead_id`, `cadence_id`, `step_id`, `step_run_id`, `scheduled_for` — strict). Pre-flight via `withWorkspace(tx)` + `$queryRaw` que faz JOIN de enrollment + cadence + step + lead + workspace + step_run pra carregar tudo numa query. Branches em ordem: enrollment/cadence não-active → skip(workspace_paused); lead deletado → skipAndCancel(lead_deleted); step.channel='email' → skipStepRun(email_stub) + advance; lead sem phone → skipAndCancel(no_phone); WhatsApp não conectado → backoff transiente(workspace_paused); `assertCanSend(tx)` retorna bloqueio → `mapAntiBanToSkipReason` + `isPermanentBlock` decide `skipAndCancel` (blacklist) vs `backoffAfterTransientBlock` (+30min). Happy path: `applyJitter()` 30-50s, `resolvePlaceholders` (reusa `features/inbox/transforms.ts`), `adapter.sendText()` FORA da tx, depois tx final com upsert Conversation + create Message + Activity `whatsapp_out` com `meta.source='cadence'` + `recordSent` + UPDATE step_run='sent'. Avança enrollment fora da tx (`computeNextRunAt` ou `status='completed'`) + audit `cadence_step_sent` ou `cadence_completed`. `maxDuration=60`.
+- [x] [`apps/web/features/cadences/dispatch/types.ts`](apps/web/features/cadences/dispatch/types.ts) — string literal types pra `CadenceStepRunStatus`, `CadenceStepRunSkipReason`, `CadenceEnrollmentStatus`, `CadenceEnrollmentPauseReason`, `CadenceStepChannel`. Comentário explica por que não importa do Prisma client (M10#1 criou ENUMs em SQL mas não modelos Prisma; M10#3 adiciona modelos e este arquivo pode re-exportar).
+- [x] [`apps/web/features/cadences/dispatch/schemas.ts`](apps/web/features/cadences/dispatch/schemas.ts) — `dispatchPayloadSchema` Zod strict (`.strict()` rejeita props extras — defense-in-depth contra Edge Function comprometida).
+- [x] [`apps/web/features/cadences/dispatch/map-antiban-reason.ts`](apps/web/features/cadences/dispatch/map-antiban-reason.ts) — `mapAntiBanToSkipReason(reason: AntiBanReason): CadenceStepRunSkipReason` cobre 6 razões + `isPermanentBlock` (só `blacklisted` é permanente — `no_phone`/`lead_deleted` são tratados na rota antes do anti-ban).
+- [x] [`apps/web/features/cadences/dispatch/compute-next-run-at.ts`](apps/web/features/cadences/dispatch/compute-next-run-at.ts) — `computeNextRunAt(enrolledAt, currentStepDayOffset, availableDayOffsets)` puro retorna `{nextRunAt, isComplete}` baseado em `addDays(enrolledAt, nextOffset)`. `computeBackoffNextRunAt(now, minutes=30)` retorna `addMinutes(now, minutes)`. `DAY_OFFSETS = [0,1,3,7,14,30]` exportado.
+- [x] [`apps/web/features/cadences/dispatch/select-next-step.ts`](apps/web/features/cadences/dispatch/select-next-step.ts) — `pickNextStep(steps, executedStepIds)` espelho TS da RPC SQL pra testar lógica de ordenação `(day_offset, order_index)` sem banco.
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — +12 valores em `AuditAction` (`cadence_*` + `cold_*`) espelhando os `ALTER TYPE ADD VALUE` do M10#1 SQL. Necessário pra TS tipar `tx.auditLog.create({action: 'cadence_step_sent', ...})` sem error.
+- [x] [`apps/web/app/api/smoke-test/cadences/route.ts`](apps/web/app/api/smoke-test/cadences/route.ts) — +15 checks no grupo `cadence-dispatch-m10`: `AuditAction` extension (12 valores M10#1 presentes), `mapAntiBanToSkipReason` (6 razões), `isPermanentBlock` (só blacklisted), `computeNextRunAt` advance/complete, `computeBackoffNextRunAt`, `pickNextStep` ordenação + skip executed + null quando tudo executado, `dispatchPayloadSchema` accept/reject extra/reject uuid, regressão `resolvePlaceholders`.
+- [x] **Tabelas cadence\_\* via `$queryRaw`/`$executeRaw`**: M10#1 criou as 6 tabelas em SQL puro mas o `schema.prisma` ainda não tem os modelos correspondentes (M10#3 adiciona junto com Server Actions de CRUD). M10#2 acessa tudo via raw SQL nessas tabelas; Prisma client lida com Conversation/Message/Activity/AuditLog/Lead/WhatsappAccount/WhatsappInstance normalmente.
+- [x] **Validação manual local:** smoke endpoint retorna `cadence-dispatch-m10` com 15/15 verdes.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅.
+
+**Não-objetivos M10#2 (explícitos — ficam pra outros sub-PRs):**
+
+- UI conectada / Server Actions de CRUD de cadência → M10#3
+- Cold lead detector (Edge Function + cron + notificações) → M10#4
+- Reports + smoke end-to-end lifecycle → M10#5
+- Push/email pro vendedor em queda de envio → M10#4 (depende de notification system)
+- Mídia (image/audio/doc) em cadência → adiado V2
+- Retry do MESMO step em transient block (DELETE skipped row antes do backoff) → adiado M10.x
+
+**Ops pós-deploy (adiado pra pré-launch, fora do escopo deste PR):**
+
+1. Deploy Edge Function via MCP `deploy_edge_function name=cadence-runner` ou `supabase functions deploy cadence-runner`.
+2. `supabase secrets set CADENCE_RUNNER_SECRET=<random64> CADENCE_DISPATCH_SECRET=<random64> APP_URL=https://app.pipeflow.com.br UAZAPI_BASE_URL=... UAZAPI_API_KEY=...` (via Dashboard ou CLI).
+3. SQL no Editor: `ALTER DATABASE postgres SET app.cadence_runner_secret = '<mesmo>';` (`app.supabase_url` já configurado em M9#5).
+4. Aplicar migration via MCP `apply_migration name=m10_2_cadence_runner_cron` (após #69 ter sido aplicada).
+5. Validar: `SELECT cron.job WHERE jobname = 'cadence-runner-every-5-min'`; `SELECT * FROM cron.job_run_details ORDER BY end_time DESC LIMIT 5` deve mostrar invocações sucessivas a cada 5 min.
 
 ---
 
