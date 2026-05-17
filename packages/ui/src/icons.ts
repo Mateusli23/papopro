@@ -10,6 +10,7 @@
 export {
   Activity,
   AlertCircle,
+  AlertTriangle,
   Archive,
   ArchiveRestore,
   ArrowDown,
@@ -115,6 +116,7 @@ export {
   Wifi,
   WifiOff,
   X,
+  XCircle,
   Zap,
 } from 'lucide-react';
 

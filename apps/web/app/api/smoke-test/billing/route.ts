@@ -23,6 +23,13 @@ import {
   getWorkspaceIdFromMetadata,
   mapStripeStatus,
 } from '@/features/billing/webhook/extract';
+import {
+  PLAN_LIMITS,
+  computeLimitState,
+  formatLimit,
+  limitReachedMessage,
+  toLimitStateUI,
+} from '@/lib/limits';
 import { priceIdToPlan } from '@/lib/stripe/plans';
 
 interface CheckResult {
@@ -195,6 +202,71 @@ export function GET() {
       items: { data: [{ price: undefined }] },
     } as unknown as import('stripe').default.Subscription;
     return getFirstPriceId(fakeSub) === null;
+  });
+
+  // ── PLAN_LIMITS / computeLimitState / toLimitStateUI (M12#4) ───────────
+  t = run('plan-limits-m12-4', results);
+  t('PLAN_LIMITS.free.leads === 50', () => PLAN_LIMITS.free.leads === 50);
+  t('PLAN_LIMITS.free.members === 2', () => PLAN_LIMITS.free.members === 2);
+  t('PLAN_LIMITS.pro.leads é Infinity', () => {
+    return PLAN_LIMITS.pro.leads === Number.POSITIVE_INFINITY;
+  });
+  t('PLAN_LIMITS.pro.members é Infinity', () => {
+    return PLAN_LIMITS.pro.members === Number.POSITIVE_INFINITY;
+  });
+
+  t = run('limit-state-m12-4', results);
+  t('computeLimitState marca atLimit quando current === limit', () => {
+    const s = computeLimitState('free', 50, 50);
+    return s.atLimit === true && s.remaining === 0;
+  });
+  t('computeLimitState marca atLimit quando current > limit (downgrade case)', () => {
+    const s = computeLimitState('free', 60, 50);
+    return s.atLimit === true;
+  });
+  t('computeLimitState marca nearLimit em 90%', () => {
+    const s = computeLimitState('free', 45, 50); // 45/50 = 90%
+    return s.nearLimit === true && s.atLimit === false;
+  });
+  t('computeLimitState não marca nearLimit em 80%', () => {
+    const s = computeLimitState('free', 40, 50);
+    return s.nearLimit === false;
+  });
+  t('computeLimitState com plano pro nunca está atLimit (Infinity)', () => {
+    const s = computeLimitState('pro', 9999, Number.POSITIVE_INFINITY);
+    return s.atLimit === false && s.nearLimit === false;
+  });
+  t('computeLimitState remaining = 0 quando current >= limit', () => {
+    const s = computeLimitState('free', 51, 50);
+    return s.remaining === 0;
+  });
+
+  t = run('limit-ui-m12-4', results);
+  t('toLimitStateUI converte Infinity em limit=null + isUnlimited=true', () => {
+    const ui = toLimitStateUI(computeLimitState('pro', 100, Number.POSITIVE_INFINITY));
+    return ui.limit === null && ui.isUnlimited === true && ui.percent === 0;
+  });
+  t('toLimitStateUI calcula percent correto em Free', () => {
+    const ui = toLimitStateUI(computeLimitState('free', 25, 50));
+    return ui.percent === 50 && ui.isUnlimited === false;
+  });
+  t('toLimitStateUI percent não passa de 100', () => {
+    const ui = toLimitStateUI(computeLimitState('free', 75, 50));
+    return ui.percent === 100;
+  });
+  t('formatLimit retorna "ilimitado" pra Infinity', () => {
+    return formatLimit(Number.POSITIVE_INFINITY) === 'ilimitado';
+  });
+  t('formatLimit retorna número como string', () => {
+    return formatLimit(50) === '50';
+  });
+  t('limitReachedMessage menciona "leads ativos" pra kind=leads', () => {
+    const msg = limitReachedMessage('leads', computeLimitState('free', 50, 50));
+    return msg.includes('leads ativos') && msg.includes('50/50');
+  });
+  t('limitReachedMessage menciona "membros" pra kind=members', () => {
+    const msg = limitReachedMessage('members', computeLimitState('free', 2, 2));
+    return msg.includes('membros') && msg.includes('2/2');
   });
 
   const passed = results.filter((r) => r.ok).length;

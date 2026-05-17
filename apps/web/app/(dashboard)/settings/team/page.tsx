@@ -2,9 +2,11 @@ import { redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
+import { PlanLimitBanner } from '@/components/plan-limit-banner';
 import { getTeamMembersAndInvitations } from '@/features/team/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { getWorkspaceUsage, toWorkspaceUsageUI } from '@/lib/limits';
 
 import { TeamView } from './team-view';
 
@@ -45,14 +47,23 @@ export default async function TeamSettingsPage() {
     redirect('/onboarding');
   }
 
-  const { members, pendingInvitations } = await getTeamMembersAndInvitations(workspaceId);
+  const [{ members, pendingInvitations }, usage] = await Promise.all([
+    getTeamMembersAndInvitations(workspaceId),
+    getWorkspaceUsage(workspaceId),
+  ]);
+
+  const usageUI = toWorkspaceUsageUI(usage);
+  const isOwner = callerMembership.role === 'Owner';
 
   return (
-    <TeamView
-      initialMembers={members}
-      initialPendingInvitations={pendingInvitations}
-      callerRole={callerMembership.role}
-      callerUserId={ctx.user.id}
-    />
+    <div className="flex flex-col gap-4">
+      <PlanLimitBanner kind="members" state={usageUI.members} isOwner={isOwner} />
+      <TeamView
+        initialMembers={members}
+        initialPendingInvitations={pendingInvitations}
+        callerRole={callerMembership.role}
+        callerUserId={ctx.user.id}
+      />
+    </div>
   );
 }
