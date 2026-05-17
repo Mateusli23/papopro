@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                                                              |
-| -------- | ------- | --------------- | --------------------------------------------------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                                        |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                                        |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                                        |
-| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                                          |
-| Sprint 5 | 61–75   | M6, M7          | ✅ concluída — M6 (3/3) + M7 (6/6 — 2 releases: M7#1-#5 em 12-mai-26 parcial, M7#6 fecha milestone) |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                                         |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                                         |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                                         |
+| Sprint   | Dias    | Marcos cobertos | Status                                                                                                                        |
+| -------- | ------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                                                                  |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                                                                  |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                                                                  |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                                                                    |
+| Sprint 5 | 61–75   | M6, M7          | ✅ concluída — M6 (3/3) + M7 (6/6 — 2 releases: M7#1-#5 em 12-mai-26 parcial, M7#6 fecha milestone)                           |
+| Sprint 6 | 76–90   | M8              | ✅ concluído — 7 / 7 sub-PRs (+ hotfix Docker local M8#6 fix em #70)                                                          |
+| Sprint 7 | 91–105  | M9, M10         | 🚧 em andamento — M9 (5/5 ✅) + M10 (4/5 — falta M10#5 reports + smoke E2E). Release parcial M10#1-#4 em main 17-mai-26 (#74) |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                                                                   |
 
 **Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Gitflow strict ativado** (ver CLAUDE.md §10): `dev` é a nova default branch e integration trunk; `main` recebe só releases (`PR dev → main`). Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
@@ -1656,6 +1656,37 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - **P2 — `pnpm test` real (vitest).** Antes rodava `turbo run test` com zero pacotes tendo script `test`, dando falsa sensação de cobertura. Adicionado [vitest.config.ts](apps/web/vitest.config.ts) (env Node, `features/**/*.test.ts` + `lib/**/*.test.ts`), script `"test": "vitest run"` e devDep `vitest@^2.1.8`. Primeiro arquivo [transforms.test.ts](apps/web/features/cadences/transforms.test.ts) cobre P1#1 (agrupamento por UUID, exclusão de terminais, ordem do pipeline, lista vazia, schema UUID) — 6 testes, todos passando. Playwright E2E continua em `e2e/` rodando via `pnpm e2e`.
 
 Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 task, 6/6).
+
+---
+
+## Release: M10 motor de cadência + alertas de lead frio (parcial — 17-mai-26)
+
+**PR de release:** [`#74 dev → main`](https://github.com/Mateusli23/papopro/pull/74), commit de merge `a41b757`. **M10#5 (reports + smoke E2E + update final PLAN.md) fica fora desse release** — mesma estratégia de M7#1-#5: baixar batch size pra aproximar validação do deploy.
+
+**Conteúdo da release:**
+
+| Sub-PR   | Branch (deletada)            | PR                                                   | Resumo                                                                                                                                                                                                                    |
+| -------- | ---------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M10#1    | `m10-1-schema-seed`          | [#69](https://github.com/Mateusli23/papopro/pull/69) | Schema 6 tabelas cadence\_\* + ALTER leads (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` + seed 3 templates + 5 cold thresholds default + backfill                                                 |
+| M8#6 fix | `m8-6-storage-comment-local` | [#70](https://github.com/Mateusli23/papopro/pull/70) | Hotfix `COMMENT ON POLICY storage.objects` compat com user `postgres` Docker local (destrava `supabase db reset` em dev local)                                                                                            |
+| M10#2    | `m10-2-cadence-runner`       | [#71](https://github.com/Mateusli23/papopro/pull/71) | Edge Function `cadence-runner` (Deno, 5min via pg_cron) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + RPC + helpers + smoke +17                                                                   |
+| M10#3    | `m10-3-ui-wiring`            | [#72](https://github.com/Mateusli23/papopro/pull/72) | UI conectada (hydrate-from-server) + Prisma models + 12 Server Actions + métricas reais + seção "Cadências" no lead + settings cold-thresholds + 3 review fixes pré-merge                                                 |
+| M10#4    | `m10-4-cold-detector`        | [#73](https://github.com/Mateusli23/papopro/pull/73) | Edge Function `cold-lead-detector` (Deno, 1h via pg_cron) + RPC detect + auto-ack triggers (com audit log) + acknowledgeColdAlertAction + badge sidebar + cold no sino + banner no lead detail + 8 review fixes pré-merge |
+
+**Diferenciais do PRD entregues no release:**
+
+1. **Motor de cadência automática** (PRD #1) ✅ funcional ponta-a-ponta — vendedor cria/ativa cadência → enroll lead → Edge runner agenda → rota dispatch executa via uazapi com anti-ban → step_run sent + audit + advance enrollment.
+2. **Alertas de lead frio por etapa** (PRD #2) ✅ funcional — Edge detector roda 1h → popula `cold_lead_alerts` → badge sidebar + sino + banner → auto-ack quando lead responde ou muda de etapa (audit `auto=true`).
+
+**Configuração pendente do operador pós-release** (consolidada de M9#5 + M10#2 + M10#4, listada no body do PR #74):
+
+- Deploy 3 Edge Functions: `whatsapp-heartbeat` (M9#5, já deployada anteriormente), `cadence-runner` (M10#2), `cold-lead-detector` (M10#4)
+- Secrets via `supabase secrets set`: `HEARTBEAT_SECRET`, `CADENCE_RUNNER_SECRET`, `CADENCE_DISPATCH_SECRET`, `COLD_LEAD_DETECTOR_SECRET`, `APP_URL`, `UAZAPI_BASE_URL`, `UAZAPI_API_KEY`
+- `ALTER DATABASE postgres SET app.{supabase_url, heartbeat_secret, cadence_runner_secret, cold_lead_detector_secret}`
+- Aplicar migrations na ordem: `m10_1_cadence_schema` → `m10_2_cadence_runner_cron` → `m10_runner_guard_scheduled_for` → `m10_4_cold_lead_detector`
+- Validar `cron.job` ativo: 3 jobs (`whatsapp-heartbeat-every-minute`, `cadence-runner-every-5-min`, `cold-lead-detector-hourly`)
+
+**Próximo na fila:** M10#5 (reports + smoke E2E + update final PLAN.md) fecha o motor M10 inteiro.
 
 ---
 
