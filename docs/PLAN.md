@@ -17,16 +17,16 @@
 
 **Cronograma alvo (sprints quinzenais):**
 
-| Sprint   | Dias    | Marcos cobertos | Status                                                                                              |
-| -------- | ------- | --------------- | --------------------------------------------------------------------------------------------------- |
-| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                                        |
-| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                                        |
-| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                                        |
-| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                                          |
-| Sprint 5 | 61–75   | M6, M7          | ✅ concluída — M6 (3/3) + M7 (6/6 — 2 releases: M7#1-#5 em 12-mai-26 parcial, M7#6 fecha milestone) |
-| Sprint 6 | 76–90   | M8              | ⏳ pendente                                                                                         |
-| Sprint 7 | 91–105  | M9, M10         | ⏳ pendente                                                                                         |
-| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                                         |
+| Sprint   | Dias    | Marcos cobertos | Status                                                                                                                        |
+| -------- | ------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Sprint 1 | 1–15    | M1, M2          | ✅ concluído                                                                                                                  |
+| Sprint 2 | 16–30   | M3              | ✅ concluído                                                                                                                  |
+| Sprint 3 | 31–45   | M4              | ✅ concluído                                                                                                                  |
+| Sprint 4 | 46–60   | M5              | ✅ concluído — 6 / 6 sub-PRs + 2 polimentos (M5p#1, M5p#2)                                                                    |
+| Sprint 5 | 61–75   | M6, M7          | ✅ concluída — M6 (3/3) + M7 (6/6 — 2 releases: M7#1-#5 em 12-mai-26 parcial, M7#6 fecha milestone)                           |
+| Sprint 6 | 76–90   | M8              | ✅ concluído — 7 / 7 sub-PRs (+ hotfix Docker local M8#6 fix em #70)                                                          |
+| Sprint 7 | 91–105  | M9, M10         | 🚧 em andamento — M9 (5/5 ✅) + M10 (4/5 — falta M10#5 reports + smoke E2E). Release parcial M10#1-#4 em main 17-mai-26 (#74) |
+| Sprint 8 | 106–120 | M11, M12, M13   | ⏳ pendente                                                                                                                   |
 
 **Posição atual (10-mai-26):** **Bloco A (UI mockada) 100% completo.** M1–M6 entregues. O produto navega ponta-a-ponta como demo clicável — `apps/web` (`/`, `/leads`, `/kanban`, `/inbox`, `/agents`, `/cadences`, `/tasks`, `/reports`, `/settings`) com fixtures, e `apps/landing` com 8 seções, calculadora de ROI reativa, formulário de trial RHF + Zod redirecionando pra `app.pipeflow.com.br/signup`, SEO completo (JSON-LD `SoftwareApplication` + `FAQPage`, OG image dinâmica via `next/og`, sitemap, robots, favicon), analytics PostHog/GA4/Meta Pixel condicionadas a env, Lighthouse-ready. **Gitflow strict ativado** (ver CLAUDE.md §10): `dev` é a nova default branch e integration trunk; `main` recebe só releases (`PR dev → main`). Próximo: **M7 (Backend Foundation — Supabase + Auth + Multi-tenant + RLS)** inicia o Bloco B.
 
@@ -1428,7 +1428,7 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 | **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration + helpers puros + smoke                                 | `m10-2-cadence-runner` | ✅ entregue |
 | **M10#3** | UI conectada (hydrate-from-server), Server Actions reais de CRUD + steps + enrollments, modelos Prisma das 6 tabelas cadence\_\*, métricas reais agregadas, seção "Cadências" na página do lead, settings `/settings/cadences/cold-thresholds`, seed em signup | `m10-3-ui-wiring`      | ✅ entregue |
 | **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + RPC detector + auto-ack triggers + Server Action `acknowledgeColdAlert` + badge sidebar `/leads` + cold alerts reais no sino + banner no lead detail                                             | `m10-4-cold-detector`  | ✅ entregue |
-| **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint lifecycle end-to-end + atualização final de PLAN.md                                                                                                   | `m10-5-reports-smoke`  | ⏳ pendente |
+| **M10#5** | Seção "Cadências" em `/reports` (KPI strip + tabela performance + BarChart lead frio por etapa) + smoke +18 contratos (helpers puros, sem DB) + atualização final de PLAN.md                                                                                   | `m10-5-reports-smoke`  | ✅ entregue |
 
 **Decisões fechadas (não reabrir):**
 
@@ -1656,6 +1656,94 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 - **P2 — `pnpm test` real (vitest).** Antes rodava `turbo run test` com zero pacotes tendo script `test`, dando falsa sensação de cobertura. Adicionado [vitest.config.ts](apps/web/vitest.config.ts) (env Node, `features/**/*.test.ts` + `lib/**/*.test.ts`), script `"test": "vitest run"` e devDep `vitest@^2.1.8`. Primeiro arquivo [transforms.test.ts](apps/web/features/cadences/transforms.test.ts) cobre P1#1 (agrupamento por UUID, exclusão de terminais, ordem do pipeline, lista vazia, schema UUID) — 6 testes, todos passando. Playwright E2E continua em `e2e/` rodando via `pnpm e2e`.
 
 Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 task, 6/6).
+
+---
+
+### M10#5 — reports (seção "Cadências") + smoke contratos + fechamento PLAN (entregue 2026-05-17)
+
+**Branch:** `m10-5-reports-smoke`
+
+**Objetivo:** fechar o motor M10 dando visibilidade ao gestor das duas alavancas — volume disparado e leads esfriando — sem migrar o resto de `/reports`, que segue fixture-client. M10#1-#4 já entregaram o motor + UI de configuração; M10#5 é a vitrine analítica.
+
+**Decisão de escopo:** **híbrido** em `/reports` (validado com usuário). Só a nova seção é server-fed real (Prisma + RLS via `withWorkspace`); KPIs/funil/rep performance/cooling existentes continuam TanStack Query + fixtures NOW=2026-05-09. Migração total fica pra M10.x ou M13.
+
+**Decisão de scope alt 2:** **smoke puro** (sem tocar DB). Lifecycle end-to-end (enroll → dispatch → step_run com adapter mockado) ficaria caro pra rodar em CI sem Docker — segue manual via `supabase db reset` documentado no body do PR. Os checks novos são contratos puros que fecham brechas dos M10#2/M10#4.
+
+**Entregas:**
+
+- [x] [`apps/web/features/cadences/reports.helpers.ts`](apps/web/features/cadences/reports.helpers.ts) — **arquivo novo, puro** (sem `'server-only'`, sem Prisma): `computeResponseRate(replied, enrolled)` clampa [0,1] + protege contra divide-by-zero + NaN; `formatRate(rate, fraction=0)` formata pt-BR com vírgula decimal sem `Intl.NumberFormat` (evita drift de locale entre Vercel/dev); `sortCadenceReportRows` sort `dispatched30d DESC` com tiebreak alfabético pt-BR estável; `filterColdRowsForChart` drop zeros antes da BarChart; `ANTI_BAN_SKIP_REASONS = ['rate_limit','unhealthy','outside_business_hours']` const tipado.
+- [x] [`apps/web/features/cadences/queries.ts`](apps/web/features/cadences/queries.ts) — **+3 queries server-only + 3 tipos**:
+  - `getCadenceReportsSummary(workspaceId)` → `CadenceReportsSummary` (4 KPIs: cadências ativas, inscrições ativas, mensagens 30d, taxa resposta 30d). 1 round-trip via subqueries escalares — sem JOIN, cada subquery toca 1 tabela.
+  - `listCadenceReportsByCadence(workspaceId)` → `CadenceReportRow[]` agregação cross-cadência via `$queryRaw` com 2 LATERAL JOINs (enrollment + step_run) pra evitar multiplicação de linhas. Ordem `dispatched_30d DESC, name ASC`.
+  - `listColdAlertsByStage(workspaceId, userId, role)` → `ColdByStageRow[]` Prisma `findMany` cold alerts + JOIN com pipeline default + groupBy in TS. Reusa `ackColdAlertWhereForRole` pra RBAC fino (Vendedor só vê alerts dos próprios leads).
+- [x] [`apps/web/app/(dashboard)/reports/cadences-reports-section.tsx`](<apps/web/app/(dashboard)/reports/cadences-reports-section.tsx>) — **Server Component novo**. KPI strip (4 cards, mesma estética de `SummaryKpis`), tabela "Performance por cadência" (HTML semântica, padrão `RepPerformanceTable`, linka pra `/cadences/[id]`), wraps a BarChart via `<ColdByStageChart>` Client. EmptyState propositivo em cada bloco vazio.
+- [x] [`apps/web/app/(dashboard)/reports/cold-by-stage-chart.tsx`](<apps/web/app/(dashboard)/reports/cold-by-stage-chart.tsx>) — **Client Component novo**. Recharts BarChart (SVG client-only), cor `hsl(var(--warning))` alinhada com banner `ColdAlertBanner` (M10#4). Aplica `filterColdRowsForChart` no client (esconde etapas com 0 leads frios). `isAnimationActive={false}` evita flicker em revalidatePath.
+- [x] [`apps/web/app/(dashboard)/reports/page.tsx`](<apps/web/app/(dashboard)/reports/page.tsx>) — refatorado de Server Component fino (só metadata + render client) pra Server Component que carrega 3 queries via `Promise.allSettled` (uma quebrada não derruba as outras), `dynamic = 'force-dynamic'`, `redirect('/login')` sem sessão, `redirect('/onboarding')` sem membership. `reportNonFatal` em cada query rejeitada — UI degrada com `[]`/zerado, sem 500.
+- [x] [`apps/web/app/api/smoke-test/cadences/route.ts`](apps/web/app/api/smoke-test/cadences/route.ts) — **+3 grupos com 22 checks novos**:
+  - `cadence-reports-m10` (13) — `computeResponseRate` (zero denominator, ratio normal, clamp >1/<0, NaN-safe); `formatRate` (default 0 fraction, fraction digits pt-BR com vírgula, clamp invalid); `sortCadenceReportRows` (desc + tiebreak estável); `filterColdRowsForChart` (drop zeros + empty stays empty); `ANTI_BAN_SKIP_REASONS` const cobre 3 razões esperadas.
+  - `cadence-dispatch-contracts-m10` (6) — `dispatchPayloadSchema.strict()` rejeita 2 props inéditas; `mapAntiBanToSkipReason` mapeia todas 6 razões; `isPermanentBlock` retorna false pras 5 razões transientes (regressão M10#4); `computeBackoffNextRunAt` delta exato (30min e 15min custom); `DAY_OFFSETS` ordem [0,1,3,7,14,30] preservada; `pickNextStep` estável dentro do mesmo dayOffset por order_index.
+  - `cold-detector-contracts-m10` (5) — `acknowledgeColdAlertSchema` aceita UUID válido / rejeita string não-UUID / rejeita prop ausente; `ackColdAlertWhereForRole` Owner/Admin/Manager workspace-wide (sem nested filter) / Vendedor com nested `lead.assignedTo.userId` / Viewer não throw.
+- [x] **Total smoke `/api/smoke-test/cadences`: 117/117 verde** (95 anteriores + 22 novos).
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, `pnpm test` ✅.
+
+**Decisões fechadas M10#5:**
+
+- **Híbrido em `/reports`** — só a nova seção é server-fed real; KPIs/funil/rep performance/cooling existentes continuam fixture-client. Validado com usuário antes de implementar. Migração total fica pra M10.x ou M13.
+- **Smoke puro (sem DB)** — validado com usuário. Lifecycle real continua manual via `supabase db reset` documentado no body do PR. Adicionar `/api/smoke-test/cadences/lifecycle` que toca DB com workspace fixture + cleanup foi descartado: precisa Docker no CI ou desabilitar lá, mais fragilidade.
+- **Sem date range filter** — mantém o padrão dos outros cards de `/reports` (window hardcoded). DateRangePicker entra em iteração futura, fora de M10.
+- **`reportNonFatal` + `Promise.allSettled`** — uma query quebrada (RLS/migration desincronizada/Prisma type drift) degrada graciosamente. Erro vai pro Sentry, UI mostra vazio. Não é regressão visível pro usuário.
+- **`computeResponseRate` clampa [0,1]** — em teoria SQL nunca produz `replied > enrolled` (FILTER usa o mesmo predicado), mas defesa-em-profundidade contra drift de schema ou bug futuro de janela divergente.
+- **`formatRate` sem `Intl.NumberFormat`** — Vercel default `en-US` produziria `12.5%`; queremos `12,5%` consistente. Manual + `.replace('.', ',')` é mais simples e previsível.
+- **BarChart usa `warning` (mostarda)** — alinha visualmente com `<ColdAlertBanner>` (M10#4). Não usa `destructive` (vermelho de "lead frio na sidebar") porque o painel é analítico, não alerta acionável.
+- **`Bloqueios anti-ban 30d` tem coluna própria** (não embutida no Disparadas) — diferencia volume útil de bloqueio operacional. Cresce muito = problema com a conexão WhatsApp, não com a cadência.
+- **Cadências `paused` aparecem na tabela** (não filtradas) — gestor precisa ver performance histórica delas mesmo pausadas. Status badge informa.
+- **Filtro de cold por etapa terminal** — etapas terminais (`ganho`/`perdido`) ficam fora do BarChart por padrão. Lead em `ganho` nunca esfria; em `perdido` faz menos sentido alertar.
+
+**Não-objetivos M10#5 (explícitos):**
+
+- Migração de KPIs/funil/rep performance/cooling pra server-fed → M10.x ou M13
+- Date range filter (DateRangePicker + searchParams) → iteração futura
+- Endpoint smoke lifecycle que toca DB → descartado; manual via `supabase db reset`
+- Export CSV da tabela de performance → V2 (depende do dispatcher de export pesado do PRD §3.5)
+- Notificação push pro gestor quando taxa de resposta cai → M13 (junto com PWA + Push)
+- Optimistic UI nas mutações de cadência → sem necessidade (pessimismo total decidido em M10#3)
+- Smoke endpoint protegido por auth (continua dev-only sem header secret) — issue separada se vier a ser exposto em produção
+
+**Ops pós-deploy:** none — sub-PR é pure code (Server Component + helpers TS + smoke). Não cria Edge Function, não muda migration, não muda cron job. Reusa toda a base de M10#1–#4 já documentada nas seções acima.
+
+**Release final M10 incluso neste PR.** Como M10#5 é o último sub-PR e fecha o milestone, o flip do header `parcial → completo` + a row da tabela de release entram aqui mesmo. Release PR `dev → main` subsequente carrega apenas commits sem mudança de docs.
+
+---
+
+## Release: M10 motor de cadência + alertas de lead frio (completo — 17-mai-26)
+
+**Dois PRs de release.** Primeiro batch (M10#1–#4 + M8#6 fix) saiu em [`#74 dev → main`](https://github.com/Mateusli23/papopro/pull/74), commit de merge `a41b757`. Fechamento (M10#5) sai em release subsequente — mesma data, batch menor pra aproximar validação do deploy seguindo estratégia M7#1–#5.
+
+**Conteúdo do release:**
+
+| Sub-PR   | Branch (deletada)            | PR                                                   | Resumo                                                                                                                                                                                                                    |
+| -------- | ---------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M10#1    | `m10-1-schema-seed`          | [#69](https://github.com/Mateusli23/papopro/pull/69) | Schema 6 tabelas cadence\_\* + ALTER leads (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` + seed 3 templates + 5 cold thresholds default + backfill                                                 |
+| M8#6 fix | `m8-6-storage-comment-local` | [#70](https://github.com/Mateusli23/papopro/pull/70) | Hotfix `COMMENT ON POLICY storage.objects` compat com user `postgres` Docker local (destrava `supabase db reset` em dev local)                                                                                            |
+| M10#2    | `m10-2-cadence-runner`       | [#71](https://github.com/Mateusli23/papopro/pull/71) | Edge Function `cadence-runner` (Deno, 5min via pg_cron) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + RPC + helpers + smoke +17                                                                   |
+| M10#3    | `m10-3-ui-wiring`            | [#72](https://github.com/Mateusli23/papopro/pull/72) | UI conectada (hydrate-from-server) + Prisma models + 12 Server Actions + métricas reais + seção "Cadências" no lead + settings cold-thresholds + 3 review fixes pré-merge                                                 |
+| M10#4    | `m10-4-cold-detector`        | [#73](https://github.com/Mateusli23/papopro/pull/73) | Edge Function `cold-lead-detector` (Deno, 1h via pg_cron) + RPC detect + auto-ack triggers (com audit log) + acknowledgeColdAlertAction + badge sidebar + cold no sino + banner no lead detail + 8 review fixes pré-merge |
+| M10#5    | `m10-5-reports-smoke`        | (release subsequente)                                | Seção "Cadências" em `/reports` server-fed (KPI strip + tabela performance + BarChart lead frio) + smoke +24 contratos puros (helpers/Zod) — fecha M10                                                                    |
+
+**Diferenciais do PRD entregues no release:**
+
+1. **Motor de cadência automática** (PRD #1) ✅ funcional ponta-a-ponta — vendedor cria/ativa cadência → enroll lead → Edge runner agenda → rota dispatch executa via uazapi com anti-ban → step_run sent + audit + advance enrollment.
+2. **Alertas de lead frio por etapa** (PRD #2) ✅ funcional — Edge detector roda 1h → popula `cold_lead_alerts` → badge sidebar + sino + banner → auto-ack quando lead responde ou muda de etapa (audit `auto=true`).
+
+**Configuração pendente do operador pós-release** (consolidada de M9#5 + M10#2 + M10#4, listada no body do PR #74):
+
+- Deploy 3 Edge Functions: `whatsapp-heartbeat` (M9#5, já deployada anteriormente), `cadence-runner` (M10#2), `cold-lead-detector` (M10#4)
+- Secrets via `supabase secrets set`: `HEARTBEAT_SECRET`, `CADENCE_RUNNER_SECRET`, `CADENCE_DISPATCH_SECRET`, `COLD_LEAD_DETECTOR_SECRET`, `APP_URL`, `UAZAPI_BASE_URL`, `UAZAPI_API_KEY`
+- `ALTER DATABASE postgres SET app.{supabase_url, heartbeat_secret, cadence_runner_secret, cold_lead_detector_secret}`
+- Aplicar migrations na ordem: `m10_1_cadence_schema` → `m10_2_cadence_runner_cron` → `m10_runner_guard_scheduled_for` → `m10_4_cold_lead_detector`
+- Validar `cron.job` ativo: 3 jobs (`whatsapp-heartbeat-every-minute`, `cadence-runner-every-5-min`, `cold-lead-detector-hourly`)
+
+**M10 completo.** Próximo milestone: **M11** (Agentes IA + Cérebro da Empresa em pgvector).
 
 ---
 

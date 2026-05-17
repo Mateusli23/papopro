@@ -25,6 +25,7 @@ import { CadenceStatus, CadenceTemplateKey } from '@papopro/db';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
 import { ackColdAlertWhereForRole } from './cold-alerts.helpers';
+import { computeResponseRate } from './reports.helpers';
 import type {
   Cadence,
   CadenceMetrics,
@@ -496,5 +497,242 @@ export async function getActiveColdAlertForLead(
       triggeredAt: row.triggeredAt.toISOString(),
       lastInteractionAt: row.lead.lastInteractionAt?.toISOString() ?? null,
     };
+  });
+}
+
+// ============================================================================
+// Reports — agregações cross-cadência (M10#5)
+// ============================================================================
+
+/** Tom semântico da etapa — espelho do enum SQL `stage_tone`. */
+export type StageTone = 'default' | 'success' | 'destructive';
+
+/** KPI strip do bloco "Cadências" em `/reports`. Janela fixa de 30 dias. */
+export interface CadenceReportsSummary {
+  activeCadencesCount: number;
+  activeEnrollmentsCount: number;
+  dispatched30d: number;
+  /** Intervalo [0,1] — formate com `formatRate` antes de exibir. */
+  responseRate30d: number;
+}
+
+/** Linha da tabela "Performance por cadência" em `/reports`. */
+export interface CadenceReportRow {
+  id: string;
+  name: string;
+  status: 'active' | 'paused';
+  stageId: string;
+  stageName: string;
+  stageTone: StageTone;
+  activeEnrollments: number;
+  dispatched30d: number;
+  /** Intervalo [0,1]. */
+  responseRate30d: number;
+  /** Step runs `skipped` por rate_limit/unhealthy/outside_business_hours nos últimos 30d. */
+  skippedAntiBan30d: number;
+}
+
+/** Linha do BarChart "Leads frios por etapa" em `/reports`. */
+export interface ColdByStageRow {
+  stageId: string;
+  stageName: string;
+  stageTone: StageTone;
+  stageOrder: number;
+  coldCount: number;
+}
+
+/**
+ * 4 KPIs agregados do motor de cadência no workspace. 1 round-trip via
+ * subqueries escalares (não há JOIN — cada subquery toca 1 tabela).
+ *
+ * **Janela de 30d** baseada em `executed_at` (step_runs), `enrolled_at` /
+ * `updated_at` (enrollments). Cadências/inscrições "ativas" são instantâneas
+ * (sem janela). `responseRate30d` cai pra 0 quando não houve enrollment no
+ * período (evita `NaN`).
+ */
+export async function getCadenceReportsSummary(
+  workspaceId: string,
+): Promise<CadenceReportsSummary> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      Array<{
+        active_cadences: bigint;
+        active_enrollments: bigint;
+        dispatched_30d: bigint;
+        replied_30d: bigint;
+        enrolled_30d: bigint;
+      }>
+    >`
+      SELECT
+        (SELECT COUNT(*) FROM public.cadences
+          WHERE workspace_id = ${workspaceId}::uuid AND status = 'active')::bigint AS active_cadences,
+        (SELECT COUNT(*) FROM public.cadence_enrollments
+          WHERE workspace_id = ${workspaceId}::uuid AND status = 'active')::bigint AS active_enrollments,
+        (SELECT COUNT(*) FROM public.cadence_step_runs
+          WHERE workspace_id = ${workspaceId}::uuid
+            AND status = 'sent'
+            AND executed_at >= NOW() - INTERVAL '30 days')::bigint AS dispatched_30d,
+        (SELECT COUNT(*) FILTER (
+            WHERE paused_reason = 'lead_replied'
+              AND updated_at >= NOW() - INTERVAL '30 days')
+          FROM public.cadence_enrollments
+          WHERE workspace_id = ${workspaceId}::uuid)::bigint AS replied_30d,
+        (SELECT COUNT(*) FILTER (WHERE enrolled_at >= NOW() - INTERVAL '30 days')
+          FROM public.cadence_enrollments
+          WHERE workspace_id = ${workspaceId}::uuid)::bigint AS enrolled_30d
+    `;
+    const r = rows[0];
+    if (!r) {
+      return {
+        activeCadencesCount: 0,
+        activeEnrollmentsCount: 0,
+        dispatched30d: 0,
+        responseRate30d: 0,
+      };
+    }
+    return {
+      activeCadencesCount: Number(r.active_cadences),
+      activeEnrollmentsCount: Number(r.active_enrollments),
+      dispatched30d: Number(r.dispatched_30d),
+      responseRate30d: computeResponseRate(Number(r.replied_30d), Number(r.enrolled_30d)),
+    };
+  });
+}
+
+/**
+ * Lista por cadência (cross-cadência agregado) com métricas dos últimos 30
+ * dias. LATERAL JOIN evita multiplicação de linhas com cadence_step_runs.
+ *
+ * Cadências `archived` ficam de fora (mesma regra de `listCadences`). Ordem:
+ * `dispatched_30d DESC, name ASC` — quem disparou mais aparece no topo.
+ */
+export async function listCadenceReportsByCadence(
+  workspaceId: string,
+): Promise<CadenceReportRow[]> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx.$queryRaw<
+      Array<{
+        id: string;
+        name: string;
+        status: string;
+        stage_id: string;
+        stage_name: string;
+        stage_tone: string;
+        active_enrollments: bigint;
+        replied_30d: bigint;
+        enrolled_30d: bigint;
+        dispatched_30d: bigint;
+        skipped_anti_ban_30d: bigint;
+      }>
+    >`
+      SELECT
+        c.id::text                            AS id,
+        c.name                                AS name,
+        c.status::text                        AS status,
+        c.stage_id::text                      AS stage_id,
+        COALESCE(s.name, 'Sem etapa')         AS stage_name,
+        COALESCE(s.tone::text, 'default')     AS stage_tone,
+        COALESCE(e.active_enrollments, 0)::bigint    AS active_enrollments,
+        COALESCE(e.replied_30d, 0)::bigint           AS replied_30d,
+        COALESCE(e.enrolled_30d, 0)::bigint          AS enrolled_30d,
+        COALESCE(r.dispatched_30d, 0)::bigint        AS dispatched_30d,
+        COALESCE(r.skipped_anti_ban_30d, 0)::bigint  AS skipped_anti_ban_30d
+      FROM public.cadences c
+      LEFT JOIN public.pipeline_stages s ON s.id = c.stage_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'active')                                            AS active_enrollments,
+          COUNT(*) FILTER (WHERE paused_reason = 'lead_replied'
+                              AND updated_at >= NOW() - INTERVAL '30 days')                  AS replied_30d,
+          COUNT(*) FILTER (WHERE enrolled_at >= NOW() - INTERVAL '30 days')                  AS enrolled_30d
+        FROM public.cadence_enrollments
+        WHERE workspace_id = ${workspaceId}::uuid AND cadence_id = c.id
+      ) e ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (WHERE sr.status = 'sent'
+                              AND sr.executed_at >= NOW() - INTERVAL '30 days')              AS dispatched_30d,
+          COUNT(*) FILTER (WHERE sr.status = 'skipped'
+                              AND sr.skip_reason IN ('rate_limit','unhealthy','outside_business_hours')
+                              AND sr.executed_at >= NOW() - INTERVAL '30 days')              AS skipped_anti_ban_30d
+        FROM public.cadence_step_runs sr
+        WHERE sr.workspace_id = ${workspaceId}::uuid
+          AND sr.enrollment_id IN (
+            SELECT id FROM public.cadence_enrollments
+            WHERE workspace_id = ${workspaceId}::uuid AND cadence_id = c.id
+          )
+      ) r ON TRUE
+      WHERE c.workspace_id = ${workspaceId}::uuid
+        AND c.status <> 'archived'
+      ORDER BY dispatched_30d DESC, c.name ASC
+    `;
+
+    return rows.map<CadenceReportRow>((row) => {
+      const replied = Number(row.replied_30d);
+      const enrolled = Number(row.enrolled_30d);
+      const status: 'active' | 'paused' = row.status === 'active' ? 'active' : 'paused';
+      const tone = (['default', 'success', 'destructive'] as const).includes(
+        row.stage_tone as StageTone,
+      )
+        ? (row.stage_tone as StageTone)
+        : 'default';
+      return {
+        id: row.id,
+        name: row.name,
+        status,
+        stageId: row.stage_id,
+        stageName: row.stage_name,
+        stageTone: tone,
+        activeEnrollments: Number(row.active_enrollments),
+        dispatched30d: Number(row.dispatched_30d),
+        responseRate30d: computeResponseRate(replied, enrolled),
+        skippedAntiBan30d: Number(row.skipped_anti_ban_30d),
+      };
+    });
+  });
+}
+
+/**
+ * Conta cold alerts ativos (não-acknowledged) agrupados por etapa do funil
+ * default do workspace. Aplica RBAC fino: Vendedor só vê alerts dos próprios
+ * leads (reusa `ackColdAlertWhereForRole`).
+ *
+ * Sempre retorna 1 linha por etapa ativa (não-terminal), inclusive zeradas
+ * — o filtro de `coldCount === 0` fica no transform `filterColdRowsForChart`
+ * pra a UI decidir entre "render bar" e "EmptyState".
+ */
+export async function listColdAlertsByStage(
+  workspaceId: string,
+  userId: string,
+  role: 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer',
+): Promise<ColdByStageRow[]> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const baseWhere = ackColdAlertWhereForRole(workspaceId, userId, role);
+
+    const [alerts, stages] = await Promise.all([
+      tx.coldLeadAlert.findMany({
+        where: baseWhere,
+        select: { lead: { select: { stageId: true } } },
+      }),
+      tx.pipelineStage.findMany({
+        where: { pipeline: { workspaceId, isDefault: true }, terminal: false },
+        orderBy: { order: 'asc' },
+        select: { id: true, name: true, tone: true, order: true },
+      }),
+    ]);
+
+    const counts = new Map<string, number>();
+    for (const a of alerts) {
+      const sid = a.lead.stageId;
+      counts.set(sid, (counts.get(sid) ?? 0) + 1);
+    }
+
+    return stages.map<ColdByStageRow>((s) => ({
+      stageId: s.id,
+      stageName: s.name,
+      stageTone: s.tone as StageTone,
+      stageOrder: s.order,
+      coldCount: counts.get(s.id) ?? 0,
+    }));
   });
 }
