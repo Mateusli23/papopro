@@ -4,6 +4,7 @@ import * as React from 'react';
 
 import Link from 'next/link';
 
+import { differenceInDays, parseISO } from 'date-fns';
 import { toast } from 'react-hot-toast';
 
 import {
@@ -88,6 +89,16 @@ function FakeNotificationRow({ n }: { n: FakeNotification }) {
 }
 
 /**
+ * Calcula dias de inatividade reais a partir de `lastInteractionAt`. Se
+ * for `null` (lead pré-M9 sem registro), usa o `daysInactive` do threshold
+ * como aproximação — pior caso é mostrar o mínimo configurado.
+ */
+function realDaysIdle(alert: ColdAlertUI): number {
+  if (!alert.lastInteractionAt) return alert.daysInactive;
+  return Math.max(0, differenceInDays(new Date(), parseISO(alert.lastInteractionAt)));
+}
+
+/**
  * Row de cold alert real (M10#4). Clicar leva pro lead onde tem o banner com
  * botão de ack explícito; "Visto" inline aqui dispara o ack direto sem sair
  * do drawer.
@@ -104,6 +115,7 @@ function ColdAlertRow({
   onAcked: (alertId: string) => void;
 }) {
   const [pending, setPending] = React.useState(false);
+  const daysIdle = realDaysIdle(alert);
 
   async function handleAck(e: React.MouseEvent) {
     e.preventDefault();
@@ -136,8 +148,7 @@ function ColdAlertRow({
           </span>
         </div>
         <p className="text-caption text-muted-foreground line-clamp-2">
-          {alert.stageName} · sem interação há {alert.daysInactive}{' '}
-          {alert.daysInactive === 1 ? 'dia' : 'dias'}
+          {alert.stageName} · sem interação há {daysIdle} {daysIdle === 1 ? 'dia' : 'dias'}
         </p>
         <button
           type="button"
@@ -161,26 +172,37 @@ interface NotificationsDropdownProps {
  * `NotificationsButton`). Drawer com até 30 dias (PRD §3.2).
  *
  * **M10#4:** cold alerts reais no topo (vindos via prop do Server) + fixtures
- * existentes embaixo. Full migração in-app pra `notifications` table fica
- * pra M13 (comentário em `notifications-button.tsx` antecipa).
+ * existentes embaixo. Badge do sino conta SÓ cold alerts reais — fixtures
+ * ficam visíveis no drawer mas não inflam o badge (evita prometer "5 não
+ * lidas" e nada mais zerar quando o usuário clica). Full migração in-app
+ * pra `notifications` table fica pra M13 (comentário em
+ * `notifications-button.tsx` antecipa).
  */
 export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdownProps) {
-  // Optimistic: lista local descontada de alerts acked. Server revalidatePath
-  // refetcha quando o usuário recarrega — mas mantém a UX rápida no drawer
-  // aberto.
-  const [coldAlerts, setColdAlerts] = React.useState<ColdAlertUI[]>(initialColdAlerts);
+  // Mantém Set persistente de alerts já acked nesta sessão. Quando server
+  // revalidatePath traz a lista de novo (pode incluir um alert que o user
+  // acabou de ack via banner em outra aba), filtramos por ackedIds pra não
+  // "ressuscitar" o alert no sino.
+  const [ackedIds, setAckedIds] = React.useState<Set<string>>(() => new Set());
 
-  // Hidrata quando a prop muda (revalidatePath do action faz Next refetchar).
-  React.useEffect(() => {
-    setColdAlerts(initialColdAlerts);
-  }, [initialColdAlerts]);
+  // Filtra cold alerts efetivamente visíveis: server snapshot menos os que
+  // já marcamos como acked otimisticamente nesta sessão. Memoiza pra evitar
+  // recomputar a cada render.
+  const coldAlerts = React.useMemo(
+    () => initialColdAlerts.filter((a) => !ackedIds.has(a.id)),
+    [initialColdAlerts, ackedIds],
+  );
 
   function handleAcked(alertId: string) {
-    setColdAlerts((prev) => prev.filter((a) => a.id !== alertId));
+    setAckedIds((prev) => {
+      const next = new Set(prev);
+      next.add(alertId);
+      return next;
+    });
   }
 
+  const unreadCold = coldAlerts.length;
   const fakeUnread = FAKE_NOTIFICATIONS.filter((n) => !n.read).length;
-  const totalUnread = coldAlerts.length + fakeUnread;
 
   return (
     <DropdownMenu>
@@ -189,15 +211,15 @@ export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdo
           variant="ghost"
           size="icon"
           className="relative"
-          aria-label={`Notificações (${totalUnread} não lidas)`}
+          aria-label={`Notificações: ${unreadCold} leads frios sem resposta`}
         >
           <Bell className="size-4" />
-          {totalUnread > 0 && (
+          {unreadCold > 0 && (
             <span
               aria-hidden
               className="bg-destructive text-destructive-foreground absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold"
             >
-              {totalUnread}
+              {unreadCold}
             </span>
           )}
         </Button>
@@ -205,10 +227,12 @@ export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdo
       <DropdownMenuContent align="end" className="w-96 p-0">
         <DropdownMenuLabel className="flex items-center justify-between px-3 py-3 normal-case tracking-normal">
           <span className="text-title text-foreground">Notificações</span>
-          <Badge variant="secondary">
-            <Zap className="size-3" />
-            {totalUnread} novas
-          </Badge>
+          {unreadCold + fakeUnread > 0 && (
+            <Badge variant="secondary">
+              <Zap className="size-3" />
+              {unreadCold > 0 ? `${unreadCold} frios` : `${fakeUnread} novas`}
+            </Badge>
+          )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="m-0" />
         <ScrollArea className="max-h-96">

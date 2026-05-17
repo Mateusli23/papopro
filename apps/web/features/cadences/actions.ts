@@ -1051,7 +1051,12 @@ export async function acknowledgeColdAlertAction(alertId: string): Promise<Caden
       });
       if (!alert) throw new Error('ALERT_NOT_FOUND');
 
-      if (role === 'Vendedor' && alert.lead.assignedTo.userId !== userId) {
+      // Defesa contra hidratação inesperada — `assignedTo` é non-null no schema
+      // mas se uma cleanup script tiver bypassado `onDelete: Restrict` no
+      // passado, o Prisma pode retornar undefined. Fail closed pro Vendedor:
+      // sem ownerId visível, recusa o ack pra evitar bypass silencioso.
+      const ownerUserId = alert.lead.assignedTo?.userId ?? null;
+      if (role === 'Vendedor' && ownerUserId !== userId) {
         throw new Error('FORBIDDEN_NOT_OWN_LEAD');
       }
 

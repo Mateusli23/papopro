@@ -10,6 +10,7 @@ import {
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import type { Role } from '@/lib/auth/require-role';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { reportNonFatal } from '@/lib/observability/report';
 
 /**
  * Conta cold alerts não-acknowledged pro caller no workspace ativo (M10#4).
@@ -37,7 +38,8 @@ export const loadColdAlertsCount = cache(async (): Promise<number> => {
     if (role === 'Viewer') return 0;
 
     return await countActiveColdAlerts(workspaceId, ctx.user.id, role);
-  } catch {
+  } catch (err) {
+    reportNonFatal('coldAlerts.loadCount', err);
     return 0;
   }
 });
@@ -64,7 +66,8 @@ export const loadActiveColdAlerts = cache(async (): Promise<ColdAlertUI[]> => {
     if (role === 'Viewer') return [];
 
     return await listActiveColdAlerts(workspaceId, ctx.user.id, role);
-  } catch {
+  } catch (err) {
+    reportNonFatal('coldAlerts.loadList', err);
     return [];
   }
 });

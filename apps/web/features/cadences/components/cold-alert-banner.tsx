@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 
+import { differenceInDays, parseISO } from 'date-fns';
 import { toast } from 'react-hot-toast';
 
 import { Button } from '@papopro/ui';
@@ -31,6 +32,14 @@ export function ColdAlertBanner({ alert }: ColdAlertBannerProps) {
   const [dismissed, setDismissed] = React.useState(false);
   const [pending, setPending] = React.useState(false);
 
+  // Dias reais de inatividade — `lastInteractionAt` é o sinal de verdade
+  // (pode ser bem maior que o threshold se o lead ficou frio antes do
+  // detector pegar). Fallback pro `daysInactive` do threshold quando o lead
+  // é pré-M9 sem `last_interaction_at` registrado.
+  const daysIdle = alert.lastInteractionAt
+    ? Math.max(0, differenceInDays(new Date(), parseISO(alert.lastInteractionAt)))
+    : alert.daysInactive;
+
   if (dismissed) return null;
 
   async function handleAck() {
@@ -59,8 +68,8 @@ export function ColdAlertBanner({ alert }: ColdAlertBannerProps) {
             Lead frio em {alert.stageName}
           </span>
           <span className="text-caption text-muted-foreground">
-            Sem interação há {alert.daysInactive} {alert.daysInactive === 1 ? 'dia' : 'dias'}.
-            Reaqueça com uma mensagem ou registre uma conversa.
+            Sem interação há {daysIdle} {daysIdle === 1 ? 'dia' : 'dias'}. Reaqueça com uma mensagem
+            ou registre uma conversa.
           </span>
         </div>
       </div>

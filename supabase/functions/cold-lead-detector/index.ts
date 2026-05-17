@@ -48,12 +48,12 @@ interface Candidate {
   idle_since: string;
 }
 
-interface InsertedAlert {
-  workspace_id: string;
-  lead_id: string;
-  threshold_id: string;
-  days_inactive: number;
-  idle_since: string;
+interface ProcessedAlert extends Candidate {
+  /** `true` quando este tick inseriu o alert (gera audit log); `false`
+   *  significa que o alert já existia (23505) e estamos só fazendo catch-up
+   *  do `leads.temperature` que pode ter ficado warm se tick anterior
+   *  crashou entre o INSERT do alert e o UPDATE do lead. Audit não duplica. */
+  isNew: boolean;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -61,6 +61,21 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * Comparação constant-time entre strings curtas (secrets de header) usando
+ * `crypto.subtle.timingSafeEqual` está disponível no Deno mas a API é
+ * verbosa pra Uint8Array. Reimplementação manual XOR + acumulador atinge o
+ * mesmo objetivo (tempo independente de quantos bytes batem) sem deps.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 // Deno runtime entrypoint
@@ -73,7 +88,7 @@ Deno.serve(async (req: Request) => {
   // @ts-ignore Deno.env
   const expected = Deno.env.get('COLD_LEAD_DETECTOR_SECRET') ?? '';
   const provided = req.headers.get('x-cold-lead-detector-secret') ?? '';
-  if (!expected || !provided || provided !== expected) {
+  if (!expected || !provided || !timingSafeEqual(provided, expected)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
   }
 
@@ -101,19 +116,30 @@ Deno.serve(async (req: Request) => {
 
   const picked = (candidates as Candidate[] | null) ?? [];
 
-  // ─── 2. Insert idempotente em cold_lead_alerts (ON CONFLICT DO NOTHING) ──
+  // Saturation warning: RPC LIMIT 500 → workspace gigante pode ter mais
+  // candidatos não processados nesse tick. Hourly schedule resolve no
+  // próximo ciclo, mas observabilidade precisa pegar isso.
+  if (picked.length === BATCH_LIMIT) {
+    console.warn(
+      `cold-lead-detector: BATCH_LIMIT (${BATCH_LIMIT}) saturado — possíveis candidatos não processados neste tick`,
+    );
+  }
+
+  // ─── 2. Insert idempotente em cold_lead_alerts ───────────────────────────
   // UNIQUE (lead_id, threshold_id) do M10#1 garante 1 alert por dupla. Se o
-  // alert já existir (re-execução do cron antes do trigger limpar), skip.
+  // alert já existir (23505), AINDA propagamos via `caughtUp` pra que o
+  // UPDATE leads (etapa 3) rode — defende contra loop quando tick anterior
+  // crashou entre INSERT do alert e UPDATE do lead, deixando temperature='warm'
+  // + cold_alerted_at=NULL e RPC re-detectando o mesmo lead toda hora.
   //
-  // Concorrência cap=10 — INSERTs leves, não há fanout externo. Mantém Edge
-  // dentro dos limites Supabase (150s default).
-  const inserted: InsertedAlert[] = [];
+  // Concorrência cap=10 — INSERTs leves, sem fanout externo.
+  const processed: ProcessedAlert[] = [];
   const errors: Array<{ lead_id: string; error: string }> = [];
 
   for (let i = 0; i < picked.length; i += INSERT_CONCURRENCY) {
     const batch = picked.slice(i, i + INSERT_CONCURRENCY);
     const results = await Promise.allSettled(
-      batch.map(async (c) => {
+      batch.map(async (c): Promise<ProcessedAlert | null> => {
         const { data: row, error: insErr } = await admin
           .from('cold_lead_alerts')
           .insert({
@@ -125,12 +151,15 @@ Deno.serve(async (req: Request) => {
           .maybeSingle();
 
         if (insErr) {
-          // 23505 = unique violation = alert já existia. Esperado em re-execução.
           const code = (insErr as any).code;
-          if (code === '23505') return null;
+          if (code === '23505') {
+            // Alert existia. NÃO conta como novo (sem audit log duplicado),
+            // mas ainda inclui no catch-up pra UPDATE leads (idempotency).
+            return { ...c, isNew: false };
+          }
           throw new Error(insErr.message);
         }
-        return row?.id ? c : null;
+        return row?.id ? { ...c, isNew: true } : null;
       }),
     );
 
@@ -138,7 +167,7 @@ Deno.serve(async (req: Request) => {
       const c = batch[idx];
       if (!c) return;
       if (r.status === 'fulfilled' && r.value) {
-        inserted.push(r.value);
+        processed.push(r.value);
       } else if (r.status === 'rejected') {
         errors.push({
           lead_id: c.lead_id,
@@ -148,30 +177,41 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // ─── 3. UPDATE leads + audit_logs em batch único pros leads alertados ────
-  // Defesa-em-profundidade: se algo falhar aqui, o próximo tick re-detecta os
-  // mesmos leads (cold_alerted_at ainda NULL) e tenta de novo. UNIQUE garante
-  // que o alert da etapa 2 não duplique.
-  if (inserted.length > 0) {
-    const leadIds = inserted.map((c) => c.lead_id);
+  // ─── 3. UPDATE leads (catch-up incluso) + audit só pros NEW ──────────────
+  // Defense-in-depth (CLAUDE.md §7.2): mesmo Service Role bypassando RLS,
+  // filtramos workspace_id explicitamente — agrupamos por workspace e
+  // emitimos 1 UPDATE per tenant.
+  const newAlerts = processed.filter((p) => p.isNew);
 
-    const { error: updErr } = await admin
-      .from('leads')
-      .update({
-        temperature: 'cold',
-        cold_alerted_at: new Date().toISOString(),
-      })
-      .in('id', leadIds);
+  if (processed.length > 0) {
+    const nowIso = new Date().toISOString();
 
-    if (updErr) {
-      console.error(`update leads temperature: ${updErr.message}`);
-      // Não retorna 500 — alerts já foram inseridos. Próximo tick conserta o
-      // temperature; defense-in-depth.
+    // Agrupa leads por workspace pra UPDATE com workspace_id filter.
+    const leadsByWorkspace = new Map<string, string[]>();
+    for (const p of processed) {
+      const arr = leadsByWorkspace.get(p.workspace_id) ?? [];
+      arr.push(p.lead_id);
+      leadsByWorkspace.set(p.workspace_id, arr);
     }
 
-    // Audit logs em batch — 1 row por alert. acknowledged_by_id NULL no insert
-    // significa "alertado pelo sistema, ainda sem ack humano".
-    const auditRows = inserted.map((c) => ({
+    for (const [wid, leadIds] of leadsByWorkspace.entries()) {
+      const { error: updErr } = await admin
+        .from('leads')
+        .update({ temperature: 'cold', cold_alerted_at: nowIso })
+        .in('id', leadIds)
+        .eq('workspace_id', wid);
+
+      if (updErr) {
+        console.error(`update leads temperature (ws=${wid}): ${updErr.message}`);
+        // Próximo tick re-tenta via catch-up. Defense-in-depth.
+      }
+    }
+  }
+
+  // Audit logs SÓ pros realmente novos. Catch-up de 23505 não gera audit
+  // duplicado.
+  if (newAlerts.length > 0) {
+    const auditRows = newAlerts.map((c) => ({
       workspace_id: c.workspace_id,
       user_id: null,
       action: 'cold_lead_alerted',
@@ -188,14 +228,13 @@ Deno.serve(async (req: Request) => {
 
     if (auditErr) {
       console.error(`insert audit_logs: ${auditErr.message}`);
-      // Idem: alerts já inseridos; audit é log secundário. Não retorna 500.
     }
   }
 
   const summary = {
     scanned: picked.length,
-    alertedNew: inserted.length,
-    alreadyAlerted: picked.length - inserted.length - errors.length,
+    alertedNew: newAlerts.length,
+    caughtUp: processed.length - newAlerts.length,
     errors: errors.length,
   };
 

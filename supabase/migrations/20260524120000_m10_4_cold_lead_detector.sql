@@ -143,19 +143,33 @@ BEGIN
    WHERE id = v_lead_id;
 
   -- M10#4: auto-ack cold alerts pendentes. NULL em acknowledged_by_id marca
-  -- ack automático (audit log diferencia pelo user_id=NULL).
-  UPDATE public.cold_lead_alerts
-     SET acknowledged_at    = NOW(),
-         acknowledged_by_id = NULL
-   WHERE lead_id            = v_lead_id
-     AND acknowledged_at    IS NULL;
+  -- ack automático; audit log emitido logo abaixo registra `auto=true` +
+  -- `trigger='lead_replied'` pra rastro LGPD diferenciar ack manual vs
+  -- automático sem depender só do user_id NULL.
+  WITH acked AS (
+    UPDATE public.cold_lead_alerts
+       SET acknowledged_at    = NOW(),
+           acknowledged_by_id = NULL
+     WHERE lead_id            = v_lead_id
+       AND acknowledged_at    IS NULL
+    RETURNING id, workspace_id, threshold_id
+  )
+  INSERT INTO public.audit_logs (workspace_id, user_id, action, entity_type, entity_id, changes)
+  SELECT
+    workspace_id,
+    NULL,
+    'cold_lead_acknowledged'::public.audit_action,
+    'cold_lead_alert',
+    id,
+    jsonb_build_object('auto', true, 'trigger', 'lead_replied', 'lead_id', v_lead_id, 'threshold_id', threshold_id)
+  FROM acked;
 
   RETURN NEW;
 END;
 $$;
 
 COMMENT ON FUNCTION public.pause_cadence_on_inbound() IS
-  'M10#1 + M10#4: Pausa cadências, re-aquece lead, e auto-ack cold alerts pendentes quando lead responde (PRD §2.2). Disparado por AFTER INSERT em messages com direction=in.';
+  'M10#1 + M10#4: Pausa cadências, re-aquece lead, e auto-ack cold alerts pendentes (com audit log auto=true) quando lead responde (PRD §2.2). Disparado por AFTER INSERT em messages com direction=in.';
 
 -- Trigger M10#1 já existe; CREATE OR REPLACE FUNCTION acima cobre o upgrade
 -- sem precisar recriar o trigger.
@@ -181,12 +195,33 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- Auto-ack cold alerts pendentes do lead.
-  UPDATE public.cold_lead_alerts
-     SET acknowledged_at    = NOW(),
-         acknowledged_by_id = NULL
-   WHERE lead_id            = NEW.id
-     AND acknowledged_at    IS NULL;
+  -- Auto-ack cold alerts pendentes do lead + audit log com trigger=stage_changed.
+  -- Mesmo padrão de pause_cadence_on_inbound — rastro LGPD diferencia auto
+  -- vs manual via `auto=true` no changes.
+  WITH acked AS (
+    UPDATE public.cold_lead_alerts
+       SET acknowledged_at    = NOW(),
+           acknowledged_by_id = NULL
+     WHERE lead_id            = NEW.id
+       AND acknowledged_at    IS NULL
+    RETURNING id, workspace_id, threshold_id
+  )
+  INSERT INTO public.audit_logs (workspace_id, user_id, action, entity_type, entity_id, changes)
+  SELECT
+    workspace_id,
+    NULL,
+    'cold_lead_acknowledged'::public.audit_action,
+    'cold_lead_alert',
+    id,
+    jsonb_build_object(
+      'auto', true,
+      'trigger', 'stage_changed',
+      'lead_id', NEW.id,
+      'threshold_id', threshold_id,
+      'old_stage_id', OLD.stage_id,
+      'new_stage_id', NEW.stage_id
+    )
+  FROM acked;
 
   -- Re-aquece cold→warm (mesma lógica do inbound). Não degrada hot.
   -- Mantém last_interaction_at intocado — movimento de etapa não conta como
