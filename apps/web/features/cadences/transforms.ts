@@ -18,7 +18,7 @@
  *  - `applyAddStep` ordena o array final por `(dayOffset asc, order asc)`
  *    pra manter timeline coerente sem sort no componente.
  */
-import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
+import type { PipelineStage } from '@/features/leads/types';
 
 import type {
   CadenceCreateInput,
@@ -304,17 +304,29 @@ export function filterCadences(cadences: Cadence[], filters: CadenceFilters = {}
  * ordem do pipeline. Etapas terminais (`ganho`/`perdido`) são omitidas
  * inteiramente — cadência ali não faz sentido (PRD §2.2). Etapa sem cadência
  * vira bucket vazio (UI usa pra mostrar EmptyState com CTA).
+ *
+ * `stages` vem do pipeline real do workspace (carregado em Server Component
+ * via `listDefaultPipeline`). Antes usávamos `DEFAULT_STAGES` (fixture) — mas
+ * as cadências reais têm `stageId` UUID do banco e não casavam com o slug do
+ * fixture, então o agrupamento perdia todas elas.
  */
-export function groupCadencesByStage(cadences: Cadence[]): Array<{
+export function groupCadencesByStage(
+  cadences: Cadence[],
+  stages: readonly PipelineStage[],
+): Array<{
   stageId: string;
   stageName: string;
   cadences: Cadence[];
 }> {
-  return DEFAULT_STAGES.filter((s) => !s.terminal).map((stage) => ({
-    stageId: stage.id,
-    stageName: stage.name,
-    cadences: cadences.filter((c) => c.stageId === stage.id),
-  }));
+  return stages
+    .filter((s) => !s.terminal)
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((stage) => ({
+      stageId: stage.id,
+      stageName: stage.name,
+      cadences: cadences.filter((c) => c.stageId === stage.id),
+    }));
 }
 
 export interface CadenceCounts {

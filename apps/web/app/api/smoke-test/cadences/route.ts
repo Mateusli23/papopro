@@ -245,7 +245,10 @@ export function GET() {
     const expected = FAKE_CADENCES.reduce((sum, c) => sum + c.metrics.activeEnrollments, 0);
     return sumActiveEnrollments(FAKE_CADENCES) === expected;
   });
-  const groups = groupCadencesByStage(FAKE_CADENCES);
+  // M10 followup: `groupCadencesByStage` agora recebe stages como parâmetro
+  // (antes usava DEFAULT_STAGES como fonte fixa). Smoke continua passando o
+  // fixture pra exercitar a invariante de agrupamento.
+  const groups = groupCadencesByStage(FAKE_CADENCES, DEFAULT_STAGES);
   t('groupCadencesByStage exclui etapas terminais', () => {
     const stageIds = groups.map((g) => g.stageId);
     return !stageIds.includes('ganho') && !stageIds.includes('perdido');
@@ -440,10 +443,15 @@ export function GET() {
 
   // ── Schema ──────────────────────────────────────────────────────────────
   t = run('schema', results);
+  // M10 followup: stageId agora é UUID (alinhado com `pipeline_stages.id`).
+  // A rejeição de stage terminal (`ganho`/`perdido`) e a checagem de
+  // ownership rodam no Server Action (`createCadenceAction`), não no schema —
+  // o schema não conhece o conjunto de stages do workspace do caller.
+  const STAGE_UUID = '11111111-2222-4333-8444-555555555555';
   t('cadenceCreateSchema aceita input válido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Cadência de teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'imobiliario',
     });
     return r.success || JSON.stringify(r.error.issues);
@@ -451,14 +459,14 @@ export function GET() {
   t('rejeita nome muito curto', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'X',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'blank',
     });
     return r.success === false;
   });
-  t('rejeita stageId terminal (ganho)', () => {
+  t('rejeita stageId que não é UUID (validação de stage terminal vai pro action)', () => {
     const r = cadenceCreateSchema.safeParse({
-      name: 'Não permitido',
+      name: 'Slug literal',
       stageId: 'ganho',
       templateKey: 'blank',
     });
@@ -467,7 +475,7 @@ export function GET() {
   t('rejeita templateKey desconhecido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'desconhecido',
     });
     return r.success === false;
@@ -497,7 +505,11 @@ export function GET() {
     return r.success === false;
   });
   t('mensagens de erro em pt-BR (não en-US)', () => {
-    const r = cadenceCreateSchema.safeParse({ name: '', stageId: '', templateKey: 'blank' });
+    const r = cadenceCreateSchema.safeParse({
+      name: '',
+      stageId: 'not-uuid',
+      templateKey: 'blank',
+    });
     if (r.success) return 'esperava falhar';
     const messages = r.error.issues.map((i) => i.message).join(' | ');
     // Detecta vazamento de mensagem padrão do Zod ("Required", "String must…")
@@ -511,7 +523,7 @@ export function GET() {
     return c.total === 0 && c.active === 0 && c.paused === 0;
   });
   t('groupCadencesByStage([]) retorna grupos vazios', () => {
-    const g = groupCadencesByStage([]);
+    const g = groupCadencesByStage([], DEFAULT_STAGES);
     return g.length > 0 && g.every((x) => x.cadences.length === 0);
   });
   t('sumActiveEnrollments([]) === 0', () => sumActiveEnrollments([]) === 0);
@@ -709,7 +721,7 @@ export function GET() {
   t('cadenceCreateSchema_acceptsAltoTicketHyphen', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Cadência alto ticket',
-      stageId: 'proposta',
+      stageId: STAGE_UUID,
       templateKey: 'alto-ticket',
     });
     return r.success || JSON.stringify(r.error.issues);
@@ -719,16 +731,17 @@ export function GET() {
   t('cadenceCreateSchema_rejectsUnknownTemplateKey', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'inexistente',
     });
     return r.success === false;
   });
 
-  // cadenceCreateSchema rejeita stage terminal (ganho)
-  t('cadenceCreateSchema_rejectsTerminalStage', () => {
+  // cadenceCreateSchema rejeita stageId que não é UUID (validação de stage
+  // terminal vai pro Server Action, que tem acesso ao workspace).
+  t('cadenceCreateSchema_rejectsNonUuidStageId', () => {
     const r = cadenceCreateSchema.safeParse({
-      name: 'Não permitida',
+      name: 'Slug literal',
       stageId: 'ganho',
       templateKey: 'blank',
     });

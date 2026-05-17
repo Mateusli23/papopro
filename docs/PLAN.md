@@ -1574,6 +1574,16 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 
 - Smoke endpoint não exercita o banco. Validação manual end-to-end exige Docker Desktop subir o stack local Supabase (`supabase start` + `supabase db reset` aplica M10#1 + M10#2 + outras migrations).
 
+**Review fixes pós-M10#3 (mesmo PR):**
+
+3 achados de review embutidos antes do merge em `dev`:
+
+- **P1 — stageId UUID end-to-end.** Schema/transforms/dialog/editor usavam `DEFAULT_STAGES` (fixture com slugs `'novo'`/`'em_contato'`/...), mas `cadences.stage_id` é UUID real de `pipeline_stages`. Cadências reais sumiam do agrupamento em `/cadences` e o modal de criação rejeitava o submit. Fix: [page.tsx](<apps/web/app/(dashboard)/cadences/page.tsx>) carrega `listDefaultPipeline` em paralelo e propaga `stages` via prop; [transforms.ts](apps/web/features/cadences/transforms.ts) `groupCadencesByStage(cadences, stages)` agora recebe stages explícitas; [schemas.ts](apps/web/features/cadences/schemas.ts) `stageId: z.string().uuid()`; [actions.ts](apps/web/features/cadences/actions.ts) `loadActiveStageInWorkspace` valida ownership + recusa terminal em create/update (defesa-em-profundidade); [cadence-create-dialog.tsx](apps/web/features/cadences/components/cadence-create-dialog.tsx) resolve slug→UUID do template (`tpl.defaultStageId='novo'` → UUID equivalente) antes do submit; editor de `/cadences/[id]` também migrado.
+- **P1 — RPC `cadence_runner_pick_candidates` guarda `scheduled_for`.** Nova migration [20260523120000_m10_runner_guard_scheduled_for.sql](supabase/migrations/20260523120000_m10_runner_guard_scheduled_for.sql) adiciona `AND (e.enrolled_at + s.day_offset days) <= NOW()` à RPC. Sem isso, `backoffAfterTransientBlock` (+30min em `enrollment.next_run_at` quando bloqueio transiente) fazia a RPC pegar D+1, D+3 etc. como "próximo step não-executado" em 30 min, comprimindo cadências de dias em minutos. Corrige só a compressão — "retry do MESMO step em transient block" continua adiado pra M10.x (decisão fechada).
+- **P2 — `pnpm test` real (vitest).** Antes rodava `turbo run test` com zero pacotes tendo script `test`, dando falsa sensação de cobertura. Adicionado [vitest.config.ts](apps/web/vitest.config.ts) (env Node, `features/**/*.test.ts` + `lib/**/*.test.ts`), script `"test": "vitest run"` e devDep `vitest@^2.1.8`. Primeiro arquivo [transforms.test.ts](apps/web/features/cadences/transforms.test.ts) cobre P1#1 (agrupamento por UUID, exclusão de terminais, ordem do pipeline, lista vazia, schema UUID) — 6 testes, todos passando. Playwright E2E continua em `e2e/` rodando via `pnpm e2e`.
+
+Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 task, 6/6).
+
 ---
 
 ## M11 — Agentes IA + Cérebro da Empresa (pgvector)

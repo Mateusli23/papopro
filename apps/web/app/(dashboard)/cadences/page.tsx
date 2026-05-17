@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 
 import { listCadences } from '@/features/cadences/queries';
+import { listDefaultPipeline } from '@/features/leads/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
@@ -43,7 +44,19 @@ export default async function CadencesPage() {
     redirect('/onboarding');
   }
 
-  const initialCadences = await listCadences(workspaceId);
+  // Carrega cadências e pipeline em paralelo. O pipeline alimenta o
+  // agrupamento por etapa e o select de "Etapa do funil" no modal — antes
+  // usávamos o fixture `DEFAULT_STAGES`, que não casa com os UUIDs reais
+  // de `pipeline_stages` e fazia as cadências sumirem do agrupamento.
+  const [initialCadences, pipeline] = await Promise.all([
+    listCadences(workspaceId),
+    listDefaultPipeline(workspaceId),
+  ]);
 
-  return <CadencesView initialCadences={initialCadences} />;
+  // Workspace sem pipeline default = estado corrupto (cadastro semeia 1
+  // por padrão). Devolve fallback vazio pra evitar crash — UI mostra
+  // EmptyState explicando que precisa criar pipeline antes.
+  const stages = pipeline?.stages ?? [];
+
+  return <CadencesView initialCadences={initialCadences} stages={stages} />;
 }

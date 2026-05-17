@@ -15,9 +15,15 @@ import {
   sumActiveEnrollments,
 } from '@/features/cadences/transforms';
 import type { Cadence } from '@/features/cadences/types';
+import type { PipelineStage } from '@/features/leads/types';
 
 interface CadencesViewProps {
   initialCadences: Cadence[];
+  /**
+   * Stages do pipeline default do workspace (carregadas em Server Component).
+   * Usadas no agrupamento por etapa e no select do modal de criação.
+   */
+  stages: PipelineStage[];
 }
 
 /**
@@ -35,7 +41,7 @@ interface CadencesViewProps {
  * `initialCadences` via `listCadences()` e injeta aqui. `useEffect`
  * hidrata o store a cada novo snapshot (revalidatePath → re-render).
  */
-export function CadencesView({ initialCadences }: CadencesViewProps) {
+export function CadencesView({ initialCadences, stages }: CadencesViewProps) {
   React.useEffect(() => {
     hydrateCadencesFromServer(initialCadences);
   }, [initialCadences]);
@@ -50,7 +56,7 @@ export function CadencesView({ initialCadences }: CadencesViewProps) {
     [cadences, search],
   );
 
-  const groups = React.useMemo(() => groupCadencesByStage(filtered), [filtered]);
+  const groups = React.useMemo(() => groupCadencesByStage(filtered, stages), [filtered, stages]);
   const counts = React.useMemo(() => countCadences(cadences), [cadences]);
   const activeEnrollments = React.useMemo(() => sumActiveEnrollments(cadences), [cadences]);
 
@@ -143,6 +149,7 @@ export function CadencesView({ initialCadences }: CadencesViewProps) {
           if (!o) setDefaultStage(undefined);
         }}
         defaultStageId={defaultStage}
+        stages={stages}
       />
     </div>
   );

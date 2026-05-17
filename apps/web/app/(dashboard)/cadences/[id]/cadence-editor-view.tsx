@@ -31,7 +31,7 @@ import { CadenceStatusToggle } from '@/features/cadences/components/cadence-stat
 import { StepEditDialog } from '@/features/cadences/components/step-edit-dialog';
 import { StepTimeline } from '@/features/cadences/components/step-timeline';
 import type { Cadence, CadenceStep } from '@/features/cadences/types';
-import { getStageName } from '@/lib/fixtures/pipelines';
+import type { PipelineStage } from '@/features/leads/types';
 
 /**
  * `/cadences/[id]` — editor da cadência.
@@ -47,11 +47,14 @@ import { getStageName } from '@/lib/fixtures/pipelines';
 
 interface CadenceEditorViewProps {
   initialCadence: Cadence;
+  /** Stages do pipeline default — usadas pra resolver o nome da etapa. */
+  stages: readonly PipelineStage[];
 }
 
-export function CadenceEditorView({ initialCadence }: CadenceEditorViewProps) {
+export function CadenceEditorView({ initialCadence, stages }: CadenceEditorViewProps) {
   const router = useRouter();
   const cadence = initialCadence;
+  const stageName = stages.find((s) => s.id === cadence.stageId)?.name ?? '—';
 
   // Estado único do dialog de step. `null` = fechado; `{ mode: 'create' }` =
   // adicionar novo; `{ mode: 'edit', step }` = editar existente. Ter dois
@@ -188,7 +191,7 @@ export function CadenceEditorView({ initialCadence }: CadenceEditorViewProps) {
 
         <div className="text-caption text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>
-            Etapa: <strong className="text-foreground">{getStageName(cadence.stageId)}</strong>
+            Etapa: <strong className="text-foreground">{stageName}</strong>
           </span>
           <span aria-hidden>·</span>
           <span>

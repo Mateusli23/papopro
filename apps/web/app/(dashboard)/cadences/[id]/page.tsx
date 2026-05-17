@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 
 import { getCadence } from '@/features/cadences/queries';
+import { listDefaultPipeline } from '@/features/leads/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
@@ -37,10 +38,18 @@ export default async function CadenceDetailPage({ params }: PageProps) {
     redirect('/onboarding');
   }
 
-  const cadence = await getCadence(workspaceId, params.id);
+  const [cadence, pipeline] = await Promise.all([
+    getCadence(workspaceId, params.id),
+    listDefaultPipeline(workspaceId),
+  ]);
   if (!cadence) {
     notFound();
   }
 
-  return <CadenceEditorView initialCadence={cadence} />;
+  // Stages alimentam o label "Etapa: X" no editor. Fallback vazio quando
+  // o workspace está em estado corrupto (sem pipeline default) — UI mostra
+  // o UUID cru em vez de crashar.
+  const stages = pipeline?.stages ?? [];
+
+  return <CadenceEditorView initialCadence={cadence} stages={stages} />;
 }

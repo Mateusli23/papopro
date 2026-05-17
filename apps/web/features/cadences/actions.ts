@@ -86,6 +86,34 @@ function statusForDb(status: 'active' | 'paused' | undefined): CadenceStatus | u
   return status === 'active' ? CadenceStatus.active : CadenceStatus.paused;
 }
 
+/**
+ * Carrega uma stage do workspace garantindo (1) ownership e (2) que não é
+ * terminal — cadência em `ganho`/`perdido` não faz sentido (PRD §2.2).
+ *
+ * Defesa-em-profundidade: o schema Zod já garante UUID válido, mas o cliente
+ * pode mandar qualquer UUID. Sem essa checagem no Server Action, uma cadência
+ * podia ficar apontando pra stage de outro tenant ou pra etapa terminal.
+ *
+ * Roda fora de `withWorkspace` propositalmente: a query JOIN-a `pipelines`
+ * filtrando por `workspaceId`, então RLS adicional seria redundante. Retorna
+ * `null` em qualquer falha (não-encontrada, cross-tenant, terminal) — caller
+ * traduz pra mensagem de erro.
+ */
+async function loadActiveStageInWorkspace(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  workspaceId: string,
+  stageId: string,
+): Promise<{ id: string; terminal: boolean } | null> {
+  const stage = await tx.pipelineStage.findFirst({
+    where: { id: stageId, pipeline: { workspaceId, deletedAt: null } },
+    select: { id: true, terminal: true },
+  });
+  if (!stage) return null;
+  if (stage.terminal) return null;
+  return stage;
+}
+
 // ============================================================================
 // createCadenceAction
 // ============================================================================
@@ -108,6 +136,9 @@ export async function createCadenceAction(input: CadenceCreateInput): Promise<Ca
 
   try {
     const cadenceId = await withWorkspace(workspaceId, async (tx) => {
+      const stage = await loadActiveStageInWorkspace(tx, workspaceId, stageId);
+      if (!stage) throw new Error('STAGE_INVALID');
+
       const cadence = await tx.cadence.create({
         data: {
           workspaceId,
@@ -156,6 +187,12 @@ export async function createCadenceAction(input: CadenceCreateInput): Promise<Ca
     revalidatePath(`/cadences/${cadenceId}`);
     return { ok: true, id: cadenceId };
   } catch (err) {
+    if ((err as Error).message === 'STAGE_INVALID') {
+      return {
+        ok: false,
+        error: 'Selecione uma etapa ativa do seu funil (Ganho/Perdido não aceitam cadência).',
+      };
+    }
     reportNonFatal('cadences.create', err, { workspaceId, userId });
     return { ok: false, error: 'Falha ao criar cadência. Tente novamente.' };
   }
@@ -193,6 +230,11 @@ export async function updateCadenceAction(
       });
       if (!exists) throw new Error('CADENCE_NOT_FOUND');
 
+      if (patch.stageId !== undefined) {
+        const stage = await loadActiveStageInWorkspace(tx, workspaceId, patch.stageId);
+        if (!stage) throw new Error('STAGE_INVALID');
+      }
+
       await tx.cadence.update({
         where: { id },
         data: {
@@ -225,6 +267,12 @@ export async function updateCadenceAction(
     const message = (err as Error).message;
     if (message === 'CADENCE_NOT_FOUND') {
       return { ok: false, error: 'Cadência não encontrada.' };
+    }
+    if (message === 'STAGE_INVALID') {
+      return {
+        ok: false,
+        error: 'Selecione uma etapa ativa do seu funil (Ganho/Perdido não aceitam cadência).',
+      };
     }
     reportNonFatal('cadences.update', err, { workspaceId, userId, cadenceId: id });
     return { ok: false, error: 'Falha ao atualizar cadência.' };
