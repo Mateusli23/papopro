@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
+import { PlanLimitBanner } from '@/components/plan-limit-banner';
 import {
   listDefaultPipeline,
   listLeads,
@@ -10,6 +11,7 @@ import {
 } from '@/features/leads/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { getWorkspaceUsage, toWorkspaceUsageUI } from '@/lib/limits';
 
 import { LeadsView } from './leads-view';
 
@@ -48,20 +50,27 @@ export default async function LeadsPage() {
     redirect('/onboarding');
   }
 
-  const [initialLeads, salesReps, pipeline, tags] = await Promise.all([
+  const [initialLeads, salesReps, pipeline, tags, usage] = await Promise.all([
     listLeads(workspaceId),
     listSalesReps(workspaceId),
     listDefaultPipeline(workspaceId),
     listLeadTags(workspaceId),
+    getWorkspaceUsage(workspaceId),
   ]);
 
+  const usageUI = toWorkspaceUsageUI(usage);
+  const isOwner = callerMembership.role === 'Owner';
+
   return (
-    <LeadsView
-      initialLeads={initialLeads}
-      salesReps={salesReps}
-      pipeline={pipeline}
-      tags={tags}
-      callerRole={callerMembership.role}
-    />
+    <div className="flex flex-col gap-4">
+      <PlanLimitBanner kind="leads" state={usageUI.leads} isOwner={isOwner} />
+      <LeadsView
+        initialLeads={initialLeads}
+        salesReps={salesReps}
+        pipeline={pipeline}
+        tags={tags}
+        callerRole={callerMembership.role}
+      />
+    </div>
   );
 }
