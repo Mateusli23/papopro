@@ -13,6 +13,17 @@
 import { NextResponse } from 'next/server';
 
 import {
+  AgentRouteKind,
+  AgentSessionKind,
+  AgentStatus,
+  AgentTone,
+  AuditAction,
+  KnowledgeDocKind,
+  KnowledgeDocStatus,
+  KnowledgeSourceKind,
+} from '@papopro/db';
+
+import {
   AGENT_STATUSES,
   HANDOFF_TRIGGER_KINDS,
   ROUTE_KINDS,
@@ -727,6 +738,103 @@ export function GET() {
   });
   t('ROUTE_KINDS tem 4 valores', () => {
     return ROUTE_KINDS.length === 4;
+  });
+
+  // ── M11#1: Enums Prisma do schema de agentes IA + Cérebro ───────────────
+  // Valida que o Prisma client gerado a partir do schema espelha exatamente
+  // as 7 enums novas criadas em supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql.
+  // Mudança de shape aqui = retrabalho em cascata (CLAUDE.md §6 — contrato
+  // entre UI mockada de M5 e backend M11).
+  t = run('db-enums-m11', results);
+  t('AgentStatus tem 3 values (testing/active/paused)', () => {
+    const vals = Object.values(AgentStatus).sort();
+    const expected = ['active', 'paused', 'testing'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('AgentTone tem 4 values (consultivo/amigavel/direto/formal)', () => {
+    const vals = Object.values(AgentTone).sort();
+    const expected = ['amigavel', 'consultivo', 'direto', 'formal'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('AgentRouteKind tem 4 values (stage/tag/whatsapp_number/keyword)', () => {
+    const vals = Object.values(AgentRouteKind).sort();
+    const expected = ['keyword', 'stage', 'tag', 'whatsapp_number'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('AgentSessionKind tem 2 values (production/simulation)', () => {
+    const vals = Object.values(AgentSessionKind).sort();
+    const expected = ['production', 'simulation'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('KnowledgeSourceKind tem 2 values (structured_field/document)', () => {
+    const vals = Object.values(KnowledgeSourceKind).sort();
+    const expected = ['document', 'structured_field'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('KnowledgeDocStatus tem 4 values (uploading/processing/processed/failed)', () => {
+    const vals = Object.values(KnowledgeDocStatus).sort();
+    const expected = ['failed', 'processed', 'processing', 'uploading'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('KnowledgeDocKind tem 5 values (pdf/doc/docx/txt/md)', () => {
+    const vals = Object.values(KnowledgeDocKind).sort();
+    const expected = ['doc', 'docx', 'md', 'pdf', 'txt'];
+    return JSON.stringify(vals) === JSON.stringify(expected) || `got ${JSON.stringify(vals)}`;
+  });
+  t('AgentStatus DB casa com AGENT_STATUSES da UI M5', () => {
+    // UI M5 (`features/agents/schemas.ts`) já lista os 3 valores. O backend
+    // M11 deve respeitar o mesmo set — sem regressão de contrato.
+    const ui = [...AGENT_STATUSES].sort();
+    const db = Object.values(AgentStatus).sort();
+    return JSON.stringify(ui) === JSON.stringify(db) || `ui=${ui} db=${db}`;
+  });
+  t('AgentRouteKind DB casa com ROUTE_KINDS da UI M5', () => {
+    const ui = [...ROUTE_KINDS].sort();
+    const db = Object.values(AgentRouteKind).sort();
+    return JSON.stringify(ui) === JSON.stringify(db) || `ui=${ui} db=${db}`;
+  });
+
+  // ── M11#1: AuditAction values novos ─────────────────────────────────────
+  // 8 valores adicionados em supabase/migrations/.../m11_1_ai_agents_schema.sql
+  // via ALTER TYPE ADD VALUE. Espelhados no Prisma enum AuditAction.
+  t = run('audit-actions-m11', results);
+  const M11_AUDIT_ACTIONS = [
+    'agent_created',
+    'agent_version_saved',
+    'agent_activated',
+    'agent_paused',
+    'agent_deleted',
+    'handoff_triggered',
+    'knowledge_doc_uploaded',
+    'knowledge_doc_processed',
+  ] as const;
+  for (const action of M11_AUDIT_ACTIONS) {
+    t(`AuditAction.${action} existe`, () => {
+      const exists = Object.values(AuditAction).includes(action as AuditAction);
+      return exists || `não encontrado no enum`;
+    });
+  }
+
+  // ── M11#1: handoff_config JSONB — shape esperado ────────────────────────
+  // O backend persiste o estado dos 6 gatilhos de handoff em
+  // `ai_agents.handoff_config` (JSONB, não tabela separada). UI de M5 já
+  // documenta o shape em features/agents/types.ts:HandoffTrigger. M11#3
+  // (Server Actions) vai validar via Zod — aqui só fixa o contrato.
+  t = run('db-handoff-config-shape-m11', results);
+  t('HANDOFF_TRIGGER_KINDS tem 6 valores (UI M5 → contrato JSONB M11)', () => {
+    return HANDOFF_TRIGGER_KINDS.length === 6 || `length=${HANDOFF_TRIGGER_KINDS.length}`;
+  });
+  t('HANDOFF_TRIGGER_KINDS cobre os 6 gatilhos esperados', () => {
+    const expected = [
+      'agent_to_agent',
+      'commercial_intent',
+      'keyword',
+      'manual',
+      'outside_business_hours',
+      'stage_negotiation',
+    ];
+    const got = [...HANDOFF_TRIGGER_KINDS].sort();
+    return JSON.stringify(got) === JSON.stringify(expected) || `got ${JSON.stringify(got)}`;
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────

@@ -1749,32 +1749,85 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 ## M11 — Agentes IA + Cérebro da Empresa (pgvector)
 
+**Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
+
+| Sub-PR    | Escopo                                                                                                                                                                                                                | Branch            | Status      |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                       | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` — `claude.ts` (Anthropic SDK + prompt caching), `embeddings.ts` (text-embedding-3-small, batch), `memory.ts` (3 camadas). `usage_events` schema.                                                            | `m11-2-ai-lib`    | ⏳ pendente |
+| **M11#3** | UI conectada — Server Actions `createAgent`/`saveVersion`/`activate`/`toggleStatus` + roteamento; editor M5 hidrata do servidor. Versionamento + rollback com diff. Chat de simulação chama Claude real.              | `m11-3-ui-wiring` | ⏳ pendente |
+| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                             | `m11-4-knowledge` | ⏳ pendente |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                     | `m11-5-router`    | ⏳ pendente |
+| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).     | `m11-6-handoffs`  | ⏳ pendente |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts). | `m11-7-metrics`   | ⏳ pendente |
+
+**Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
+
+### M11#1 — schema + RLS + Prisma sync + smoke contratos (entregue 2026-05-17)
+
 **Branch:** `m11-ai-agents`
 
-**Objetivo:** Agentes Claude configuráveis atendendo conversas com memória em 3 camadas, base de conhecimento em pgvector, handoffs (agente↔agente e agente→humano), versionamento de prompt.
+**Objetivo:** entregar a fundação persistente de M11 sem qualquer Server Action, lib/ai ou UI wiring. Garante que o domínio (10 tabelas + 7 enums) está modelado fielmente ao contrato fechado em M5 (`apps/web/features/agents/types.ts`), com RLS multi-tenant, AuditAction values reservados, e smoke validando shape antes do código de runtime chegar (M11#2+).
+
+**Decisões de escopo:**
+
+- **10 tabelas, não 11.** `agent_handoff_triggers` colapsado em coluna `handoff_config jsonb` em `ai_agents`. Justificativa: os 6 gatilhos são fixos por design (M5 types.ts), `enabled` + `config` por gatilho cabem em JSONB, e tabela separada teria sempre 6 rows fixas por agente — overhead sem ganho. Shape validado por Zod no Server Action (M11#3).
+- **`knowledge_embeddings` separada de `knowledge_chunks`.** Permite re-embed (mudou de modelo) sem rewrite de chunks + isola HNSW index numa tabela menor (chunks tem `text` grande; embeddings tem só `vector(1536)`).
+- **Reuso de `message_direction`** pra `agent_messages.direction` (mesma semântica in/out — não vale criar enum duplicado).
+- **Sem seed em M11#1.** Diferente de M10#1 (cadências template seedadas no signup), agentes IA + KB são criação explícita do usuário via UI (M11#3+). Seed atrapalharia onboarding ("você já tem 3 agentes mockados").
+- **`usage_events` fica pra M11#2.** Schema de metering cross-feature criado junto com `lib/ai/claude.ts`. M11#1 já reserva os 4 campos de tokens em `agent_messages` (input/output/cache_read/cache_creation) — contabilização local já funciona; agregação global vem depois.
+- **Tipo `vector(1536)` via `Unsupported`** no Prisma. Decisão obrigatória: Prisma 6 não tipa pgvector nativamente. `Unsupported("vector(1536)")` faz o client reconhecer a coluna sem permitir leitura/escrita via API tipada — queries top-K via `$queryRaw` (que é o que pgvector exige pra `<=>` cosine operator de qualquer jeito).
 
 **Entregas:**
 
-- [ ] Schema: `ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`, `lead_summaries`, `knowledge_base_fields`, `knowledge_documents`, `knowledge_chunks`, `knowledge_embeddings` (pgvector)
-- [ ] Extensão `pgvector` habilitada no Supabase
-- [ ] `lib/ai/claude.ts` — wrapper Anthropic SDK com **prompt caching** habilitado (system + base de conhecimento estável)
-- [ ] `lib/ai/embeddings.ts` — `text-embedding-3-small` (OpenAI), batch + cache local
-- [ ] `lib/ai/memory.ts` — sessão (últimas N mensagens, isolada por agente), lead (resumo persistido em `lead_summaries`, compartilhado), empresa (top-K via pgvector, compartilhado)
-- [ ] Editor de agente (M5 já tem UI) — conectado ao backend; salva versão a cada update
-- [ ] Versionamento e rollback de prompt (lista de versões + diff visual)
-- [ ] Chat de simulação dentro do editor — usa Claude real com prompt da versão em edição, sem efeito colateral
-- [ ] Roteador de agentes por etapa, tag, número conectado, palavra-chave
-- [ ] Handoff agente → agente: gatilho (palavra-chave, mudança de etapa, comando), resumo automático passado ao próximo, pausa do anterior
-- [ ] Handoff humano: manual (botão "Assumir conversa"), palavra-chave, intenção comercial detectada, mudança para Negociação, fora do horário comercial
-- [ ] Pausa automática do agente após handoff humano (até vendedor reativar)
-- [ ] Resumo entregue ao vendedor no handoff: perfil do lead, demandas, etapa, próxima ação sugerida, qual agente vinha atendendo
-- [ ] Cérebro da Empresa: campos estruturados (sobre, produtos, FAQ, scripts, política) + upload PDF/DOC/DOCX/TXT/MD com extração de texto e chunking + embeddings
-- [ ] Versionamento da base de conhecimento (snapshots por mudança)
-- [ ] Métricas por agente: total de conversas, taxa de resolução sem handoff, tempo médio de resposta, satisfação inferida (sentimento da última mensagem)
-- [ ] Enforcement: limite de 3 agentes ativos no Pro IA (M12 fará billing-aware)
-- [ ] Custo de tokens contabilizado em `usage_events` (preparação para M12)
+- [x] [`supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql`](../supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql) — **10 tabelas + 7 enums + 8 audit_action values + RLS + HNSW index**:
+  - **Agentes (5):** `ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`
+  - **Memória lead (1):** `lead_summaries` (UNIQUE em `lead_id`, compartilhado entre agentes)
+  - **Cérebro da Empresa (4):** `knowledge_base_fields` (singleton por workspace), `knowledge_documents`, `knowledge_chunks`, `knowledge_embeddings` (vector(1536), HNSW cosine)
+  - **Enums:** `agent_status`, `agent_tone`, `agent_route_kind`, `agent_session_kind`, `knowledge_source_kind`, `knowledge_doc_status`, `knowledge_doc_kind`
+  - **AuditAction values novos:** `agent_created`, `agent_version_saved`, `agent_activated`, `agent_paused`, `agent_deleted`, `handoff_triggered`, `knowledge_doc_uploaded`, `knowledge_doc_processed`
+  - **CHECK constraint crítico** em `agent_sessions`: `kind=production` exige `conversation_id + lead_id NOT NULL`; `kind=simulation` exige ambos NULL. Impede sessão de teste tocar lead real por engano.
+  - **CHECK constraint crítico** em `knowledge_chunks`: `source=document` exige `document_id`; `source=structured_field` exige `structured_field` (discriminação rígida).
+  - **FK circular `ai_agents.active_version_id` → `agent_versions.id`** resolvida via `ALTER TABLE ADD CONSTRAINT` após criação das duas tabelas. `ON DELETE SET NULL` (delete de versão NÃO cascateia pro agente).
+  - **RLS via `current_workspace_id()`** em todas as 10 tabelas, padrão M7–M10/M12. `agent_versions` + `agent_routing_rules` herdam via subquery `agent_id IN (SELECT id FROM ai_agents WHERE workspace_id = …)` (padrão `cadence_steps`/`pipeline_stages`).
+  - **`agent_messages` é append-only** — sem policy UPDATE/DELETE (audit + tokens preservados).
+  - **HNSW index** `USING hnsw (embedding vector_cosine_ops)` em `knowledge_embeddings` — pronto pra busca top-K via `<=>` operator. Parâmetros default (m=16, ef_construction=64) suficientes pra volumes MVP.
+  - **Sem backfill** — workspaces existentes ficam sem agentes nem KB até o usuário criar via UI (M11#3+).
+- [x] [`packages/db/prisma/schema.prisma`](../packages/db/prisma/schema.prisma) — sync completo com SQL:
+  - **+7 enums** (`AgentStatus`/`AgentTone`/`AgentRouteKind`/`AgentSessionKind`/`KnowledgeSourceKind`/`KnowledgeDocStatus`/`KnowledgeDocKind`)
+  - **+8 `AuditAction` values** espelhando ALTER TYPE
+  - **+10 models** (`AiAgent`, `AgentVersion`, `AgentRoutingRule`, `AgentSession`, `AgentMessage`, `LeadSummary`, `KnowledgeBaseField`, `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeEmbedding`)
+  - **Relations** em `Workspace` (+8 navigations), `User` (+3 `@relation`s nomeadas: `AiAgentCreatedBy`, `AgentVersionCreatedBy`, `KnowledgeDocumentUploadedBy`), `Lead` (+`summary`+`agentSessions`), `Conversation` (+`agentSessions`).
+  - **FK circular** modelada via 2 `@relation`s nomeadas em `AgentVersion` (`AiAgentVersions` pra histórico + `AiAgentActiveVersion` pro ponteiro).
+  - **`embedding Unsupported("vector(1536)")`** — única coluna que não passa pela API tipada do Prisma (acessada via `$queryRaw` em M11#2+).
+- [x] [`packages/db/src/index.ts`](../packages/db/src/index.ts) — re-export dos 7 enums novos pra que smoke + Server Actions (M11#3) importem via `@papopro/db` (mesmo padrão `SubscriptionPlan`/`CadenceStatus`).
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+19 checks novos** em 3 grupos, sem hit no DB:
+  - `db-enums-m11` (9): cada um dos 7 enums tem o set exato de values + AgentStatus/AgentRouteKind casam com `AGENT_STATUSES`/`ROUTE_KINDS` da UI M5 (anti-regressão de contrato).
+  - `audit-actions-m11` (8): cada um dos 8 audit values novos existe no enum.
+  - `db-handoff-config-shape-m11` (2): `HANDOFF_TRIGGER_KINDS` tem 6 valores + cobre os 6 esperados (contrato JSONB).
+  - Total smoke `/api/smoke-test/agents`: era 71 (M5 transforms), passa pra **90**.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **90/90 verde** ✅.
 
-**Commit final:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
+**Não-objetivos M11#1 (explícitos — ficam pra sub-PRs):**
+
+- `lib/ai/{claude,embeddings,memory}.ts` → M11#2
+- `usage_events` schema (metering cross-feature) → M11#2
+- Server Actions de agente (`createAgent`/`saveVersion`/`activate`) → M11#3
+- UI hidratada do servidor (editor + lista) → M11#3
+- Server Actions de roteamento (`addRoute`/`reorderRoutes`/`deleteRoute`) → M11#3
+- Chat de simulação chamando Claude real → M11#3
+- Upload de documento + Edge Function de chunking+embedding → M11#4
+- Trigger inbound (uazapi webhook) → match no roteador → cria session → despacha Claude → M11#5
+- Handoffs agente→agente e agente→humano → M11#6
+- Métricas por agente + enforcement de 3 ativos no Pro IA → M11#7
+- E2E Playwright do flow "criar agente → conectar → atender" → M13
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. Aplicar migration via MCP `apply_migration name=m11_1_ai_agents_schema` (depende de M12#1 já aplicada).
+2. Validar via `SELECT typname FROM pg_type WHERE typname LIKE 'agent_%' OR typname LIKE 'knowledge_%'` — esperado 7 tipos.
+3. Validar HNSW index criado: `SELECT indexname FROM pg_indexes WHERE indexname = 'knowledge_embeddings_hnsw_idx'`.
+4. **Nada mais** — sem Edge Function, sem cron job, sem secret, sem env var.
 
 ---
 
