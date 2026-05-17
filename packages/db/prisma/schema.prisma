@@ -485,6 +485,19 @@ enum KnowledgeDocKind {
   @@map("knowledge_doc_kind")
 }
 
+/// Tipo de evento de uso de IA (M11#2). Free-form `feature` na tabela
+/// `usage_events` permite mais granularidade sem migration.
+///  - `agent_call`     → chamada Claude messages.create (agente respondendo)
+///  - `embedding_call` → chamada OpenAI embeddings (indexação do Cérebro)
+///  - `summary_call`   → chamada Claude pra atualizar lead_summary (background)
+enum UsageEventKind {
+  agent_call
+  embedding_call
+  summary_call
+
+  @@map("usage_event_kind")
+}
+
 // =============================================================================
 // Tenant + identidade
 // =============================================================================
@@ -544,6 +557,7 @@ model Workspace {
   knowledgeDocuments      KnowledgeDocument[]
   knowledgeChunks         KnowledgeChunk[]
   knowledgeEmbeddings     KnowledgeEmbedding[]
+  usageEvents             UsageEvent[]
 
   @@index([deletedAt])
   @@map("workspaces")
@@ -1763,4 +1777,33 @@ model KnowledgeEmbedding {
 
   @@index([workspaceId])
   @@map("knowledge_embeddings")
+}
+
+/// Metering cross-feature de uso de IA (M11#2). Append-only — sem policy
+/// UPDATE/DELETE. `cost_micros` é USD × 10^6 (bigint) pra evitar float drift
+/// em SUM. `entity_kind`/`entity_id` opcionais — discriminam qual entidade
+/// originou o uso (`agent_session`/`agent_message`/`knowledge_document`/
+/// `lead_summary`). Sem FK declarada pra evitar cascade pesada + permitir
+/// entity_kind novo sem migration.
+model UsageEvent {
+  id                       String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId              String         @map("workspace_id") @db.Uuid
+  eventKind                UsageEventKind @map("event_kind")
+  feature                  String         @db.VarChar(32)
+  model                    String         @db.VarChar(64)
+  inputTokens              Int            @default(0) @map("input_tokens")
+  outputTokens             Int            @default(0) @map("output_tokens")
+  cacheReadInputTokens     Int            @default(0) @map("cache_read_input_tokens")
+  cacheCreationInputTokens Int            @default(0) @map("cache_creation_input_tokens")
+  costMicros               BigInt         @default(0) @map("cost_micros")
+  entityKind               String?        @map("entity_kind") @db.VarChar(32)
+  entityId                 String?        @map("entity_id") @db.Uuid
+  createdAt                DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, eventKind, createdAt(sort: Desc)])
+  @@index([entityKind, entityId])
+  @@map("usage_events")
 }
