@@ -85,4 +85,7 @@ export {
   CadenceStepRunStatus,
   CadenceStepRunSkipReason,
   LeadTemperature,
+  // M12#1 — Stripe billing
+  SubscriptionPlan,
+  SubscriptionStatus,
 } from '@prisma/client';
