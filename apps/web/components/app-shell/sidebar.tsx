@@ -3,6 +3,7 @@ import { LogoFull } from '@papopro/ui';
 import { toSwitcherItem } from '@/features/workspace/presentation';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { loadColdAlertsCount } from '@/lib/cold-alerts/load-count';
 
 import { SidebarFooter } from './sidebar-footer';
 import { SidebarNav } from './sidebar-nav';
@@ -20,7 +21,13 @@ import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switc
  * Estrutura: marca → workspace switcher → navegação → rodapé com status.
  */
 export async function Sidebar() {
-  const { workspaces, activeWorkspaceId } = await loadSwitcherData();
+  // Carrega switcher + cold count em paralelo. `loadColdAlertsCount` é cached
+  // por request (M10#4) — `Topbar`/`MobileNav` reusam o mesmo round-trip sem
+  // dupla query.
+  const [{ workspaces, activeWorkspaceId }, coldAlertsCount] = await Promise.all([
+    loadSwitcherData(),
+    loadColdAlertsCount(),
+  ]);
 
   return (
     <aside
@@ -33,7 +40,7 @@ export async function Sidebar() {
       <div className="border-sidebar-border border-b p-2">
         <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
       </div>
-      <SidebarNav />
+      <SidebarNav coldAlertsCount={coldAlertsCount} />
       <SidebarFooter />
     </aside>
   );

@@ -14,6 +14,12 @@ import { NAV_GROUPS, type NavItem } from './nav-config';
 interface SidebarNavProps {
   /** Chamado ao clicar num item — usado no mobile pra fechar o drawer. */
   onNavigate?: () => void;
+  /**
+   * Contagem de cold alerts não-acknowledged visíveis pro caller (M10#4).
+   * RBAC fino aplicado no Server (Vendedor só dos próprios leads); o componente
+   * só renderiza o número. `0` = sem badge.
+   */
+  coldAlertsCount?: number;
 }
 
 /**
@@ -28,24 +34,38 @@ interface SidebarNavProps {
  * `undefined` e o `<Badge>` simplesmente não pinta — paridade com WhatsApp Web.
  * Outras features podem seguir o mesmo padrão (ex: tarefas atrasadas) sem
  * mudar a shape do `NavItem`.
+ *
+ * **M10#4:** item `/leads` recebe `coldAlertsCount` via prop (Server-fetched
+ * em `Sidebar`/`Topbar` com RBAC fino). Mesma técnica do inbox. Quando 0,
+ * badge some.
  */
-export function SidebarNav({ onNavigate }: SidebarNavProps) {
+export function SidebarNav({ onNavigate, coldAlertsCount = 0 }: SidebarNavProps) {
   const pathname = usePathname();
   const inboxUnread = useUnreadCount();
 
   // Mescla counters live nos items declarativos. Memoizamos pra preservar
-  // a referência dos arrays quando `inboxUnread` não muda — evita rerender
+  // a referência dos arrays quando os contadores não mudam — evita rerender
   // dos `<Link>` por causa de identity miss.
   const groups = React.useMemo(() => {
     return NAV_GROUPS.map((group) => ({
       ...group,
-      items: group.items.map((item) =>
-        item.href === '/inbox'
-          ? ({ ...item, badge: inboxUnread > 0 ? inboxUnread : undefined } satisfies NavItem)
-          : item,
-      ),
+      items: group.items.map((item) => {
+        if (item.href === '/inbox') {
+          return {
+            ...item,
+            badge: inboxUnread > 0 ? inboxUnread : undefined,
+          } satisfies NavItem;
+        }
+        if (item.href === '/leads') {
+          return {
+            ...item,
+            badge: coldAlertsCount > 0 ? coldAlertsCount : undefined,
+          } satisfies NavItem;
+        }
+        return item;
+      }),
     }));
-  }, [inboxUnread]);
+  }, [inboxUnread, coldAlertsCount]);
 
   // Item mais específico (href mais longo) que casa com o pathname atual.
   // Sem isso, dois itens com hrefs aninhados (`/settings` e

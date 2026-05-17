@@ -4,10 +4,15 @@ import type { Metadata } from 'next';
 
 import { listActivitiesForLead } from '@/features/activities/queries';
 import { listAttachmentsForLead } from '@/features/attachments/queries';
-import { listAvailableCadencesForLead, listLeadEnrollments } from '@/features/cadences/queries';
+import {
+  getActiveColdAlertForLead,
+  listAvailableCadencesForLead,
+  listLeadEnrollments,
+} from '@/features/cadences/queries';
 import { getLead, listDefaultPipeline, listSalesReps } from '@/features/leads/queries';
 import { listTasksForLead } from '@/features/tasks/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
+import type { Role } from '@/lib/auth/require-role';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
 import { LeadDetailView } from './lead-detail-view';
@@ -57,6 +62,7 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     initialAttachments,
     initialEnrollments,
     availableCadences,
+    activeColdAlert,
   ] = await Promise.all([
     getLead(workspaceId, params.id),
     listSalesReps(workspaceId),
@@ -66,6 +72,7 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     listAttachmentsForLead(workspaceId, params.id),
     listLeadEnrollments(workspaceId, params.id),
     listAvailableCadencesForLead(workspaceId),
+    getActiveColdAlertForLead(workspaceId, params.id, ctx.user.id, callerMembership.role as Role),
   ]);
 
   if (!lead) {
@@ -82,6 +89,7 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
       initialAttachments={initialAttachments}
       initialEnrollments={initialEnrollments}
       availableCadences={availableCadences}
+      activeColdAlert={activeColdAlert}
       callerUserId={ctx.user.id}
       callerRole={callerMembership.role}
     />
