@@ -41,6 +41,7 @@ import { requireRole } from '@/lib/auth/require-role';
 import { serializeLeadsCsv, type LeadCsvRow } from '@/lib/exports/csv';
 import { findDuplicates } from '@/lib/leads/dedupe';
 import { pickNextAssignee } from '@/lib/leads/pick-assignee';
+import { canAddLead, limitReachedMessage } from '@/lib/limits';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
@@ -138,6 +139,14 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
 
   try {
     const leadId = await withWorkspace<string>(workspaceId, async (tx) => {
+      // M12#4 — enforcement de limite por plano. Dentro da tx pra ficar
+      // atômico com o INSERT: bloqueia race "2 cliques simultâneos com 49
+      // leads → 51 leads".
+      const limit = await canAddLead(workspaceId, { tx });
+      if (!limit.ok) {
+        throw new Error(`PLAN_LIMIT_REACHED:${limitReachedMessage('leads', limit.state)}`);
+      }
+
       // Defense-in-depth: confirma que stageId e assignedTo pertencem ao
       // workspace ativo. RLS já bloqueia FK cross-tenant, mas validação
       // explícita produz mensagens melhores e evita erro genérico P2003.
@@ -210,6 +219,9 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
     return { ok: true, leadId };
   } catch (err) {
     if (err instanceof Error) {
+      if (err.message.startsWith('PLAN_LIMIT_REACHED:')) {
+        return { ok: false, error: err.message.slice('PLAN_LIMIT_REACHED:'.length) };
+      }
       if (err.message === 'STAGE_NOT_FOUND') {
         return { ok: false, error: 'Etapa do funil não encontrada. Recarregue a página.' };
       }
@@ -711,6 +723,23 @@ export async function importLeadsAction(input: ImportLeadsInput): Promise<Import
         rows.map((r) => ({ phone: r.phone, email: r.email })),
       );
 
+      // M12#4 — enforcement de limite. Conta quantas linhas vão DE FATO criar
+      // (descontando duplicatas) e bloqueia se estoura o slot do plano. Sem
+      // isso, import CSV de 200 linhas no Free fura o gate do `createLead`.
+      const willCreateCount = rows.filter((row) => {
+        const phoneKey = row.phone.trim();
+        const emailKey = row.email?.toLowerCase().trim();
+        const isDup = dups.has(phoneKey) || (emailKey ? dups.has(emailKey) : false);
+        return !isDup;
+      }).length;
+
+      if (willCreateCount > 0) {
+        const limit = await canAddLead(workspaceId, { tx, increment: willCreateCount });
+        if (!limit.ok) {
+          throw new Error(`PLAN_LIMIT_REACHED:${limitReachedMessage('leads', limit.state)}`);
+        }
+      }
+
       let created = 0;
       let skipped = 0;
       const errors: ImportRowError[] = [];
@@ -801,6 +830,9 @@ export async function importLeadsAction(input: ImportLeadsInput): Promise<Import
     return { ok: true, summary, importBatchId };
   } catch (err) {
     if (err instanceof Error) {
+      if (err.message.startsWith('PLAN_LIMIT_REACHED:')) {
+        return { ok: false, error: err.message.slice('PLAN_LIMIT_REACHED:'.length) };
+      }
       if (err.message === 'PIPELINE_NOT_FOUND') {
         return {
           ok: false,

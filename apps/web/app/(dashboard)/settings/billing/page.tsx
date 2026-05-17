@@ -5,6 +5,7 @@ import type { Metadata } from 'next';
 import { getBillingState } from '@/features/billing/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { getWorkspaceUsage, toWorkspaceUsageUI } from '@/lib/limits';
 
 import { BillingView } from './billing-view';
 
@@ -48,7 +49,10 @@ export default async function BillingSettingsPage() {
     redirect('/settings');
   }
 
-  const state = await getBillingState(workspaceId);
+  const [state, usage] = await Promise.all([
+    getBillingState(workspaceId),
+    getWorkspaceUsage(workspaceId),
+  ]);
 
-  return <BillingView initialState={state} />;
+  return <BillingView initialState={state} initialUsage={toWorkspaceUsageUI(usage)} />;
 }

@@ -30,6 +30,7 @@ import { requireRole } from '@/lib/auth/require-role';
 import { setWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { sendEmail } from '@/lib/email/resend';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
+import { canAddMember, limitReachedMessage } from '@/lib/limits';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
@@ -122,7 +123,8 @@ export async function inviteMemberAction(
         };
         inviterName: string;
       }
-    | { ok: false; code: 'already_member' };
+    | { ok: false; code: 'already_member' }
+    | { ok: false; code: 'plan_limit_reached'; message: string };
 
   const wsResult = await withWorkspace<InviteWorkspaceResult>(workspaceId, async (tx) => {
     // Defense-in-depth + anti-enumeration (M7#4 CRÍTICO #3): 1 query via
@@ -149,6 +151,22 @@ export async function inviteMemberAction(
     const shouldRotateToken =
       existingByEmail &&
       (existingByEmail.status === 'revoked' || existingByEmail.status === 'expired');
+
+    // M12#4 — enforcement de limite por plano. Conta WorkspaceMember + Invitation
+    // pending. Pula a checagem se o convite a ser reaproveitado JÁ é pending
+    // (slot já está contabilizado — re-send não consome novo slot). Reativar
+    // convite revoked/expired/accepted = +1 slot, então passa pela checagem.
+    const skipLimitCheck = existingByEmail?.status === 'pending';
+    if (!skipLimitCheck) {
+      const limit = await canAddMember(workspaceId, { tx });
+      if (!limit.ok) {
+        return {
+          ok: false,
+          code: 'plan_limit_reached',
+          message: limitReachedMessage('members', limit.state),
+        };
+      }
+    }
 
     const invitation = await tx.invitation.upsert({
       where: { workspaceId_email: { workspaceId, email: targetEmail } },
@@ -197,6 +215,9 @@ export async function inviteMemberAction(
   });
 
   if (!wsResult.ok) {
+    if (wsResult.code === 'plan_limit_reached') {
+      return { ok: false, error: wsResult.message };
+    }
     return { ok: false, error: 'Esse email já é membro do workspace.' };
   }
   const { invitation, inviterName } = wsResult;

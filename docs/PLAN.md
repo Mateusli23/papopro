@@ -1787,7 +1787,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | **M12#1** | Schema (`stripe_customers` + `subscriptions`) + lib/stripe + Server Actions Checkout/Portal + webhook 5 eventos (signature + idempotência) + UI `/settings/billing` Free↔Pro + smoke contratos | `feat/billing`  | ✅ entregue |
 | **M12#2** | Trial 7d sem cartão no signup + avisos D-2/D-1 (push + email Resend)                                                                                                                           | `m12-2-trial`   | ⏳ pendente |
 | **M12#3** | Stripe Pro IA (R$ 497/mês) + Enterprise (price flexível) + upgrade/downgrade no Customer Portal                                                                                                | `m12-3-pro-ia`  | ⏳ pendente |
-| **M12#4** | Enforcement de limites por plano (usuários, leads ativos, disparos/mês, números WhatsApp, agentes IA, storage) + tela de bloqueio com CTA upgrade                                              | `m12-4-limits`  | ⏳ pendente |
+| **M12#4** | Enforcement de limites por plano (Free: 50 leads / 2 membros) + página de cobrança com comparação Free×Pro + Customer Portal + banners de aviso em /leads e /settings/team                     | `m12-4-limits`  | ✅ entregue |
 | **M12#5** | Bloqueio progressivo (read-only 30d após cancel + scheduled deletion com email) + notificações pagamento falhado (in-app + email)                                                              | `m12-5-lockout` | ⏳ pendente |
 | **M12#6** | Métricas internas MRR/churn/conversion (PostHog) + E2E Playwright trial → upgrade → webhook → plano ativo                                                                                      | `m12-6-metrics` | ⏳ pendente |
 
@@ -1871,6 +1871,57 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. Stripe Dashboard **live mode**: criar product "Pro" R$ 197/mês + endpoint webhook `https://app.pipeflow.com.br/api/webhooks/stripe`.
 3. `supabase secrets set` (Vercel env): `STRIPE_SECRET_KEY=sk_live_...`, `STRIPE_WEBHOOK_SECRET=whsec_...`, `STRIPE_PRICE_PRO_MONTHLY=price_live_...`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...`.
 4. Validar webhook: criar uma test subscription → conferir row em `subscriptions` + audit log `subscription_activated`.
+
+### M12#4 — limit enforcement + comparação Free×Pro + banners (entregue 2026-05-17)
+
+**Branch:** `m12-4-limits`
+
+**Objetivo:** travar o uso do plano Free a 50 leads ativos + 2 membros, dar visibilidade do uso atual em `/settings/billing` (com comparação Free vs Pro) e avisar usuário antes do bloqueio nas páginas `/leads` e `/settings/team`. Customer Portal já existia em M12#1 (`Gerenciar assinatura`) — M12#4 só confirma o caminho.
+
+**Decisão de escopo:** apenas dois limites (leads + members), não os 6 do PRD §3.12 (disparos/mês, números WhatsApp, agentes IA, storage). Os outros entram em M11/M9 quando o domínio existir de fato. Free→Pro só — Pro IA/Enterprise vêm em M12#3.
+
+**Entregas:**
+
+- [x] [`apps/web/lib/limits.ts`](apps/web/lib/limits.ts) — biblioteca server-only:
+  - `PLAN_LIMITS` (Free: 50/2; Pro: `Number.POSITIVE_INFINITY`).
+  - `canAddLead(workspaceId, opts?)` / `canAddMember(workspaceId, opts?)` — gate pra Server Actions. Aceita `tx` opcional pra rodar atômico com o INSERT (bloqueia race "2 cliques simultâneos com 49 leads → 51 leads") e `increment` (usado pelo `importLeadsAction` pra checar batch CSV inteiro).
+  - `getWorkspaceUsage(workspaceId)` — snapshot pra UI (banners + página `/settings/billing`).
+  - `computeLimitState` puro extraído pra smoke (testa sem mock de DB).
+  - `toLimitStateUI` + `toWorkspaceUsageUI` — converte `Infinity` em `null + isUnlimited:true` pra serializar via RSC sem perder valor (Flight encoding).
+  - `limitReachedMessage` — copy padronizado pros toast/banner.
+- [x] [`apps/web/features/leads/actions.ts`](apps/web/features/leads/actions.ts) — enforcement em `createLeadAction` (dentro da tx, antes do INSERT) + `importLeadsAction` (após dedup, com `increment = willCreateCount` pra bloquear CSV grande no Free).
+- [x] [`apps/web/features/invitations/actions.ts`](apps/web/features/invitations/actions.ts) — enforcement em `inviteMemberAction` contando `WorkspaceMember + pending Invitation`. Pula a checagem quando o convite reaproveitado já é `pending` (slot já contado — re-send não consome).
+- [x] [`apps/web/components/plan-limit-banner.tsx`](apps/web/components/plan-limit-banner.tsx) — Server Component (sem `'use client'`). Renderiza só em ≥90% do limite. 90–99%: amarelo + "X slots restantes"; 100%: vermelho + "Limite atingido". Owner vê CTA linkando pra `/settings/billing`; outros papéis veem só o aviso.
+- [x] [`apps/web/app/(dashboard)/settings/billing/billing-view.tsx`](<apps/web/app/(dashboard)/settings/billing/billing-view.tsx>) — atualizado:
+  - **Free card** ganha `UsageStat` em 2 colunas (leads + membros) com barras de progresso (cor escalando `primary` → `warning` → `destructive`).
+  - **Pro card** mostra contadores "X (ilimitado)" em vez de só status.
+  - **Tabela "Free × Pro"** nova com 9 linhas (Leads ativos, Membros, CRM/Kanban, Importação CSV, Motor de cadência, Lead frio, Inbox, IA, Anti-ban) + preço + badge "Atual" no plano corrente + bloco vermelho quando atinge limite.
+- [x] [`apps/web/app/(dashboard)/leads/page.tsx`](<apps/web/app/(dashboard)/leads/page.tsx>) + [`settings/team/page.tsx`](<apps/web/app/(dashboard)/settings/team/page.tsx>) — Server Components carregam `getWorkspaceUsage` em paralelo com queries existentes + renderizam `<PlanLimitBanner>` acima do conteúdo.
+- [x] [`packages/ui/src/icons.ts`](packages/ui/src/icons.ts) — `AlertTriangle` + `XCircle` adicionados ao re-export central.
+- [x] [`apps/web/lib/stripe/client.ts`](apps/web/lib/stripe/client.ts) — **fix dev local Windows**: Stripe HTTPS Agent custom usando `tls.getCACertificates('system')` (Node 22.16+/24+) concatenado com `tls.rootCertificates`. Resolve `UNABLE_TO_VERIFY_LEAF_SIGNATURE` quando antivírus injeta cert no Windows trust store (mesma raiz do `pnpm install` documentado em memória `dev-local-windows-antivirus-tls`). Produção Linux: no-op funcional (system store ≡ bundle padrão).
+- [x] [`apps/web/app/api/smoke-test/billing/route.ts`](apps/web/app/api/smoke-test/billing/route.ts) — **+17 checks puros** em 3 grupos: `plan-limits-m12-4` (4), `limit-state-m12-4` (6), `limit-ui-m12-4` (7). Total 27 → **44** checks verdes. Sem hit Stripe API. Lifecycle real continua via Stripe CLI.
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `lint` ✅ (zero warnings), smoke 44/44 ✅, dev server responde 307 nas 3 rotas (auth gate ok).
+
+**Decisões fechadas M12#4:**
+
+- **Apenas 2 limites no MVP** (leads ativos + membros) — outros 4 do PRD §3.12 (disparos/mês, números WhatsApp, agentes IA, storage) ficam fora porque dependem de domínios M11+. Avaliar incluir em M12#5+ ou em sub-PR M12#4p (patch) se demanda concreta surgir.
+- **Leads ativos** = `status='ativo' AND deletedAt IS NULL`. Arquivados/deletados não ocupam slot — caso contrário workspace fica permanentemente bloqueado pelo histórico. Lead recém-arquivado libera slot imediatamente.
+- **Membros** = `WorkspaceMember.count + Invitation.count(pending)`. Pending entra no count pra evitar oversubscription ("Owner com 2 slots manda 5 convites; quando aceitam o slot estourou"). Re-send de convite pending NÃO consome novo slot (mesmo invite, mesma row).
+- **Threshold do banner**: 90% (warning amarelo) + 100% (destructive vermelho). Inspirado em quotas de cloud (Vercel/Supabase) — fora desse range é ruído pro usuário.
+- **Gate dentro da tx do INSERT**: `canAddLead({ tx })` recebe a tx do caller pra ser atômico com o `tx.lead.create`. Sem isso, race de 2 cliques quase simultâneos com 49 leads passaria os dois (count=49 nos dois) e criaria o 51º. Idem invitations.
+- **Banner é Server Component** (sem `'use client'`) — não precisa de interatividade, render no servidor é mais barato + acessível por default. Click no CTA Owner é `<Link href="/settings/billing">`.
+- **Comparação Free×Pro fica em tabela na própria página** (não modal/drawer separado) — densidade visual permite, e o caso comum é "comparar antes de decidir assinar".
+- **Customer Portal já existia em M12#1** (`createPortalSessionAction` + botão "Gerenciar assinatura") — M12#4 só registra. Cancel/upgrade pelo Portal continua. Free não tem Portal porque ainda não tem customer Stripe.
+- **Stripe TLS fix no client.ts**: aceita ficar em produção. Mais limpo que `NODE_OPTIONS=--use-system-ca` (que Next 14 rejeita ao re-spawn de subprocess), mais auditável que `NODE_EXTRA_CA_CERTS` (path do PEM). Tomada de decisão pequena — afeta só HTTPS Agent do Stripe SDK.
+
+**Não-objetivos M12#4 (explícitos):**
+
+- Limites de disparos/mês, números WhatsApp, agentes IA, storage → quando o domínio existir (M11/M9 follow-ups).
+- Tela dedicada "Limite atingido" full-page com ilustração — banners inline são suficientes pro MVP. Full-page bloqueante (lockout) entra em M12#5.
+- Pro IA / Enterprise tiers + limites diferenciados → M12#3.
+- E2E Playwright do flow "criar 51º lead falha" → M12#6.
+
+**Ops pós-deploy:** nenhum (puro código + smoke). Não precisa apply migration nem deploy Edge Function.
 
 ---
 
