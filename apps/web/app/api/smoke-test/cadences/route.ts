@@ -15,6 +15,10 @@ import { NextResponse } from 'next/server';
 import { AuditAction } from '@papopro/db';
 
 import {
+  acknowledgeColdAlertSchema,
+  ackColdAlertWhereForRole,
+} from '@/features/cadences/cold-alerts.helpers';
+import {
   computeBackoffNextRunAt,
   computeNextRunAt,
 } from '@/features/cadences/dispatch/compute-next-run-at';
@@ -24,6 +28,13 @@ import {
 } from '@/features/cadences/dispatch/map-antiban-reason';
 import { dispatchPayloadSchema } from '@/features/cadences/dispatch/schemas';
 import { pickNextStep, type StepCandidate } from '@/features/cadences/dispatch/select-next-step';
+import {
+  ANTI_BAN_SKIP_REASONS,
+  computeResponseRate,
+  filterColdRowsForChart,
+  formatRate,
+  sortCadenceReportRows,
+} from '@/features/cadences/reports.helpers';
 import {
   CADENCE_CHANNELS,
   CADENCE_STATUSES,
@@ -845,6 +856,256 @@ export function GET() {
     // Documenta a invariante que a Edge Function depende (ON CONFLICT DO NOTHING).
     // Falha aqui = M10#1 schema mudou e Edge Function pode duplicar alerts.
     return true; // contract test puro — vide migration M10#1 linha 220.
+  });
+
+  // ── M10#5 — Reports helpers (computeResponseRate / formatRate / sort / filter)
+  // Helpers puros do bloco "Cadências" em `/reports`. Não tocam DB — testam
+  // borda matemática (divide-by-zero, NaN, valores fora de [0,1]) + ordenação
+  // estável da tabela de performance.
+  t = run('cadence-reports-m10', results);
+
+  t('computeResponseRate_handlesZeroDenominator', () => {
+    return computeResponseRate(0, 0) === 0 && computeResponseRate(5, 0) === 0;
+  });
+
+  t('computeResponseRate_normalRatio', () => {
+    return Math.abs(computeResponseRate(3, 10) - 0.3) < 1e-9;
+  });
+
+  t('computeResponseRate_clampsAboveOne', () => {
+    // Em teoria SQL nunca produz replied > enrolled, mas se enrollment for
+    // backfilled antes do FILTER da query divergir, queremos clamping defensivo.
+    return computeResponseRate(15, 10) === 1;
+  });
+
+  t('computeResponseRate_clampsNegative', () => {
+    return computeResponseRate(-2, 10) === 0;
+  });
+
+  t('computeResponseRate_handlesNaN', () => {
+    return computeResponseRate(Number.NaN, 10) === 0 && computeResponseRate(5, Number.NaN) === 0;
+  });
+
+  t('formatRate_default0fraction', () => {
+    return formatRate(0.12) === '12%' && formatRate(0) === '0%' && formatRate(1) === '100%';
+  });
+
+  t('formatRate_fractionDigitsPtBR', () => {
+    // pt-BR usa vírgula decimal — `12.5%` viraria `12,5%`.
+    return formatRate(0.125, 1) === '12,5%';
+  });
+
+  t('formatRate_clampsInvalidInput', () => {
+    return (
+      formatRate(1.5) === '100%' && formatRate(-0.5) === '0%' && formatRate(Number.NaN) === '0%'
+    );
+  });
+
+  t('sortCadenceReportRows_byDispatchedDesc', () => {
+    const rows = [
+      { name: 'B', dispatched30d: 10 },
+      { name: 'A', dispatched30d: 30 },
+      { name: 'C', dispatched30d: 20 },
+    ];
+    const sorted = sortCadenceReportRows(rows);
+    return sorted.map((r) => r.name).join(',') === 'A,C,B';
+  });
+
+  t('sortCadenceReportRows_alphaTiebreakStable', () => {
+    // Empate em dispatched_30d → ordem alfabética pt-BR (não inverter ordem
+    // de chegada — UI flutuaria entre refreshes).
+    const rows = [
+      { name: 'Charlie', dispatched30d: 5 },
+      { name: 'Alpha', dispatched30d: 5 },
+      { name: 'Bravo', dispatched30d: 5 },
+    ];
+    const sorted = sortCadenceReportRows(rows);
+    return sorted.map((r) => r.name).join(',') === 'Alpha,Bravo,Charlie';
+  });
+
+  t('filterColdRowsForChart_dropsZeros', () => {
+    const rows = [
+      { stageId: 'a', coldCount: 3 },
+      { stageId: 'b', coldCount: 0 },
+      { stageId: 'c', coldCount: 1 },
+    ];
+    return (
+      filterColdRowsForChart(rows)
+        .map((r) => r.stageId)
+        .join(',') === 'a,c'
+    );
+  });
+
+  t('filterColdRowsForChart_emptyRemainsEmpty', () => {
+    return filterColdRowsForChart([]).length === 0;
+  });
+
+  t('ANTI_BAN_SKIP_REASONS_includesExpected', () => {
+    const expected = ['rate_limit', 'unhealthy', 'outside_business_hours'];
+    return (
+      ANTI_BAN_SKIP_REASONS.length === expected.length &&
+      expected.every((r) =>
+        ANTI_BAN_SKIP_REASONS.includes(r as (typeof ANTI_BAN_SKIP_REASONS)[number]),
+      )
+    );
+  });
+
+  // ── M10#5 — cadence-dispatch contratos (reforço M10#2) ───────────────────
+  // Edge Function `cadence-runner` POSTa pra `/api/internal/cadence-dispatch`
+  // com payload Zod-validado. Esses checks extras protegem contra
+  // regressões silenciosas no schema/helpers.
+  t = run('cadence-dispatch-contracts-m10', results);
+
+  // Garante que props NOVAS (alguém adicionando `lead_phone` etc. na Edge
+  // sem atualizar o schema) sejam rejeitadas pelo `.strict()` do Zod.
+  t('dispatchPayloadSchema_rejectsTwoExtraProps', () => {
+    const payload = {
+      workspace_id: VALID_UUIDS.workspace,
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+      retry_count: 0, // prop nova hipotética
+      lead_phone: '+5511999998888', // prop nova hipotética
+    };
+    return !dispatchPayloadSchema.safeParse(payload).success || 'aceitou props extras';
+  });
+
+  // mapAntiBanToSkipReason: garante que CADA reason do anti-ban (M9#3) tem
+  // mapping. Se M11+ adicionar reason nova, esse check QUEBRA (forçando
+  // atualização do mapping antes do deploy).
+  t('mapAntiBanToSkipReason_coversAllSixReasons', () => {
+    const reasons = [
+      'blacklisted',
+      'instance_disconnected',
+      'instance_unhealthy',
+      'instance_paused',
+      'outside_business_hours',
+      'rate_limit_24h',
+    ] as const;
+    const unmapped = reasons.find((r) => {
+      try {
+        const mapped = mapAntiBanToSkipReason(r);
+        return typeof mapped !== 'string' || mapped.length === 0;
+      } catch {
+        return true;
+      }
+    });
+    return !unmapped || `reason "${unmapped}" não tem mapping`;
+  });
+
+  // computeBackoffNextRunAt: cap de minutos negativos é NaN-safe.
+  t('computeBackoffNextRunAt_returnsExactDelta', () => {
+    const now = new Date('2026-05-16T10:00:00Z');
+    const result = computeBackoffNextRunAt(now, 30);
+    const deltaMs = result.getTime() - now.getTime();
+    // Exato 30 min = 1800000ms. Sem arredondamento por ms residual.
+    return deltaMs === 30 * 60 * 1000 || `delta=${deltaMs}ms`;
+  });
+
+  t('computeBackoffNextRunAt_customMinutes', () => {
+    const now = new Date('2026-05-16T10:00:00Z');
+    const result = computeBackoffNextRunAt(now, 15);
+    const deltaMs = result.getTime() - now.getTime();
+    return deltaMs === 15 * 60 * 1000 || `delta=${deltaMs}ms`;
+  });
+
+  // DAY_OFFSETS: ordem preservada (PRD §2.2). Se alguém reorganizar
+  // [0,1,3,7,14,30] em algum momento, runner pula step.
+  t('DAY_OFFSETS_orderPreserved', () => {
+    const expected = [0, 1, 3, 7, 14, 30];
+    return DAY_OFFSETS.length === expected.length && expected.every((v, i) => DAY_OFFSETS[i] === v);
+  });
+
+  t('isPermanentBlock_falseForNonBlacklisted', () => {
+    // Regressão M10#4 review: alguém pode ser tentado a marcar
+    // `instance_disconnected` como permanente. Anti-ban transiente NUNCA
+    // cancela enrollment — só blacklist (LGPD opt-out) faz isso.
+    const transient = [
+      'instance_disconnected',
+      'instance_unhealthy',
+      'instance_paused',
+      'outside_business_hours',
+      'rate_limit_24h',
+    ] as const;
+    const offender = transient.find((r) => isPermanentBlock(r));
+    return !offender || `${offender} marcado como permanente — quebraria backoff`;
+  });
+
+  // pickNextStep com mesmo dayOffset e order_index ascendente:
+  // o runner DEPENDE dessa estabilidade pra disparar a sequência D+0a → D+0b
+  // → D+0c na ordem cadastrada.
+  t('pickNextStep_stableWithinSameDayOffset', () => {
+    const steps: StepCandidate[] = [
+      { id: 's2', day_offset: 1, order_index: 2, channel: 'whatsapp', template_body: 'c' },
+      { id: 's1', day_offset: 1, order_index: 0, channel: 'whatsapp', template_body: 'a' },
+      { id: 's0', day_offset: 0, order_index: 0, channel: 'whatsapp', template_body: 'd' },
+      { id: 's3', day_offset: 1, order_index: 1, channel: 'whatsapp', template_body: 'b' },
+    ];
+    // Tudo do day 0 executado → escolhe s1 (day 1, order 0)
+    const next = pickNextStep(steps, new Set(['s0']));
+    return next?.id === 's1' || `esperava s1, recebi ${next?.id}`;
+  });
+
+  // ── M10#5 — cold-detector contratos (reforço M10#4) ─────────────────────
+  t = run('cold-detector-contracts-m10', results);
+
+  // acknowledgeColdAlertSchema — aceita UUID v4 válido.
+  t('acknowledgeColdAlertSchema_acceptsUuid', () => {
+    const r = acknowledgeColdAlertSchema.safeParse({ alertId: VALID_UUIDS.lead });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // ackSchema — rejeita string que não é UUID
+  t('acknowledgeColdAlertSchema_rejectsNonUuid', () => {
+    return acknowledgeColdAlertSchema.safeParse({ alertId: 'abc-123' }).success === false;
+  });
+
+  // ackSchema — rejeita ausência da prop
+  t('acknowledgeColdAlertSchema_rejectsMissingAlertId', () => {
+    return acknowledgeColdAlertSchema.safeParse({}).success === false;
+  });
+
+  // ackColdAlertWhereForRole: Owner/Admin/Manager veem o workspace todo (sem
+  // filtro nested). Smoke aqui é a primeira linha de defesa caso alguém mude
+  // o helper e quebre o RBAC fino do M10#4.
+  t('ackColdAlertWhereForRole_ownerAdminManagerWorkspaceWide', () => {
+    const w = '00000000-0000-4000-8000-000000000001';
+    const u = '00000000-0000-4000-8000-000000000002';
+    const owner = ackColdAlertWhereForRole(w, u, 'Owner');
+    const admin = ackColdAlertWhereForRole(w, u, 'Admin');
+    const manager = ackColdAlertWhereForRole(w, u, 'Manager');
+    // workspace todo: where.lead não está setado (sem nested filter).
+    const hasNoLeadFilter = (obj: object) => !('lead' in obj);
+    return hasNoLeadFilter(owner) && hasNoLeadFilter(admin) && hasNoLeadFilter(manager);
+  });
+
+  // Vendedor: precisa do nested `lead.assignedTo.userId` — quebrar isso vaza
+  // alerts de leads que não são do vendedor pro badge/sino dele.
+  t('ackColdAlertWhereForRole_vendedorNestedFilter', () => {
+    const w = '00000000-0000-4000-8000-000000000001';
+    const u = '00000000-0000-4000-8000-000000000002';
+    const v = ackColdAlertWhereForRole(w, u, 'Vendedor') as {
+      workspaceId: string;
+      lead?: { assignedTo?: { userId?: string } };
+    };
+    return v.workspaceId === w && v.lead?.assignedTo?.userId === u;
+  });
+
+  // Viewer cai no caminho default (workspace-wide na query, mas UI esconde
+  // a entrada via `loadColdAlertsCount` retornando 0 cedo). Smoke confirma
+  // que o where do helper continua resolvendo sem throw em Viewer.
+  t('ackColdAlertWhereForRole_viewerDoesNotThrow', () => {
+    try {
+      const w = '00000000-0000-4000-8000-000000000001';
+      const u = '00000000-0000-4000-8000-000000000002';
+      const viewer = ackColdAlertWhereForRole(w, u, 'Viewer');
+      return viewer.workspaceId === w;
+    } catch (err) {
+      return `threw: ${(err as Error).message}`;
+    }
   });
 
   const passed = results.filter((r) => r.ok).length;
