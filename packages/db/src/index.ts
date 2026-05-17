@@ -96,4 +96,6 @@ export {
   KnowledgeSourceKind,
   KnowledgeDocStatus,
   KnowledgeDocKind,
+  // M11#2 — usage_events (metering cross-feature de IA)
+  UsageEventKind,
 } from '@prisma/client';

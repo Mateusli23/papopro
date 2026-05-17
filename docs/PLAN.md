@@ -1751,15 +1751,15 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
 
-| Sub-PR    | Escopo                                                                                                                                                                                                                | Branch            | Status      |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
-| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                       | `m11-ai-agents`   | ✅ entregue |
-| **M11#2** | `lib/ai/` — `claude.ts` (Anthropic SDK + prompt caching), `embeddings.ts` (text-embedding-3-small, batch), `memory.ts` (3 camadas). `usage_events` schema.                                                            | `m11-2-ai-lib`    | ⏳ pendente |
-| **M11#3** | UI conectada — Server Actions `createAgent`/`saveVersion`/`activate`/`toggleStatus` + roteamento; editor M5 hidrata do servidor. Versionamento + rollback com diff. Chat de simulação chama Claude real.              | `m11-3-ui-wiring` | ⏳ pendente |
-| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                             | `m11-4-knowledge` | ⏳ pendente |
-| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                     | `m11-5-router`    | ⏳ pendente |
-| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).     | `m11-6-handoffs`  | ⏳ pendente |
-| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts). | `m11-7-metrics`   | ⏳ pendente |
+| Sub-PR    | Escopo                                                                                                                                                                                                                     | Branch            | Status      |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                            | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background. | `m11-2-ai-lib`    | ✅ entregue |
+| **M11#3** | UI conectada — Server Actions `createAgent`/`saveVersion`/`activate`/`toggleStatus` + roteamento; editor M5 hidrata do servidor. Versionamento + rollback com diff. Chat de simulação chama Claude real.                   | `m11-3-ui-wiring` | ⏳ pendente |
+| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                                  | `m11-4-knowledge` | ⏳ pendente |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                          | `m11-5-router`    | ⏳ pendente |
+| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).          | `m11-6-handoffs`  | ⏳ pendente |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).      | `m11-7-metrics`   | ⏳ pendente |
 
 **Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
 
@@ -1828,6 +1828,58 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. Validar via `SELECT typname FROM pg_type WHERE typname LIKE 'agent_%' OR typname LIKE 'knowledge_%'` — esperado 7 tipos.
 3. Validar HNSW index criado: `SELECT indexname FROM pg_indexes WHERE indexname = 'knowledge_embeddings_hnsw_idx'`.
 4. **Nada mais** — sem Edge Function, sem cron job, sem secret, sem env var.
+
+### M11#2 — lib/ai/ + usage_events + SDKs Anthropic/OpenAI (entregue 2026-05-17)
+
+**Branch:** `m11-2-ai-lib`
+
+**Objetivo:** entregar o motor de IA — a camada `apps/web/lib/ai/` que Server Actions (M11#3) e Edge Functions (M11#4/#5) vão importar pra chamar Claude, gerar embeddings, e montar a memória 3 camadas em runtime. Sem UI, sem chamadas reais no smoke (zero hit Anthropic/OpenAI). Schema mínimo (`usage_events`) pra metering cross-feature de custo IA.
+
+**Decisões fechadas:**
+
+- **`usage_events` tabela única, não uma por kind.** Padrão `audit_logs`/`webhook_events` (1 tabela + enum discriminador). Evita N migrations futuras pra `summary_call`/`transcription_call`/etc. Schema do payload (tokens + cost) é estável entre kinds.
+- **`cost_micros` é bigint USD × 10⁶.** Evita float drift em `SUM` de milhões de rows. `bigint` cobre até ~$9.2T (suficiente).
+- **Preço armazenado em `micros/1M tokens`, não `micros/token`.** Cache read $0.30/1M = 0.3 micros/token truncaria pra 0 em integer; embedding $0.02/1M = 0.02 micros/token idem. Em micros/1M (300_000 e 20_000) tudo vira integer perfeito; dividimos por 1M no final (perda ≤ 1 micro/chamada, irrelevante).
+- **Sonnet 4.6 default** (env `ANTHROPIC_MODEL`). Haiku 4.5 disponível pra workspaces que aceitem qualidade menor por ~4× custo a menos.
+- **`text-embedding-3-small`** (1536 dims, $0.02/1M) — alinha com decisão M11#1 (`vector(1536)` na schema).
+- **Non-streaming pra agentes.** Decisão M11#2: resposta inteira de uma vez (mensagem WhatsApp, baixa latência ≠ urgente). Streaming entra em M11#3 quando chat de simulação no editor precisar.
+- **Retry built-in do SDK.** Anthropic e OpenAI SDKs têm `maxRetries` com backoff exponencial em 429/5xx. Setamos 3 (default é 2). Não reimplementamos loop manual.
+- **Prompt caching obrigatório** (CLAUDE.md §6). System + cacheableBlocks em até 4 system text blocks com `cache_control: ephemeral`. Quando >3 cacheable blocks chegam, consolidamos num único block (sacrifica granularidade, mantém o teto Anthropic).
+- **`vector(1536)` via `$queryRaw`/`$executeRaw`** — decisão M11#1. Top-K usa `<=>` (cosine distance), upsert usa `ON CONFLICT (chunk_id) DO UPDATE`.
+- **Cache local em memória (sha1) — não distribuído.** `Map<hash, vector>` por processo. Dedup eficaz dentro do mesmo cold start (re-indexação, retries). Redis fica pra V2 quando o volume justificar.
+- **`claude.ts`/`embeddings.ts`/`memory.ts` não persistem.** Wrappers de API retornam `{ text, usage, ... }`. Caller (Server Action de M11#3) chama `recordUsage(...)` + `prisma.agentMessage.create(...)` separado. Mantém wrappers testáveis sem mock de DB.
+- **Memória 3 camadas montada em paralelo** quando possível. `assembleContext` dispara 3 promises (sessão + lead + embed query) em `Promise.all`, depois resolve top-K que depende do embed.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260527120000_m11_2_usage_events_schema.sql`](../supabase/migrations/20260527120000_m11_2_usage_events_schema.sql) — tabela `usage_events` + enum `usage_event_kind` (3 values) + RLS (SELECT/INSERT por workspace; append-only) + 3 indexes (workspace+created, workspace+kind+created, entity partial).
+- [x] [`packages/db/prisma/schema.prisma`](../packages/db/prisma/schema.prisma) + [`packages/db/src/index.ts`](../packages/db/src/index.ts) — `UsageEventKind` enum + `UsageEvent` model (com `BigInt` em `costMicros`) + relation em `Workspace`. Re-export do enum.
+- [x] [`apps/web/package.json`](../apps/web/package.json) — `@anthropic-ai/sdk@^0.96.0` + `openai@^6.38.0`. Instalação no Windows precisou `NODE_OPTIONS=--use-system-ca` + `--ignore-scripts` (antivírus interceptando TLS, memória `dev-local-windows-antivirus-tls`).
+- [x] [`apps/web/lib/ai/pricing.ts`](../apps/web/lib/ai/pricing.ts) — `ANTHROPIC_PRICING_MICROS_PER_MILLION` + `OPENAI_PRICING_MICROS_PER_MILLION` (snapshot 2026-05-17). `computeCostMicros(model, usage) → bigint` puro + sanity checks (negativo, modelo desconhecido). `getDefaultAnthropicModel`/`getDefaultEmbeddingModel`.
+- [x] [`apps/web/lib/ai/usage.ts`](../apps/web/lib/ai/usage.ts) — `recordUsage({ workspaceId, eventKind, feature, model, usage, entityKind?, entityId? })` via `withWorkspace(tx)` + cálculo automático de `cost_micros`. Sem UPDATE/DELETE (tabela append-only).
+- [x] [`apps/web/lib/ai/claude.ts`](../apps/web/lib/ai/claude.ts) — lazy singleton `getAnthropic()` (server-only + throw em falta de API key) + `complete({ workspaceId, sessionId, feature, system, cacheableBlocks?, messages, model?, maxTokens? }) → { text, usage, model, stopReason }`. System blocks com `cache_control: ephemeral` (1 system + ≤3 KB chunks; consolidação automática se >3). `maxRetries: 3` no construtor.
+- [x] [`apps/web/lib/ai/embeddings.ts`](../apps/web/lib/ai/embeddings.ts) — lazy singleton `getOpenAI()` + `embedTexts({ workspaceId, texts, model? }) → { embeddings, usage, model, cacheHits }`. Batch de até 96 + dedup via `hashEmbeddingInput(text, model)` sha1 + cache local `Map`. `upsertChunkEmbedding({ workspaceId, chunkId, vector, model })` via `$executeRaw` com `ON CONFLICT (chunk_id) DO UPDATE`. `clearEmbeddingCache`/`getEmbeddingCacheSize` pra observabilidade.
+- [x] [`apps/web/lib/ai/memory.ts`](../apps/web/lib/ai/memory.ts) — `assembleContext({ workspaceId, agentId, sessionId?, leadId?, latestUserMessage, topK?, sessionMessagesTake? }) → { sessionMessages, leadSummary, knowledgeChunks, cacheableBlocks }`. `topKKnowledge({ workspaceId, queryVector, k? })` via pgvector `<=>` + JOIN com `knowledge_chunks`. `updateLeadSummary({ workspaceId, leadId, agentId, recentMessages, existingSummary }) → { newSummary, usage, model }` pra job background. `formatKnowledgeBlock`/`buildSummaryPrompt` puros (testáveis).
+- [x] [`apps/web/app/api/smoke-test/ai/route.ts`](../apps/web/app/api/smoke-test/ai/route.ts) — **28 checks** em 5 grupos (`pricing-m11-2` 14, `usage-event-shape-m11-2` 4, `embedding-cache-m11-2` 5, `memory-contract-m11-2` 6, `claude-contract-m11-2` 1). Zero hit Anthropic/OpenAI.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅, smoke `/api/smoke-test/ai` 28/28 verde ✅. Smoke `/api/smoke-test/agents` (M11#1) ainda 90/90 ✅ (sem regressão).
+
+**Não-objetivos M11#2 (explícitos):**
+
+- Server Actions (`createAgentAction`, `sendAgentMessageAction`, etc.) → M11#3
+- UI hidratada do servidor + chat de simulação chamando Claude real → M11#3
+- Upload de documento + Edge Function de chunking + embedding em background → M11#4
+- Trigger inbound (uazapi webhook → match no roteador → cria session → despacha Claude) → M11#5
+- Handoffs agente↔agente + agente→humano → M11#6
+- Métricas por agente + enforcement 3 ativos no Pro IA → M11#7
+- Cache distribuído (Redis) pra embeddings → V2
+- Streaming responses (chat simulação real-time) → M11#3
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. `supabase apply_migration name=m11_2_usage_events_schema` (depende de M11#1 já aplicada).
+2. Validar enum: `SELECT typname FROM pg_type WHERE typname = 'usage_event_kind'`.
+3. Configurar `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env quando entrar M11#3 (M11#2 sozinho não usa as chaves em runtime — smoke não bate API).
+4. **Custo $0 antes de M11#3** — esta entrega só prepara a biblioteca.
 
 ---
 
