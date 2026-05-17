@@ -1780,29 +1780,97 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 ## M12 — Stripe Billing + Trial + Bloqueio Progressivo
 
-**Branch:** `m12-billing`
+**Estratégia:** sub-PRs sequenciais sobre `dev` (gitflow strict M8/M9/M10). M12#1 entrega o foundation Free↔Pro funcional ponta-a-ponta. Sub-PRs subsequentes (#2–#6) expandem pra cobrir o resto do PRD.
 
-**Objetivo:** Planos Pro / Pro IA / Enterprise com Stripe Checkout, Customer Portal, webhooks idempotentes, trial de 7d sem cartão e bloqueio progressivo.
+| Sub-PR    | Escopo                                                                                                                                                                                         | Branch          | Status      |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------- |
+| **M12#1** | Schema (`stripe_customers` + `subscriptions`) + lib/stripe + Server Actions Checkout/Portal + webhook 5 eventos (signature + idempotência) + UI `/settings/billing` Free↔Pro + smoke contratos | `feat/billing`  | ✅ entregue |
+| **M12#2** | Trial 7d sem cartão no signup + avisos D-2/D-1 (push + email Resend)                                                                                                                           | `m12-2-trial`   | ⏳ pendente |
+| **M12#3** | Stripe Pro IA (R$ 497/mês) + Enterprise (price flexível) + upgrade/downgrade no Customer Portal                                                                                                | `m12-3-pro-ia`  | ⏳ pendente |
+| **M12#4** | Enforcement de limites por plano (usuários, leads ativos, disparos/mês, números WhatsApp, agentes IA, storage) + tela de bloqueio com CTA upgrade                                              | `m12-4-limits`  | ⏳ pendente |
+| **M12#5** | Bloqueio progressivo (read-only 30d após cancel + scheduled deletion com email) + notificações pagamento falhado (in-app + email)                                                              | `m12-5-lockout` | ⏳ pendente |
+| **M12#6** | Métricas internas MRR/churn/conversion (PostHog) + E2E Playwright trial → upgrade → webhook → plano ativo                                                                                      | `m12-6-metrics` | ⏳ pendente |
+
+**Commit final:** `feat(billing): stripe checkout, customer portal, trial flow and progressive lockout`
+
+### M12#1 — schema + Stripe lib + Checkout/Portal + Webhook (entregue 2026-05-17)
+
+**Branch:** `feat/billing`
+
+**Objetivo:** entregar o caminho mínimo funcional **Free → Pro → Webhook → ativa → Cancel → Free**, com tudo passando por Server Action (única exceção é o webhook do Stripe, que precisa de Route Handler pelo raw body da assinatura HMAC).
+
+**Decisão de escopo:** simplificação Free/Pro (vs PRD Pro/Pro IA/Enterprise). MVP só `pro` no enum + 1 price ID. Sub-PRs subsequentes (#2–#6) expandem os outros planos, trial, enforcement, bloqueio progressivo e métricas.
 
 **Entregas:**
 
-- [ ] Schema: `subscriptions`, `plans`, `plan_limits`, `usage_events`, `trial_state`, `subscription_events`
-- [ ] Produtos e prices criados no Stripe (test e prod): Pro R$ 197/mês, Pro IA R$ 497/mês, Enterprise (price flexível)
-- [ ] Trial de 7 dias **sem cartão** criado no signup do workspace
-- [ ] Avisos D-2 e D-1 (push + email) antes do fim do trial
-- [ ] Tela `/settings/billing` (apenas Owner): plano atual, próxima cobrança, método de pagamento, histórico de faturas
-- [ ] Stripe Checkout para upgrade/downgrade
-- [ ] Stripe Customer Portal embutido (atualizar cartão, baixar fatura, cancelar)
-- [ ] Webhook `app/api/webhooks/stripe/route.ts` com **verificação de assinatura** + idempotência por `event_id`
-- [ ] Eventos tratados: `checkout.session.completed`, `customer.subscription.created/updated/deleted`, `invoice.payment_succeeded/failed`
-- [ ] Enforcement de limites por plano: usuários, leads ativos, disparos/mês, números WhatsApp, agentes IA, storage
-- [ ] Bloqueio progressivo: read-only por 30 dias após cancelamento; após, scheduled deletion (com confirmação por email)
-- [ ] Notificações de pagamento falhado (in-app + email; sem push, conforme matriz)
-- [ ] Tela de bloqueio quando limite excedido com CTA de upgrade
-- [ ] Métricas internas: MRR, churn, trial → paid conversion (PostHog)
-- [ ] Testes E2E: trial → upgrade → webhook → plano ativo
+- [x] [`supabase/migrations/20260525120000_m12_1_billing_schema.sql`](supabase/migrations/20260525120000_m12_1_billing_schema.sql) — 2 enums (`subscription_plan` só `pro`; `subscription_status` com 5 valores Stripe-canônicos), 5 valores novos em `audit_action` (`checkout_initiated`, `subscription_activated`, `subscription_canceled`, `payment_succeeded`, `payment_failed`), 2 tabelas (`stripe_customers` PK=workspace_id 1:1; `subscriptions` 1:N por workspace com UNIQUE `stripe_subscription_id` pra idempotência de webhook), RLS habilitada (4+3 policies — DELETE só via cascade do workspace), 2 triggers `touch_updated_at`.
+- [x] [`packages/db/prisma/schema.prisma`](packages/db/prisma/schema.prisma) — +2 enums (`SubscriptionPlan`, `SubscriptionStatus`), +2 models (`StripeCustomer`, `Subscription`), +5 `AuditAction` values espelhando o SQL, relations em `Workspace`. Re-exports em `@papopro/db`.
+- [x] [`apps/web/lib/stripe/`](apps/web/lib/stripe/) — **3 arquivos**:
+  - `client.ts`: Stripe SDK singleton lazy + apiVersion pinned `2026-04-22.dahlia` + `appInfo` pra telemetria. Lança em falta de `STRIPE_SECRET_KEY` (sem fallback silencioso).
+  - `plans.ts`: `priceIdToPlan(priceId)` puro + `planToPriceId(plan)` consultando env vars. Sem `'server-only'` — smoke importa.
+  - `verify-signature.ts`: wrapper de `stripe.webhooks.constructEvent` retornando `{ ok, event } | { ok: false, code, message }`. Sem fallback "skipped" pra dev — CLAUDE.md §7.4 exige verify estrita.
+- [x] [`apps/web/features/billing/`](apps/web/features/billing/) — feature completa:
+  - `schemas.ts`: `checkoutSessionInputSchema` Zod strict (aceita só `plan: 'pro'`); `portalSessionInputSchema` placeholder.
+  - `types.ts`: `BillingStateUI` (plan='free'|'pro' + subscription nullable + hasStripeCustomer) consumido pela UI.
+  - `queries.ts`: `getBillingState(workspaceId)` server-only — single round-trip que retorna estado pronto pra render (sem JOIN — duas queries paralelas Subscription + StripeCustomer).
+  - `actions.ts`: 2 Server Actions Owner-only — `createCheckoutSessionAction({plan})` faz `getOrCreateStripeCustomer` + `checkout.sessions.create` com metadata workspace_id em duas camadas (session + subscription_data); `createPortalSessionAction()` abre Stripe Customer Portal (caminho de cancelamento). Ambas com `requireRole(['Owner'])` + audit log + `reportNonFatal`.
+  - `webhook/extract.ts`: helpers puros — `getWorkspaceIdFromMetadata`, `mapStripeStatus` (10 valores Stripe → 5 enum local; `trialing/paused → active`), `getFirstPriceId`, `getCurrentPeriod` (lê `items.data[0].current_period_*` — API 2025-09+ migrou esses campos de root pra item-level).
+  - `webhook/handlers.ts`: 5 handlers tipados (`handleCheckoutSessionCompleted`, `handleSubscriptionUpserted` cobre `created`/`updated`, `handleSubscriptionDeleted`, `handleInvoicePaymentSucceeded`, `handleInvoicePaymentFailed`). Upsert por `stripe_subscription_id` UNIQUE é idempotente.
+- [x] [`apps/web/app/api/webhooks/stripe/route.ts`](apps/web/app/api/webhooks/stripe/route.ts) — POST handler `runtime=nodejs` `maxDuration=30`. Sequência: raw body → signature verify (401 se inválida; 500 se secret ausente) → resolve `workspace_id` em 3 camadas (`session.metadata` → `subscription.metadata` → lookup `stripe_customers` por customer_id; 200 skipped se nada bate) → idempotência via `WebhookEvent (source='stripe', externalId=event.id)` reusando tabela M9#3 → `withWorkspace(tx)` → dispatch por `event.type` → mark `processedAt`. Errors retornam 500 pra Stripe re-entregar (idempotência protege).
+- [x] [`apps/web/app/(dashboard)/settings/billing/page.tsx`](<apps/web/app/(dashboard)/settings/billing/page.tsx>) + [`billing-view.tsx`](<apps/web/app/(dashboard)/settings/billing/billing-view.tsx>) — Server Component **Owner only** (redirect `/settings` pra outros papéis) carrega `getBillingState` + passa pro Client View. UI bifurca em 2 estados visuais:
+  - **Free**: card "Plano Free" com bullets do que o Pro entrega + CTA `Assinar Pro` (chama `createCheckoutSessionAction` → `window.location.href = result.url`).
+  - **Pro ativo**: card "Plano Pro" com status badge (active/past_due/canceled), próxima cobrança (date-fns ptBR), CTA `Gerenciar assinatura` (chama `createPortalSessionAction` → redireciona pro Stripe Portal pra cancelar/atualizar cartão).
+- [x] [`apps/web/app/api/smoke-test/billing/route.ts`](apps/web/app/api/smoke-test/billing/route.ts) — **+22 checks puros** em 7 grupos sem hit no Stripe API: `audit-actions-m12` (1), `enums-m12` (2), `schemas-m12` (4), `plans-m12` (3), `webhook-extract-m12` (4), `webhook-status-map-m12` (8), `webhook-period-m12` (2), `webhook-price-extract-m12` (3) — total 27 checks. Lifecycle E2E real fica com `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
+- [x] [`apps/web/.env.local.example`](apps/web/.env.local.example) — vars já documentadas em M12 (M5/M7 antecipou): `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO_MONTHLY`. Body do PR documenta os passos de Stripe Dashboard pra preencher (criar product "Pro" R$ 197/mês + webhook endpoint + copiar IDs).
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, smoke `/api/smoke-test/billing` 27/27 verde.
 
-**Commit final:** `feat(billing): stripe checkout, customer portal, trial flow and progressive lockout`
+**Decisões fechadas M12#1:**
+
+- **Free como ausência de subscription** (não enum value). `workspace.plan` legacy fica intocado (M5 default "Pro" string); source-of-truth do plano é "tem row em `subscriptions` com status ∈ {active, past_due}?". Evita ALTER em workspaces existentes + simplifica enum (1 valor `pro` em vez de 4 com `free`).
+- **MVP só `pro`** — Pro IA / Enterprise entram em M12#3. Decisão valida com usuário antes de implementar.
+- **Webhook é a única Route Handler** — todo o resto usa Server Action. Motivo do webhook ser exceção: precisa do raw body literal pra HMAC + recebe POST cross-origin Stripe sem sessão.
+- **Stripe API version pinned** (`2026-04-22.dahlia`) — pin via SDK type. Mudar via skill `stripe:upgrade-stripe` em batch controlado.
+- **Idempotência reusa `webhook_events`** (mesma tabela do uazapi M9#3) com `source='stripe'`. Evita duplicação de schema.
+- **Workspace_id em 2 camadas de metadata** — Stripe NÃO propaga `session.metadata` → `subscription.metadata` automaticamente; setamos nos dois. Webhook tenta `session.metadata` primeiro (checkout completed), depois `subscription.metadata`, depois lookup via `stripe_customers`.
+- **Não há audit "subscription_updated"** — usamos `subscription_activated` pros 3 eventos (`created`/`updated`/`activated`). Distingue via `changes.eventType` no audit log. Reduz enum sprawl.
+- **Custom Portal substitui dialog de cancel** — em M5 a UI tinha `<CancelSubscriptionDialog>` mockado. Em M12#1 o cancelamento acontece no Stripe Portal (clique em "Gerenciar assinatura"). Dialog mockado fica órfão até M12 finalizar (não removo agora pra evitar churn de M5 demo).
+- **`stripeCustomer` é 1:1** (workspace_id PK) — não há cenário de mesmo workspace ter 2 customers Stripe. Multi-currency / multi-region é V3+.
+
+**Não-objetivos M12#1 (explícitos — ficam pra sub-PRs):**
+
+- Trial 7d sem cartão + avisos D-2/D-1 → M12#2
+- Pro IA / Enterprise tiers → M12#3
+- Enforcement de limites por plano → M12#4
+- Bloqueio progressivo (read-only 30d + scheduled deletion) → M12#5
+- Notificações de pagamento falhado (push + email) → M12#5 (depende de notification system completo)
+- Métricas internas MRR/churn/conversion (PostHog) → M12#6
+- E2E Playwright → M12#6
+- UI legacy de Usage limits / Invoices table (M5 fixtures) — não removida; será reescrita em M12#4/#5 quando virar real.
+
+**Stripe Dashboard — setup manual antes de testar (vai no body do PR):**
+
+1. Stripe Dashboard (test mode) → Products → Create product **"PapoPro — Pro"** → Recurring price **R$ 197,00 BRL / mês** → copiar `price_xxx`.
+2. Developers → Webhooks → Add endpoint local (via `stripe listen`):
+   ```
+   stripe listen --forward-to localhost:3000/api/webhooks/stripe
+   ```
+   Stripe CLI imprime `whsec_xxx` temporário.
+3. Eventos pra subscrever no webhook prod (depois): `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`.
+4. Colocar em `apps/web/.env.local`:
+   ```
+   STRIPE_SECRET_KEY=sk_test_...
+   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
+   STRIPE_WEBHOOK_SECRET=whsec_... (do stripe listen)
+   STRIPE_PRICE_PRO_MONTHLY=price_xxx
+   ```
+5. Test cards (skill `stripe:test-cards`): `4242 4242 4242 4242` (sucesso), `4000 0000 0000 9995` (failed).
+
+**Ops pós-deploy (fora do PR — pré-launch):**
+
+1. Aplicar migration via MCP `apply_migration name=m12_1_billing_schema` (depende de M10#4 já aplicada).
+2. Stripe Dashboard **live mode**: criar product "Pro" R$ 197/mês + endpoint webhook `https://app.pipeflow.com.br/api/webhooks/stripe`.
+3. `supabase secrets set` (Vercel env): `STRIPE_SECRET_KEY=sk_live_...`, `STRIPE_WEBHOOK_SECRET=whsec_...`, `STRIPE_PRICE_PRO_MONTHLY=price_live_...`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...`.
+4. Validar webhook: criar uma test subscription → conferir row em `subscriptions` + audit log `subscription_activated`.
 
 ---
 
