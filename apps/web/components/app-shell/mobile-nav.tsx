@@ -20,6 +20,8 @@ import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switc
 interface MobileNavProps {
   workspaces: WorkspaceSwitcherItem[];
   activeWorkspaceId: string | null;
+  /** Cold alerts não-acknowledged visíveis pro caller (M10#4). */
+  coldAlertsCount?: number;
 }
 
 /**
@@ -32,7 +34,7 @@ interface MobileNavProps {
  * **M7#4 Onda 3:** workspaces vêm via prop do Topbar (server) em vez de
  * fixtures via `useWorkspaceMock`.
  */
-export function MobileNav({ workspaces, activeWorkspaceId }: MobileNavProps) {
+export function MobileNav({ workspaces, activeWorkspaceId, coldAlertsCount }: MobileNavProps) {
   const [open, setOpen] = React.useState(false);
 
   return (
@@ -64,7 +66,7 @@ export function MobileNav({ workspaces, activeWorkspaceId }: MobileNavProps) {
         <div className="border-sidebar-border border-b p-2">
           <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
         </div>
-        <SidebarNav onNavigate={() => setOpen(false)} />
+        <SidebarNav onNavigate={() => setOpen(false)} coldAlertsCount={coldAlertsCount} />
         <SidebarFooter />
       </SheetContent>
     </Sheet>

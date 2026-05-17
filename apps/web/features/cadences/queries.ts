@@ -24,6 +24,7 @@ import { CadenceStatus, CadenceTemplateKey } from '@papopro/db';
 
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
+import { ackColdAlertWhereForRole } from './cold-alerts.helpers';
 import type {
   Cadence,
   CadenceMetrics,
@@ -53,6 +54,24 @@ export interface ColdThresholdUI {
   stageName: string | null;
   daysInactive: number;
   enabled: boolean;
+}
+
+/**
+ * Shape de cold alert ativo (não-acknowledged) consumido pela UI:
+ *  - banner no `/leads/[id]`
+ *  - row no NotificationsButton drawer
+ *  - row no badge sidebar (só count é usado lá)
+ */
+export interface ColdAlertUI {
+  id: string;
+  leadId: string;
+  leadName: string;
+  stageId: string;
+  stageName: string;
+  daysInactive: number;
+  triggeredAt: string;
+  /** `lastInteractionAt` do lead no momento da query — usado pra mostrar "Sem interação há X dias". */
+  lastInteractionAt: string | null;
 }
 
 // ─── Transform Prisma row → Cadence UI shape ────────────────────────────────
@@ -368,5 +387,114 @@ export async function listColdThresholds(workspaceId: string): Promise<ColdThres
       daysInactive: row.daysInactive,
       enabled: row.enabled,
     }));
+  });
+}
+
+// ============================================================================
+// Cold alerts — count, list, get-by-lead
+// ============================================================================
+
+/**
+ * Conta cold alerts ativos (não-acknowledged) visíveis pro caller, conforme
+ * RBAC fino. Usado pra badge sidebar `/leads`.
+ */
+export async function countActiveColdAlerts(
+  workspaceId: string,
+  userId: string,
+  role: 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer',
+): Promise<number> {
+  return withWorkspace(workspaceId, async (tx) => {
+    return tx.coldLeadAlert.count({
+      where: ackColdAlertWhereForRole(workspaceId, userId, role),
+    });
+  });
+}
+
+/**
+ * Lista cold alerts ativos visíveis pro caller, com nome do lead/etapa
+ * resolvido via JOIN. Ordenado `triggered_at DESC` (mais recente primeiro).
+ *
+ * Usado pelo NotificationsButton drawer. Limit default 30 (mesma janela que
+ * o drawer já usa pra fixtures).
+ */
+export async function listActiveColdAlerts(
+  workspaceId: string,
+  userId: string,
+  role: 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer',
+  opts: { limit?: number } = {},
+): Promise<ColdAlertUI[]> {
+  const limit = opts.limit ?? 30;
+  return withWorkspace(workspaceId, async (tx) => {
+    const rows = await tx.coldLeadAlert.findMany({
+      where: ackColdAlertWhereForRole(workspaceId, userId, role),
+      orderBy: { triggeredAt: 'desc' },
+      take: limit,
+      include: {
+        lead: {
+          select: {
+            id: true,
+            name: true,
+            lastInteractionAt: true,
+            stage: { select: { id: true, name: true } },
+          },
+        },
+        threshold: { select: { daysInactive: true } },
+      },
+    });
+
+    return rows.map<ColdAlertUI>((row) => ({
+      id: row.id,
+      leadId: row.leadId,
+      leadName: row.lead.name,
+      stageId: row.lead.stage.id,
+      stageName: row.lead.stage.name,
+      daysInactive: row.threshold.daysInactive,
+      triggeredAt: row.triggeredAt.toISOString(),
+      lastInteractionAt: row.lead.lastInteractionAt?.toISOString() ?? null,
+    }));
+  });
+}
+
+/**
+ * Retorna o cold alert ativo de UM lead específico (se houver), respeitando
+ * RBAC fino. Usado pelo banner no `/leads/[id]`. Retorna `null` quando o lead
+ * não tem alert pendente OU quando Vendedor pede de um lead que não é dele
+ * (defesa-em-profundidade — UI já não mostra o link, mas alguém pode forçar
+ * URL).
+ */
+export async function getActiveColdAlertForLead(
+  workspaceId: string,
+  leadId: string,
+  userId: string,
+  role: 'Owner' | 'Admin' | 'Manager' | 'Vendedor' | 'Viewer',
+): Promise<ColdAlertUI | null> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const baseWhere = ackColdAlertWhereForRole(workspaceId, userId, role);
+    const row = await tx.coldLeadAlert.findFirst({
+      where: { ...baseWhere, leadId },
+      orderBy: { triggeredAt: 'desc' },
+      include: {
+        lead: {
+          select: {
+            id: true,
+            name: true,
+            lastInteractionAt: true,
+            stage: { select: { id: true, name: true } },
+          },
+        },
+        threshold: { select: { daysInactive: true } },
+      },
+    });
+    if (!row) return null;
+    return {
+      id: row.id,
+      leadId: row.leadId,
+      leadName: row.lead.name,
+      stageId: row.lead.stage.id,
+      stageName: row.lead.stage.name,
+      daysInactive: row.threshold.daysInactive,
+      triggeredAt: row.triggeredAt.toISOString(),
+      lastInteractionAt: row.lead.lastInteractionAt?.toISOString() ?? null,
+    };
   });
 }

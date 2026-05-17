@@ -1427,7 +1427,7 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 | **M10#1** | Schema das 6 tabelas + ALTER `leads` (temperature + cold_alerted_at) + trigger `pause_cadence_on_inbound` em `messages` + seed inline dos 3 templates + 5 cold thresholds default por workspace + backfill                                                     | `m10-1-schema-seed`    | ✅ entregue |
 | **M10#2** | Edge Function `cadence-runner` (Deno, 5min via `pg_cron`) + rota interna `/api/internal/cadence-dispatch` (anti-ban + uazapi) + resolver de placeholders `{nome}/{empresa}/{produto}` + cron migration + helpers puros + smoke                                 | `m10-2-cadence-runner` | ✅ entregue |
 | **M10#3** | UI conectada (hydrate-from-server), Server Actions reais de CRUD + steps + enrollments, modelos Prisma das 6 tabelas cadence\_\*, métricas reais agregadas, seção "Cadências" na página do lead, settings `/settings/cadences/cold-thresholds`, seed em signup | `m10-3-ui-wiring`      | ✅ entregue |
-| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + cron migration + notificações push/in-app pro vendedor responsável + gestor + badge global no app shell                                                                                          | `m10-4-cold-detector`  | ⏳ pendente |
+| **M10#4** | Edge Function `cold-lead-detector` (Deno, 1h via `pg_cron`) + RPC detector + auto-ack triggers + Server Action `acknowledgeColdAlert` + badge sidebar `/leads` + cold alerts reais no sino + banner no lead detail                                             | `m10-4-cold-detector`  | ✅ entregue |
 | **M10#5** | Seção "Cadências" em `/reports` (volume disparado, performance por cadência, lead frio) + smoke endpoint lifecycle end-to-end + atualização final de PLAN.md                                                                                                   | `m10-5-reports-smoke`  | ⏳ pendente |
 
 **Decisões fechadas (não reabrir):**
@@ -1573,6 +1573,79 @@ Google Calendar sync (PRD §3.7) e custom_fields UI são polimentos posteriores 
 **Pré-requisito de operação:**
 
 - Smoke endpoint não exercita o banco. Validação manual end-to-end exige Docker Desktop subir o stack local Supabase (`supabase start` + `supabase db reset` aplica M10#1 + M10#2 + outras migrations).
+
+### M10#4 — cold-lead-detector (entregue 2026-05-17)
+
+**Branch:** `m10-4-cold-detector`
+
+**Objetivo:** entregar o **2º diferencial do PRD** — avisar antes do negócio esfriar, com defaults por etapa. Schema (`cold_lead_thresholds` + `cold_lead_alerts`) e UI de settings já vieram em M10#1/M10#3; M10#4 entrega a detecção + propagação pra UI em tempo real.
+
+**Decisões fechadas (validadas com usuário antes de implementar):**
+
+- **Push real adiado pra M13** (PWA + Push). M10#4 entrega só in-app + audit. Comentário em [notifications-button.tsx](apps/web/components/app-shell/notifications-button.tsx) original já antecipava.
+- **Badge no item "Leads" existente** da sidebar (não criar item dedicado "Frios"). Mesmo padrão do badge unread no "Caixa" (M5#4c).
+- **Sem email no M10#4** — gestor vê via in-app + badge + filtro "Frios" na lista. Email digest fica pra milestone futuro (precisa de dispatcher universal).
+- **Auto-acknowledge via triggers Postgres** — quando lead responde (estende `pause_cadence_on_inbound` do M10#1) ou muda de etapa (trigger novo `auto_ack_cold_on_stage_change`). Badge zera sozinho sem clique do usuário.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260524120000_m10_4_cold_lead_detector.sql`](supabase/migrations/20260524120000_m10_4_cold_lead_detector.sql) — **(1)** RPC `public.cold_lead_detect_candidates(p_limit int DEFAULT 500)` `LANGUAGE sql SECURITY DEFINER SET search_path = public`. JOIN de `leads × cold_lead_thresholds` com `DISTINCT ON (lead_id) ORDER BY threshold.stage_id NULLS LAST` (threshold específico ganha do global). WHERE `threshold.enabled = true AND lead.deleted_at IS NULL AND lead.status = 'ativo' AND lead.temperature <> 'cold' AND lead.cold_alerted_at IS NULL`. `idle_since = COALESCE(last_interaction_at, created_at)`. Retorna `(workspace_id, lead_id, stage_id, threshold_id, days_inactive, idle_since)`. **(2)** `CREATE OR REPLACE` da função `pause_cadence_on_inbound` adicionando UPDATE final em `cold_lead_alerts SET acknowledged_at = NOW(), acknowledged_by_id = NULL WHERE lead_id = X AND acknowledged_at IS NULL` — auto-ack quando lead responde. Trigger M10#1 não precisa ser recriado (CREATE OR REPLACE FUNCTION cobre). **(3)** Trigger novo `auto_ack_cold_on_stage_change` em `leads BEFORE UPDATE OF stage_id` — auto-ack + re-aquece cold→warm quando vendedor move o lead manualmente. Usa `IS DISTINCT FROM` pra evitar fire em no-op. **(4)** pg_cron schedule `cold-lead-detector-hourly` (`0 * * * *`) via `invoke_cold_lead_detector()` SECURITY DEFINER lendo `app.supabase_url` + `app.cold_lead_detector_secret`. Idempotente via `cron.unschedule` prévia.
+
+- [x] [`supabase/functions/cold-lead-detector/index.ts`](supabase/functions/cold-lead-detector/index.ts) — Edge Function Deno. `Deno.serve` valida header `x-cold-lead-detector-secret`. Service Role client. Chama RPC `cold_lead_detect_candidates(500)`. Para cada candidato em batches de 10 com `Promise.allSettled`: INSERT em `cold_lead_alerts (workspace_id, lead_id, threshold_id)` — `23505` (UNIQUE violation) skip silencioso. Pros leads que tiveram alert NOVO: UPDATE `leads SET temperature='cold', cold_alerted_at=NOW()` + INSERT batch em `audit_logs (action='cold_lead_alerted', user_id=NULL, entity=lead, changes={threshold_id, days_inactive, idle_since})`. Retorna `{ok, summary: {scanned, alertedNew, alreadyAlerted, errors}, errors}`.
+
+- [x] [`apps/web/features/cadences/queries.ts`](apps/web/features/cadences/queries.ts) — 3 queries novas + tipo `ColdAlertUI`:
+  - `countActiveColdAlerts(workspaceId, userId, role)` → `number`. RBAC fino: Vendedor conta só dos próprios leads (`leads.assignedTo.userId = userId`); Owner/Admin/Manager workspace todo.
+  - `listActiveColdAlerts(workspaceId, userId, role, { limit = 30 })` → `ColdAlertUI[]` com JOIN incluindo nome do lead/etapa + `daysInactive` do threshold. Ordenado `triggered_at DESC`.
+  - `getActiveColdAlertForLead(workspaceId, leadId, userId, role)` → `ColdAlertUI | null`. Usado pelo banner em `/leads/[id]`.
+
+- [x] [`apps/web/features/cadences/cold-alerts.helpers.ts`](apps/web/features/cadences/cold-alerts.helpers.ts) — **arquivo novo**. Helpers puros extraídos de queries/actions pra vitest poder importar sem cair em `server-only`: `ackColdAlertWhereForRole(workspaceId, userId, role): Prisma.ColdLeadAlertWhereInput` (Vendedor = nested `lead.assignedTo.userId`) + `acknowledgeColdAlertSchema` Zod.
+
+- [x] [`apps/web/features/cadences/actions.ts`](apps/web/features/cadences/actions.ts) — `+acknowledgeColdAlertAction(alertId)`. Padrão idiomático (Zod safeParse → requireRole O/A/M/V → withWorkspace tx → audit `cold_lead_acknowledged` → revalidatePath). RBAC fino check `lead.assignedTo.userId === userId` pra Vendedor. No-op se já foi ack (auto-ack pelo trigger pode rodar em paralelo). Revalida `/leads`, `/leads/[id]`, `/dashboard`.
+
+- [x] [`apps/web/lib/cold-alerts/load-count.ts`](apps/web/lib/cold-alerts/load-count.ts) — **arquivo novo**. 2 helpers Server-only cached por request via React `cache()`: `loadColdAlertsCount()` retorna number (default 0 em qualquer falha) e `loadActiveColdAlerts()` retorna `ColdAlertUI[]` (default `[]`). Resolve user/workspace/role e delega pra queries.ts. Viewer recebe 0/[] (UI esconde).
+
+- [x] [`apps/web/components/app-shell/sidebar-nav.tsx`](apps/web/components/app-shell/sidebar-nav.tsx) — aceita nova prop `coldAlertsCount?: number`. Mesma técnica do badge `/inbox` (M5#4c): mesclado via `React.useMemo` no item `/leads`. Quando 0, badge some.
+- [x] [`apps/web/components/app-shell/sidebar.tsx`](apps/web/components/app-shell/sidebar.tsx) + [`topbar.tsx`](apps/web/components/app-shell/topbar.tsx) + [`mobile-nav.tsx`](apps/web/components/app-shell/mobile-nav.tsx) — chamam `loadColdAlertsCount` em `Promise.all` (Sidebar e Topbar) e passam prop pra `SidebarNav` (desktop) + `MobileNav` (mobile). `cache()` garante single round-trip por request mesmo com 2 callers.
+
+- [x] [`apps/web/components/app-shell/notifications-dropdown.tsx`](apps/web/components/app-shell/notifications-dropdown.tsx) — **arquivo novo**. Client component que renderiza o dropdown atual + cold alerts reais no topo (com `ColdAlertRow` clicável que linka pro lead + botão inline "Marcar como visto" otimista). Total unread = `coldAlerts.length + fakeUnread`.
+- [x] [`apps/web/components/app-shell/notifications-button.tsx`](apps/web/components/app-shell/notifications-button.tsx) — refatorado de Client puro pra **Server wrapper** que carrega `loadActiveColdAlerts` e passa pro `<NotificationsDropdown>`. Fixture legacy continua viva (full migration pra `notifications` table fica pra M13 conforme decidido).
+
+- [x] [`apps/web/features/cadences/components/cold-alert-banner.tsx`](apps/web/features/cadences/components/cold-alert-banner.tsx) — **arquivo novo**. Banner tom `warning` (amarelo mostarda semântico) + ícone Snowflake no topo de `/leads/[id]` quando o lead tem alert ativo. Botão "Marcar como visto" chama `acknowledgeColdAlertAction` com optimistic dismissal.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/page.tsx`](<apps/web/app/(dashboard)/leads/[id]/page.tsx>) — adiciona `getActiveColdAlertForLead(workspaceId, leadId, userId, role)` ao `Promise.all` existente. Passa `activeColdAlert` pro view.
+- [x] [`apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx`](<apps/web/app/(dashboard)/leads/[id]/lead-detail-view.tsx>) — aceita prop `activeColdAlert: ColdAlertUI | null`. Encaixa `<ColdAlertBanner>` logo após o `PageHeader` (acima dos "Negócios em aberto" + grid).
+
+- [x] [`apps/web/features/cadences/cold-alerts.test.ts`](apps/web/features/cadences/cold-alerts.test.ts) — **arquivo novo, vitest**. 7 testes cobrindo `acknowledgeColdAlertSchema` (aceita UUID/rejeita string/rejeita undefined) + `ackColdAlertWhereForRole` (Vendedor → filtro nested, Owner/Admin/Manager → workspace todo).
+- [x] [`apps/web/app/api/smoke-test/cadences/route.ts`](apps/web/app/api/smoke-test/cadences/route.ts) — **+5 checks** no grupo `cold-detector-m10`: `auditAction` tem `cold_lead_alerted` + `cold_lead_acknowledged`; shape do payload da RPC (6 chaves obrigatórias); contract test do UNIQUE `(lead_id, threshold_id)`.
+
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), `pnpm --filter @papopro/web build` ✅, `pnpm test` ✅ (vitest M10#3 + M10#4 = 13 testes verdes).
+
+**Decisões fechadas M10#4:**
+
+- **Edge Function NÃO faz fanout externo** — diferente do `cadence-runner` (que POSTa pra rota Next), aqui é detect → insert → done. Notificação acontece via query no NotificationsButton/badge sidebar (in-app). Push real é M13.
+- **`leads.cold_alerted_at` evita re-alerta em loop** — uma vez setado, RPC ignora o lead. Trigger inbound + stage_change zeram esse campo quando há sinal de re-engajamento. **MVP não re-alerta** após ack manual — `cold_alerted_at` continua setado até o lead responder/mudar etapa.
+- **Auto-ack diferencia de manual** via `acknowledged_by_id = NULL` (auto) vs `userId` real (manual). Audit log preserva isso.
+- **Notification dropdown mistura cold real + fixture legacy** — `Marcar todas como lidas` continua mock pros fakes; cold alerts exigem ação explícita ou auto-ack.
+- **Filtro por temperatura na listagem `/leads`** já existia (lead-filters.tsx) — escopo M10#4 NÃO adiciona `?temperature=cold` via search params. Sidebar badge linka pra `/leads` simples; usuário usa o chip "Frio" existente. Polimento pra search params fica pra M10.x.
+
+**Não-objetivos M10#4 (explícitos):**
+
+- Push notifications reais (Web Push + VAPID + service worker) → M13 (PWA + Push)
+- Email pro gestor (individual ou digest) → M10#5+ (precisa dispatcher universal)
+- Search params `?temperature=cold` na lista de leads → polimento futuro
+- Realtime listener pra cold alerts que chegam enquanto a página tá aberta → V2
+- Re-alerta automático após N dias do ack → V2 (decisão MVP: ack é definitivo até lead responder/mudar etapa)
+- Tela de reports com volume de cold leads → M10#5
+- Smoke endpoint lifecycle end-to-end (detect → insert → ack) com DB real → M10#5
+
+**Ops pós-deploy (fora do PR — adiar pra pré-launch junto com M10#2):**
+
+1. `supabase secrets set COLD_LEAD_DETECTOR_SECRET=<random64>` (CLI ou Dashboard)
+2. SQL no Editor: `ALTER DATABASE postgres SET app.cold_lead_detector_secret = '<mesmo>';`
+3. MCP `deploy_edge_function name=cold-lead-detector` ou `supabase functions deploy cold-lead-detector`
+4. MCP `apply_migration name=m10_4_cold_lead_detector` (depende de M10#1 + M10#2 já aplicadas)
+5. Validar: `SELECT * FROM cron.job WHERE jobname = 'cold-lead-detector-hourly'`; `SELECT * FROM cron.job_run_details ORDER BY end_time DESC LIMIT 5` mostra invocações horárias
+
+---
 
 **Review fixes pós-M10#3 (mesmo PR):**
 

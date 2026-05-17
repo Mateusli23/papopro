@@ -10,8 +10,9 @@ import { ArrowLeft, MessageCircle, Phone, PlusCircle, Sparkles } from '@papopro/
 import type { ActivityWithAuthor } from '@/features/activities/transforms';
 import { LeadAttachmentsCard } from '@/features/attachments/components/lead-attachments-card';
 import type { AttachmentUI } from '@/features/attachments/transforms';
+import { ColdAlertBanner } from '@/features/cadences/components/cold-alert-banner';
 import { LeadEnrollmentsSection } from '@/features/cadences/components/lead-enrollments-section';
-import type { LeadEnrollmentUI } from '@/features/cadences/queries';
+import type { ColdAlertUI, LeadEnrollmentUI } from '@/features/cadences/queries';
 import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import { LeadDetailCard } from '@/features/leads/components/lead-detail-card';
@@ -49,6 +50,11 @@ interface LeadDetailViewProps {
   initialAttachments: AttachmentUI[];
   initialEnrollments: LeadEnrollmentUI[];
   availableCadences: Array<{ id: string; name: string }>;
+  /**
+   * Alert ativo de lead frio (M10#4). `null` quando não há alert pendente OU
+   * Vendedor não é o dono do lead. Renderiza banner com botão "Marcar como visto".
+   */
+  activeColdAlert: ColdAlertUI | null;
   callerUserId: string;
   callerRole: Role;
 }
@@ -62,6 +68,7 @@ export function LeadDetailView({
   initialAttachments,
   initialEnrollments,
   availableCadences,
+  activeColdAlert,
   callerUserId,
   callerRole,
 }: LeadDetailViewProps) {
@@ -109,6 +116,8 @@ export function LeadDetailView({
             : 'Sem empresa cadastrada'
         }
       />
+
+      {activeColdAlert && <ColdAlertBanner alert={activeColdAlert} />}
 
       {hasOpenDeals ? (
         <div className="bg-muted/40 border-border flex flex-col gap-2 rounded-lg border p-4">

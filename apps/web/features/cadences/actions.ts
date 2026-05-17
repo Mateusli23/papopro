@@ -39,6 +39,7 @@ import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isUuid } from '@/lib/utils/uuid';
 
+import { acknowledgeColdAlertSchema } from './cold-alerts.helpers';
 import {
   cadenceCreateSchema,
   cadenceUpdateSchema,
@@ -1011,6 +1012,100 @@ export async function updateColdThresholdAction(
     }
     reportNonFatal('cadences.updateColdThreshold', err, { workspaceId, userId, thresholdId: id });
     return { ok: false, error: 'Falha ao atualizar threshold.' };
+  }
+}
+
+// ============================================================================
+// acknowledgeColdAlertAction (M10#4)
+// ============================================================================
+//
+// Marca um cold alert como visto. Vendedor só pode ack alerts do próprio
+// lead; Owner/Admin/Manager podem ack qualquer alert do workspace.
+//
+// Auto-ack via triggers Postgres (M10#1 inbound + M10#4 stage_change) seta
+// `acknowledged_by_id = NULL` — esta action explícita seta o user_id, então
+// o audit log diferencia ack manual vs automático.
+
+export async function acknowledgeColdAlertAction(alertId: string): Promise<CadenceActionResult> {
+  const parsed = acknowledgeColdAlertSchema.safeParse({ alertId });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Alerta inválido.' };
+  }
+
+  const auth = await requireRole(['Owner', 'Admin', 'Manager', 'Vendedor'], {
+    forbiddenMessage: 'Você não tem permissão para reconhecer alertas de lead frio.',
+  });
+  if (!auth.ok) return { ok: false, error: auth.error };
+  const { userId, workspaceId, role } = auth.ctx;
+  const { ipAddress, userAgent } = getRequestAuditContext();
+
+  let leadId: string | null = null;
+
+  try {
+    await withWorkspace(workspaceId, async (tx) => {
+      const alert = await tx.coldLeadAlert.findFirst({
+        where: { id: alertId, workspaceId },
+        include: {
+          lead: { select: { id: true, assignedTo: { select: { userId: true } } } },
+        },
+      });
+      if (!alert) throw new Error('ALERT_NOT_FOUND');
+
+      // Defesa contra hidratação inesperada — `assignedTo` é non-null no schema
+      // mas se uma cleanup script tiver bypassado `onDelete: Restrict` no
+      // passado, o Prisma pode retornar undefined. Fail closed pro Vendedor:
+      // sem ownerId visível, recusa o ack pra evitar bypass silencioso.
+      const ownerUserId = alert.lead.assignedTo?.userId ?? null;
+      if (role === 'Vendedor' && ownerUserId !== userId) {
+        throw new Error('FORBIDDEN_NOT_OWN_LEAD');
+      }
+
+      leadId = alert.leadId;
+
+      // No-op se já foi ack (auto-ack pelo trigger acontece em paralelo).
+      if (alert.acknowledgedAt !== null) {
+        return;
+      }
+
+      await tx.coldLeadAlert.update({
+        where: { id: alertId },
+        data: {
+          acknowledgedAt: new Date(),
+          acknowledgedById: userId,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          userId,
+          action: 'cold_lead_acknowledged',
+          entityType: 'cold_lead_alert',
+          entityId: alertId,
+          changes: {
+            leadId: alert.leadId,
+            thresholdId: alert.thresholdId,
+          } as Prisma.InputJsonValue,
+          ipAddress,
+          userAgent,
+        },
+      });
+    });
+
+    revalidatePath('/leads');
+    if (leadId) revalidatePath(`/leads/${leadId}`);
+    revalidatePath('/dashboard');
+    return { ok: true, id: alertId };
+  } catch (err) {
+    const message = (err as Error).message;
+    if (message === 'ALERT_NOT_FOUND') {
+      return { ok: false, error: 'Alerta não encontrado.' };
+    }
+    if (message === 'FORBIDDEN_NOT_OWN_LEAD') {
+      return { ok: false, error: 'Você só pode reconhecer alertas dos seus próprios leads.' };
+    }
+    reportNonFatal('cadences.acknowledgeColdAlert', err, { workspaceId, userId, alertId });
+    return { ok: false, error: 'Falha ao reconhecer alerta.' };
   }
 }
 
