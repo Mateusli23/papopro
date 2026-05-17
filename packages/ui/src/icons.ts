@@ -97,6 +97,7 @@ export {
   Smartphone,
   Smile,
   Sparkles,
+  Snowflake,
   Square,
   SquarePen,
   Star,

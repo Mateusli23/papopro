@@ -4,9 +4,15 @@ import type { Metadata } from 'next';
 
 import { listActivitiesForLead } from '@/features/activities/queries';
 import { listAttachmentsForLead } from '@/features/attachments/queries';
+import {
+  getActiveColdAlertForLead,
+  listAvailableCadencesForLead,
+  listLeadEnrollments,
+} from '@/features/cadences/queries';
 import { getLead, listDefaultPipeline, listSalesReps } from '@/features/leads/queries';
 import { listTasksForLead } from '@/features/tasks/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
+import type { Role } from '@/lib/auth/require-role';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
 import { LeadDetailView } from './lead-detail-view';
@@ -47,15 +53,27 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     redirect('/onboarding');
   }
 
-  const [lead, salesReps, pipeline, initialActivities, initialTasks, initialAttachments] =
-    await Promise.all([
-      getLead(workspaceId, params.id),
-      listSalesReps(workspaceId),
-      listDefaultPipeline(workspaceId),
-      listActivitiesForLead(workspaceId, params.id),
-      listTasksForLead(workspaceId, params.id),
-      listAttachmentsForLead(workspaceId, params.id),
-    ]);
+  const [
+    lead,
+    salesReps,
+    pipeline,
+    initialActivities,
+    initialTasks,
+    initialAttachments,
+    initialEnrollments,
+    availableCadences,
+    activeColdAlert,
+  ] = await Promise.all([
+    getLead(workspaceId, params.id),
+    listSalesReps(workspaceId),
+    listDefaultPipeline(workspaceId),
+    listActivitiesForLead(workspaceId, params.id),
+    listTasksForLead(workspaceId, params.id),
+    listAttachmentsForLead(workspaceId, params.id),
+    listLeadEnrollments(workspaceId, params.id),
+    listAvailableCadencesForLead(workspaceId),
+    getActiveColdAlertForLead(workspaceId, params.id, ctx.user.id, callerMembership.role as Role),
+  ]);
 
   if (!lead) {
     notFound();
@@ -69,6 +87,9 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
       initialActivities={initialActivities}
       initialTasks={initialTasks}
       initialAttachments={initialAttachments}
+      initialEnrollments={initialEnrollments}
+      availableCadences={availableCadences}
+      activeColdAlert={activeColdAlert}
       callerUserId={ctx.user.id}
       callerRole={callerMembership.role}
     />

@@ -6,7 +6,7 @@ import { toast } from 'react-hot-toast';
 
 import { Switch } from '@papopro/ui';
 
-import { toggleCadenceStatus } from '../store';
+import { toggleCadenceStatusAction } from '../actions';
 import type { Cadence } from '../types';
 
 /**
@@ -30,14 +30,20 @@ interface CadenceStatusToggleProps {
 export function CadenceStatusToggle({ cadence, compact = false }: CadenceStatusToggleProps) {
   const isActive = cadence.status === 'active';
 
-  function handleChange() {
-    const updated = toggleCadenceStatus(cadence.id);
-    if (updated) {
-      toast.success(
-        updated.status === 'active' ? `"${updated.name}" ativada.` : `"${updated.name}" pausada.`,
-        { duration: 3000 },
-      );
+  const [pending, setPending] = React.useState(false);
+
+  async function handleChange() {
+    if (pending) return;
+    setPending(true);
+    const result = await toggleCadenceStatusAction(cadence.id);
+    setPending(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    // Status anterior era `cadence.status`; o action alternou.
+    const next = cadence.status === 'active' ? 'pausada' : 'ativada';
+    toast.success(`"${cadence.name}" ${next}.`, { duration: 3000 });
   }
 
   // `onClick` no wrapper só impede navegação do <Link> ancestral; a mudança

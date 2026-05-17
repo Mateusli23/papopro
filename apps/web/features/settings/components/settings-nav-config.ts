@@ -16,6 +16,7 @@ import {
   type LucideIcon,
   Plug,
   Smartphone,
+  Snowflake,
   Users,
 } from '@papopro/ui/icons';
 
@@ -70,5 +71,12 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     href: '/settings/integrations',
     icon: Plug,
     description: 'Calendar, webhooks, ads e CRMs externos',
+  },
+  {
+    label: 'Lead frio',
+    href: '/settings/cadences/cold-thresholds',
+    icon: Snowflake,
+    description: 'Defina prazos sem interação por etapa do funil',
+    ownerOnly: true,
   },
 ];

@@ -81,11 +81,16 @@ USING (
   )
 );
 
-COMMENT ON POLICY attachments_storage_select ON storage.objects IS
-  'M8#6 — usuário só vê objetos cujo path comece com workspace_id que ele é membro.';
-
-COMMENT ON POLICY attachments_storage_insert ON storage.objects IS
-  'M8#6 — usuário só insere objetos com path começando com workspace_id que ele é membro. Server Actions usam service role (bypassa) mas a policy é defense-in-depth.';
-
-COMMENT ON POLICY attachments_storage_delete ON storage.objects IS
-  'M8#6 — usuário só deleta objetos do próprio workspace. Cleanup job usa service role.';
+-- COMMENT ON POLICY em storage.objects exige ser owner da tabela. Em Supabase
+-- cloud o role `postgres` tem permissão; em local Docker o user `postgres` do
+-- container NÃO é owner de `storage.objects` (é `supabase_storage_admin`). Envolvemos
+-- em DO block com EXCEPTION pra que rode em ambos sem quebrar — comments são
+-- só metadata pro Studio, não afetam runtime.
+DO $$
+BEGIN
+  EXECUTE 'COMMENT ON POLICY attachments_storage_select ON storage.objects IS ''M8#6 — usuário só vê objetos cujo path comece com workspace_id que ele é membro.''';
+  EXECUTE 'COMMENT ON POLICY attachments_storage_insert ON storage.objects IS ''M8#6 — usuário só insere objetos com path começando com workspace_id que ele é membro. Server Actions usam service role (bypassa) mas a policy é defense-in-depth.''';
+  EXECUTE 'COMMENT ON POLICY attachments_storage_delete ON storage.objects IS ''M8#6 — usuário só deleta objetos do próprio workspace. Cleanup job usa service role.''';
+EXCEPTION WHEN insufficient_privilege THEN
+  NULL; -- supabase local: pula silenciosamente
+END $$;

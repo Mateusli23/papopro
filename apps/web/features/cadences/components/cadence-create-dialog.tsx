@@ -27,16 +27,11 @@ import {
 } from '@papopro/ui';
 import { ChevronLeft, Loader2 } from '@papopro/ui/icons';
 
+import type { PipelineStage } from '@/features/leads/types';
 import { getTemplate } from '@/lib/fixtures/cadence-templates';
-import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 
-// Etapa default quando nem o caller nem o template sugerem uma. Pega a
-// primeira ativa do pipeline (em vez de hardcode 'novo') pra resistir a
-// reordenamentos futuros do funil default.
-const DEFAULT_FALLBACK_STAGE = ACTIVE_STAGES[0]?.id ?? 'novo';
-
+import { createCadenceAction } from '../actions';
 import { cadenceCreateSchema, type CadenceCreateInput } from '../schemas';
-import { createCadence } from '../store';
 import type { CadenceTemplateKey } from '../types';
 
 import { TemplatePicker } from './template-picker';
@@ -59,6 +54,12 @@ interface CadenceCreateDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Etapa pré-selecionada (vinda do CTA "+ Criar para esta etapa"). */
   defaultStageId?: string;
+  /**
+   * Stages do pipeline default do workspace. Vem do Server Component pai
+   * (`CadencesView`) — antes o select usava `ACTIVE_STAGES` (fixture), o
+   * que enviava slugs em vez de UUIDs ao Server Action e quebrava o create.
+   */
+  stages: readonly PipelineStage[];
 }
 
 type Step = 'template' | 'details';
@@ -67,10 +68,35 @@ export function CadenceCreateDialog({
   open,
   onOpenChange,
   defaultStageId,
+  stages,
 }: CadenceCreateDialogProps) {
   const router = useRouter();
   const [step, setStep] = React.useState<Step>('template');
   const [pickedTemplate, setPickedTemplate] = React.useState<CadenceTemplateKey | null>(null);
+
+  // Stages elegíveis pra cadência (exclui Ganho/Perdido) ordenadas pelo
+  // pipeline. Memoizadas porque alimentam o select e o defaultStageId
+  // fallback — recomputar a cada render desperdiça e gera array nova
+  // (re-render do Select).
+  const activeStages = React.useMemo(
+    () =>
+      stages
+        .filter((s) => !s.terminal)
+        .slice()
+        .sort((a, b) => a.order - b.order),
+    [stages],
+  );
+
+  // Etapa default quando nem o caller nem o template sugerem uma. Pega a
+  // primeira ativa do pipeline real do workspace.
+  const fallbackStageId = activeStages[0]?.id ?? '';
+
+  // Mapeia slug do template (ex: 'novo') → UUID real da stage equivalente
+  // no pipeline do workspace. Sem isso, `tpl.defaultStageId` continuaria
+  // sendo o slug do fixture e o Server Action rejeitaria (UUID inválido).
+  function resolveStageIdBySlug(slug: string): string | undefined {
+    return activeStages.find((s) => s.slug === slug || s.id === slug)?.id;
+  }
 
   const {
     register,
@@ -84,7 +110,7 @@ export function CadenceCreateDialog({
     defaultValues: {
       name: '',
       description: '',
-      stageId: defaultStageId ?? DEFAULT_FALLBACK_STAGE,
+      stageId: defaultStageId ?? fallbackStageId,
       templateKey: 'blank',
     },
   });
@@ -97,11 +123,11 @@ export function CadenceCreateDialog({
       reset({
         name: '',
         description: '',
-        stageId: defaultStageId ?? DEFAULT_FALLBACK_STAGE,
+        stageId: defaultStageId ?? fallbackStageId,
         templateKey: 'blank',
       });
     }
-  }, [open, defaultStageId, reset]);
+  }, [open, defaultStageId, fallbackStageId, reset]);
 
   function pickTemplate(key: CadenceTemplateKey) {
     setPickedTemplate(key);
@@ -110,9 +136,11 @@ export function CadenceCreateDialog({
     if (tpl) {
       // Pré-preenche nome sugerido + etapa default — usuário ajusta no passo 2
       setValue('name', tpl.key === 'blank' ? '' : tpl.label);
-      // Só sobrescreve a etapa se o usuário não veio com defaultStageId fixo
+      // Só sobrescreve a etapa se o usuário não veio com defaultStageId fixo.
+      // Resolve o slug do template pro UUID real do workspace.
       if (!defaultStageId) {
-        setValue('stageId', tpl.defaultStageId);
+        const resolved = resolveStageIdBySlug(tpl.defaultStageId);
+        if (resolved) setValue('stageId', resolved);
       }
     }
   }
@@ -126,11 +154,17 @@ export function CadenceCreateDialog({
     setStep('template');
   }
 
-  function onSubmit(data: CadenceCreateInput) {
-    const cadence = createCadence(data);
-    toast.success(`Cadência "${cadence.name}" criada.`, { duration: 4000 });
+  async function onSubmit(data: CadenceCreateInput) {
+    const loadingId = toast.loading('Criando cadência…');
+    const result = await createCadenceAction(data);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`Cadência "${data.name}" criada.`, { duration: 4000 });
     onOpenChange(false);
-    router.push(`/cadences/${cadence.id}`);
+    router.push(`/cadences/${result.id}`);
   }
 
   return (
@@ -197,7 +231,7 @@ export function CadenceCreateDialog({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {ACTIVE_STAGES.map((stage) => (
+                        {activeStages.map((stage) => (
                           <SelectItem key={stage.id} value={stage.id}>
                             {stage.name}
                           </SelectItem>

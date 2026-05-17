@@ -81,8 +81,120 @@ enum AuditAction {
   quick_reply_deleted
   conversation_archived
   conversation_transferred
+  // M10#1 — motor de cadência + cold lead detector (PG enum values criados via
+  // ALTER TYPE ADD VALUE em supabase/migrations/20260521120000_m10_1_cadence_schema.sql).
+  // M10#2 declara aqui pro Prisma client tipar `tx.auditLog.create({action: 'cadence_step_sent', ...})`
+  // sem TS error. Ordem espelha a do SQL.
+  cadence_created
+  cadence_updated
+  cadence_deleted
+  cadence_enrolled
+  cadence_paused
+  cadence_reactivated
+  cadence_completed
+  cadence_step_sent
+  cadence_step_failed
+  cold_lead_alerted
+  cold_lead_acknowledged
+  cold_threshold_updated
 
   @@map("audit_action")
+}
+
+// =============================================================================
+// Enums do motor de cadência (M10#1 SQL, M10#3 Prisma sync)
+// =============================================================================
+
+/// Status da cadência. `archived` reservado pra V2 quando "deletar" virar
+/// soft-delete (M10#3 ainda usa CASCADE hard delete na action).
+enum CadenceStatus {
+  active
+  paused
+  archived
+
+  @@map("cadence_status")
+}
+
+/// Canal de cada step. `email` está suportado no schema mas o runner M10#2
+/// faz skip(`email_stub`) — Resend entra em milestone futuro.
+enum CadenceStepChannel {
+  whatsapp
+  email
+
+  @@map("cadence_step_channel")
+}
+
+/// Template de origem da cadência. `'alto-ticket'` (hífen) alinhado com
+/// TEMPLATE_KEY_VALUES de `apps/web/features/cadences/schemas.ts` —
+/// evita mapping em runtime na Server Action. Prisma aceita value com
+/// hífen via `@map`; identifier TS vira `alto_ticket`.
+enum CadenceTemplateKey {
+  imobiliario
+  b2b
+  alto_ticket @map("alto-ticket")
+  blank
+  custom
+
+  @@map("cadence_template_key")
+}
+
+/// Status da inscrição do lead numa cadência. `paused` exige `paused_reason`.
+enum CadenceEnrollmentStatus {
+  active
+  paused
+  completed
+  cancelled
+
+  @@map("cadence_enrollment_status")
+}
+
+/// Motivo da pausa (quando status='paused'). `lead_replied` é setado pelo
+/// trigger `pause_cadence_on_inbound` (M10#1). `manual` é pausa via UI.
+enum CadenceEnrollmentPauseReason {
+  lead_replied
+  manual
+  stage_changed
+  disconnected
+  admin
+
+  @@map("cadence_enrollment_pause_reason")
+}
+
+/// Status do step_run (uma execução de step pra enrollment). UNIQUE
+/// (enrollment_id, step_id) do M10#1 garante max 1 row por par.
+enum CadenceStepRunStatus {
+  pending
+  sent
+  skipped
+  failed
+
+  @@map("cadence_step_run_status")
+}
+
+/// Razão do skip (quando status='skipped'). Mapeamento de anti-ban →
+/// skip_reason está em `apps/web/features/cadences/dispatch/map-antiban-reason.ts`.
+enum CadenceStepRunSkipReason {
+  email_stub
+  outside_business_hours
+  blacklist
+  rate_limit
+  unhealthy
+  no_phone
+  lead_deleted
+  workspace_paused
+
+  @@map("cadence_step_run_skip_reason")
+}
+
+/// Temperatura térmica do lead (PRD §2.4). `cold` setado pelo
+/// cold-lead-detector quando `last_interaction_at` ultrapassa threshold.
+/// `'hot'` nunca degrada pra `'warm'` no trigger `pause_cadence_on_inbound`.
+enum LeadTemperature {
+  cold
+  warm
+  hot
+
+  @@map("lead_temperature")
 }
 
 // =============================================================================
@@ -292,6 +404,11 @@ model Workspace {
   quickReplies            QuickReply[]
   blacklist               BlackList[]
   whatsappEvents          WhatsappEvent[]
+  cadences                Cadence[]
+  cadenceEnrollments      CadenceEnrollment[]
+  cadenceStepRuns         CadenceStepRun[]
+  coldLeadThresholds      ColdLeadThreshold[]
+  coldLeadAlerts          ColdLeadAlert[]
 
   @@index([deletedAt])
   @@map("workspaces")
@@ -322,6 +439,8 @@ model User {
   notificationPreferences NotificationPreference[]
   invitationsCreated      Invitation[]             @relation("InvitationCreatedBy")
   attachmentsUploaded     Attachment[]             @relation("AttachmentUploadedBy")
+  cadencesCreated         Cadence[]                @relation("CadenceCreatedBy")
+  coldLeadAlertsAcked     ColdLeadAlert[]          @relation("ColdLeadAlertAckedBy")
 
   @@map("users")
 }
@@ -491,9 +610,11 @@ model PipelineStage {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
-  leads    Lead[]
-  deals    Deal[]
+  pipeline           Pipeline            @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  leads              Lead[]
+  deals              Deal[]
+  cadences           Cadence[]
+  coldLeadThresholds ColdLeadThreshold[]
 
   @@unique([pipelineId, slug])
   @@unique([pipelineId, order])
@@ -505,45 +626,56 @@ model PipelineStage {
 /// imobiliário/B2B/alto-ticket (beachhead PapoPro), um lead pode gerar 0..N
 /// deals ao longo do tempo (compra de imóvel A, recompra de imóvel B etc.).
 ///
-/// **`temperature` NÃO é coluna persistida** — é derivada de `lastInteractionAt`
-/// em query/view. Decisão: schema mais simples, computa na borda. Se virar
-/// gargalo de performance, criamos VIEW materializada.
+/// **`temperature` é persistida desde M10#1** (substitui a derivação prévia).
+/// Default `warm` no signup/import. Trigger `pause_cadence_on_inbound` (M10#1)
+/// re-aquece `cold → warm` quando o lead responde, mas NÃO degrada `'hot'`
+/// pra `'warm'` (sinal explícito de alta intenção). O cold-lead-detector
+/// (M10#4) seta `cold` quando `last_interaction_at` ultrapassa threshold da
+/// etapa em `cold_lead_thresholds`.
 ///
 /// **`stageId`** referencia a "etapa principal" do lead (pra UI de lista densa
 /// mostrar). O estado canônico da oportunidade vive em `Deal.stageId` — Kanban
 /// lê de lá, não daqui.
 model Lead {
-  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId       String     @map("workspace_id") @db.Uuid
-  name              String     @db.VarChar(120)
-  email             String?    @db.Citext
-  phone             String     @db.VarChar(32)
-  company           String?    @db.VarChar(120)
-  position          String?    @db.VarChar(80)
-  origin            LeadOrigin @default(manual)
-  status            LeadStatus @default(ativo)
-  stageId           String     @map("stage_id") @db.Uuid
-  assignedToId      String     @map("assigned_to_id") @db.Uuid
-  valueCents        Int        @default(0) @map("value_cents")
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String          @map("workspace_id") @db.Uuid
+  name              String          @db.VarChar(120)
+  email             String?         @db.Citext
+  phone             String          @db.VarChar(32)
+  company           String?         @db.VarChar(120)
+  position          String?         @db.VarChar(80)
+  origin            LeadOrigin      @default(manual)
+  status            LeadStatus      @default(ativo)
+  stageId           String          @map("stage_id") @db.Uuid
+  assignedToId      String          @map("assigned_to_id") @db.Uuid
+  valueCents        Int             @default(0) @map("value_cents")
   notes             String?
-  lastInteractionAt DateTime?  @map("last_interaction_at") @db.Timestamptz(6)
-  nextActionAt      DateTime?  @map("next_action_at") @db.Timestamptz(6)
-  nextActionLabel   String?    @map("next_action_label") @db.VarChar(120)
-  createdById       String?    @map("created_by_id") @db.Uuid
-  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt         DateTime?  @map("deleted_at") @db.Timestamptz(6)
+  /// Temperatura térmica do lead (M10#1). Default `warm` no insert.
+  temperature       LeadTemperature @default(warm)
+  /// Último timestamp em que o cold-lead-detector (M10#4) sinalizou esse
+  /// lead como frio. Resetado pra `null` pelo trigger M10#1 quando o lead
+  /// responde. Evita realertar em loop.
+  coldAlertedAt     DateTime?       @map("cold_alerted_at") @db.Timestamptz(6)
+  lastInteractionAt DateTime?       @map("last_interaction_at") @db.Timestamptz(6)
+  nextActionAt      DateTime?       @map("next_action_at") @db.Timestamptz(6)
+  nextActionLabel   String?         @map("next_action_label") @db.VarChar(120)
+  createdById       String?         @map("created_by_id") @db.Uuid
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?       @map("deleted_at") @db.Timestamptz(6)
 
-  workspace     Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  stage         PipelineStage     @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  assignedTo    WorkspaceMember   @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
-  deals         Deal[]
-  tasks         Task[]
-  activities    Activity[]
-  attachments   Attachment[]
-  tags          LeadTag[]
-  customValues  LeadCustomValue[]
-  conversations Conversation[]
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stage              PipelineStage        @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  assignedTo         WorkspaceMember      @relation("LeadAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  deals              Deal[]
+  tasks              Task[]
+  activities         Activity[]
+  attachments        Attachment[]
+  tags               LeadTag[]
+  customValues       LeadCustomValue[]
+  conversations      Conversation[]
+  cadenceEnrollments CadenceEnrollment[]
+  coldLeadAlerts     ColdLeadAlert[]
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([workspaceId, status])
@@ -551,6 +683,7 @@ model Lead {
   @@index([workspaceId, assignedToId])
   @@index([workspaceId, lastInteractionAt(sort: Desc)])
   @@index([workspaceId, deletedAt])
+  @@index([workspaceId, temperature])
   @@map("leads")
 }
 
@@ -897,9 +1030,10 @@ model Message {
   mediaDurationSeconds Int?             @map("media_duration_seconds")
   createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  workspace    Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  conversation Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  author       WorkspaceMember? @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  conversation    Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  author          WorkspaceMember? @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  cadenceStepRuns CadenceStepRun[]
 
   @@index([workspaceId, conversationId, createdAt(sort: Desc)])
   @@index([conversationId, createdAt(sort: Desc)])
@@ -965,4 +1099,192 @@ model WhatsappEvent {
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([instanceId, type, createdAt(sort: Desc)])
   @@map("whatsapp_events")
+}
+
+// =============================================================================
+// Cadências e Lead Frio (M10#1 SQL, M10#3 Prisma sync)
+// =============================================================================
+
+/// Cadência de follow-up automatizado vinculada a uma etapa do pipeline.
+/// Quando ativa, um Server Action (M10#3 `enrollLeadAction`) inscreve leads
+/// e o motor (M10#2 Edge Function + dispatch route) processa step-by-step
+/// segundo o `day_offset` de cada `CadenceStep`.
+///
+/// **Status** lifecycle: `active` (motor processa) ↔ `paused` (motor ignora).
+/// `archived` reservado pra V2 (soft-delete). DELETE hard hoje cascateia.
+///
+/// **Template seedado** ao criar workspace (M10#1 backfill + M10#3 signup):
+/// 3 cadências paused (Imobiliário/B2B/Alto Ticket) com 17 steps total.
+model Cadence {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String             @map("workspace_id") @db.Uuid
+  stageId      String             @map("stage_id") @db.Uuid
+  name         String             @db.VarChar(120)
+  description  String?            @db.VarChar(280)
+  templateKey  CadenceTemplateKey @default(custom) @map("template_key")
+  status       CadenceStatus      @default(active)
+  createdById  String?            @map("created_by_id") @db.Uuid
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stage       PipelineStage       @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  createdBy   User?               @relation("CadenceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  steps       CadenceStep[]
+  enrollments CadenceEnrollment[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, stageId])
+  @@index([workspaceId, status])
+  @@map("cadences")
+}
+
+/// Step individual de cadência — corpo da mensagem + canal + day_offset.
+///
+/// **`dayOffset`** restrito a {0, 1, 3, 7, 14, 30} via CHECK constraint
+/// (M10#1 SQL). `order_index` permite múltiplos steps no mesmo dia.
+///
+/// **`templateBody`** suporta placeholders `{nome}`/`{empresa}`/`{produto}`
+/// resolvidos pelo `resolvePlaceholders` (features/inbox/transforms.ts)
+/// dentro da rota dispatch M10#2 antes de chamar o adapter uazapi.
+model CadenceStep {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cadenceId    String             @map("cadence_id") @db.Uuid
+  dayOffset    Int                @map("day_offset")
+  channel      CadenceStepChannel
+  templateBody String             @map("template_body")
+  orderIndex   Int                @default(0) @map("order_index")
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  cadence  Cadence          @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  stepRuns CadenceStepRun[]
+
+  @@unique([cadenceId, dayOffset, orderIndex])
+  @@index([cadenceId, dayOffset, orderIndex])
+  @@map("cadence_steps")
+}
+
+/// Inscrição de um lead numa cadência. Único por `(cadence_id, lead_id)`.
+///
+/// **`nextRunAt`** é o quando o motor (M10#2 RPC `cadence_runner_pick_candidates`)
+/// considera elegível. Avançado pelo dispatch route após cada step (absoluto:
+/// `enrolled_at + day_offset * day`). Backoff transiente seta `NOW() + 30min`.
+///
+/// **`pausedReason`** é populado quando `status='paused'`:
+///   - `lead_replied` (trigger M10#1 `pause_cadence_on_inbound`)
+///   - `manual` (pausa via UI no detalhe do lead)
+///   - `stage_changed` / `disconnected` / `admin` (reservados pra M10#4+)
+model CadenceEnrollment {
+  id           String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String                        @map("workspace_id") @db.Uuid
+  cadenceId    String                        @map("cadence_id") @db.Uuid
+  leadId       String                        @map("lead_id") @db.Uuid
+  status       CadenceEnrollmentStatus       @default(active)
+  pausedReason CadenceEnrollmentPauseReason? @map("paused_reason")
+  enrolledAt   DateTime                      @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  pausedAt     DateTime?                     @map("paused_at") @db.Timestamptz(6)
+  completedAt  DateTime?                     @map("completed_at") @db.Timestamptz(6)
+  nextRunAt    DateTime                      @default(now()) @map("next_run_at") @db.Timestamptz(6)
+  createdAt    DateTime                      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime                      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  cadence   Cadence          @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  lead      Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  stepRuns  CadenceStepRun[]
+
+  @@unique([cadenceId, leadId])
+  @@index([workspaceId, status])
+  @@index([status, nextRunAt])
+  @@index([leadId])
+  @@index([cadenceId])
+  @@map("cadence_enrollments")
+}
+
+/// Execução de um step pra uma enrollment. UNIQUE `(enrollment_id, step_id)`
+/// é o que garante idempotência forte do motor — duas invocações concorrentes
+/// do `cadence-runner` (M10#2) tentam INSERT, a segunda perde.
+///
+/// **`status`** progride pending → sent | skipped | failed. A RPC
+/// `cadence_runner_pick_candidates` (M10#2) trata QUALQUER status como
+/// "executado" via LEFT JOIN — retry do mesmo step em transient skip exige
+/// DELETE da row antes (adiado pra M10.x).
+///
+/// **`messageId`** populado no happy path (apontando pra Message criada pela
+/// rota dispatch). Null em skip/failed.
+model CadenceStepRun {
+  id            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String                    @map("workspace_id") @db.Uuid
+  enrollmentId  String                    @map("enrollment_id") @db.Uuid
+  stepId        String                    @map("step_id") @db.Uuid
+  status        CadenceStepRunStatus      @default(pending)
+  skipReason    CadenceStepRunSkipReason? @map("skip_reason")
+  errorDetail   String?                   @map("error_detail")
+  scheduledFor  DateTime                  @map("scheduled_for") @db.Timestamptz(6)
+  executedAt    DateTime?                 @map("executed_at") @db.Timestamptz(6)
+  messageId     String?                   @map("message_id") @db.Uuid
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace  Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  enrollment CadenceEnrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  step       CadenceStep       @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  message    Message?          @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@unique([enrollmentId, stepId])
+  @@index([workspaceId, status])
+  @@index([enrollmentId])
+  @@map("cadence_step_runs")
+}
+
+/// Threshold de inatividade por etapa do funil (PRD §2.2). 5 thresholds
+/// seedados por workspace (M10#1 backfill): 7d Novo, 14d Em Contato, 7d
+/// Proposta, 5d Negociação, 30d Global (`stage_id IS NULL`).
+///
+/// **`stageId nullable`** — NULL representa fallback global do workspace.
+/// UNIQUE NULLS NOT DISTINCT (Postgres 15+) garante unique mesmo com NULL.
+///
+/// **`enabled`** permite desativar threshold individual sem deletar (Settings UI).
+model ColdLeadThreshold {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String   @map("workspace_id") @db.Uuid
+  stageId      String?  @map("stage_id") @db.Uuid
+  daysInactive Int      @map("days_inactive")
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  stage     PipelineStage?  @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  alerts    ColdLeadAlert[]
+
+  @@unique([workspaceId, stageId], name: "cold_lead_thresholds_unique_stage")
+  @@index([workspaceId])
+  @@map("cold_lead_thresholds")
+}
+
+/// Alerta de lead frio disparado pelo cold-lead-detector (M10#4 — pendente).
+/// UNIQUE `(lead_id, threshold_id)` evita realertar mesmo threshold/lead.
+///
+/// **`acknowledgedAt`** marca quando vendedor/gestor reconheceu via UI
+/// (clica em "Marcar como visto"). `null` = alerta ainda novo no dashboard.
+model ColdLeadAlert {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId      String    @map("workspace_id") @db.Uuid
+  leadId           String    @map("lead_id") @db.Uuid
+  thresholdId      String    @map("threshold_id") @db.Uuid
+  triggeredAt      DateTime  @default(now()) @map("triggered_at") @db.Timestamptz(6)
+  acknowledgedAt   DateTime? @map("acknowledged_at") @db.Timestamptz(6)
+  acknowledgedById String?   @map("acknowledged_by_id") @db.Uuid
+
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead           Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  threshold      ColdLeadThreshold @relation(fields: [thresholdId], references: [id], onDelete: Cascade)
+  acknowledgedBy User?             @relation("ColdLeadAlertAckedBy", fields: [acknowledgedById], references: [id], onDelete: SetNull)
+
+  @@unique([leadId, thresholdId])
+  @@index([workspaceId, acknowledgedAt])
+  @@index([leadId])
+  @@map("cold_lead_alerts")
 }

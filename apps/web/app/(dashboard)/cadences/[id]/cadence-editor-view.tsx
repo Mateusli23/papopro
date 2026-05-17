@@ -15,25 +15,23 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  EmptyState,
   PageHeader,
   cn,
 } from '@papopro/ui';
-import { ArrowLeft, Copy, MoreVertical, Pause, Play, Repeat, Trash2 } from '@papopro/ui/icons';
+import { ArrowLeft, Copy, MoreVertical, Pause, Play, Trash2 } from '@papopro/ui/icons';
 
+import {
+  deleteCadenceAction,
+  deleteStepAction,
+  duplicateCadenceAction,
+  toggleCadenceStatusAction,
+} from '@/features/cadences/actions';
 import { CadenceMetricsPanel } from '@/features/cadences/components/cadence-metrics-panel';
 import { CadenceStatusToggle } from '@/features/cadences/components/cadence-status-toggle';
 import { StepEditDialog } from '@/features/cadences/components/step-edit-dialog';
 import { StepTimeline } from '@/features/cadences/components/step-timeline';
-import {
-  deleteCadence,
-  deleteStep,
-  duplicateCadence,
-  toggleCadenceStatus,
-  useCadence,
-} from '@/features/cadences/store';
-import type { CadenceStep } from '@/features/cadences/types';
-import { getStageName } from '@/lib/fixtures/pipelines';
+import type { Cadence, CadenceStep } from '@/features/cadences/types';
+import type { PipelineStage } from '@/features/leads/types';
 
 /**
  * `/cadences/[id]` — editor da cadência.
@@ -41,20 +39,22 @@ import { getStageName } from '@/lib/fixtures/pipelines';
  * Layout: header com título + status + ações; corpo em 2 colunas no
  * desktop (timeline 2/3, métricas 1/3) e empilhado no mobile.
  *
- * Quando o ID não bate com nenhuma cadência (ex: usuário acessa link de
- * cadência deletada ou inválido), mostramos EmptyState com link de volta.
- *
- * Em M8 lê via Server Component + Prisma, mas a forma da view permanece —
- * o `useCadence(id)` vira `cadence: Cadence` prop.
+ * **M10#3**: recebe `initialCadence` carregado pelo Server Component
+ * (`page.tsx` chama `getCadence` que inclui steps + métricas reais
+ * agregadas). Mutações via Server Actions revalidam o path — Next refetcha
+ * e re-renderiza com snapshot fresco.
  */
 
 interface CadenceEditorViewProps {
-  id: string;
+  initialCadence: Cadence;
+  /** Stages do pipeline default — usadas pra resolver o nome da etapa. */
+  stages: readonly PipelineStage[];
 }
 
-export function CadenceEditorView({ id }: CadenceEditorViewProps) {
+export function CadenceEditorView({ initialCadence, stages }: CadenceEditorViewProps) {
   const router = useRouter();
-  const cadence = useCadence(id);
+  const cadence = initialCadence;
+  const stageName = stages.find((s) => s.id === cadence.stageId)?.name ?? '—';
 
   // Estado único do dialog de step. `null` = fechado; `{ mode: 'create' }` =
   // adicionar novo; `{ mode: 'edit', step }` = editar existente. Ter dois
@@ -65,75 +65,68 @@ export function CadenceEditorView({ id }: CadenceEditorViewProps) {
     { mode: 'create' } | { mode: 'edit'; step: CadenceStep } | null
   >(null);
 
-  if (!cadence) {
-    return (
-      <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Cadência não encontrada"
-          description="O link pode estar quebrado ou a cadência foi excluída."
-        />
-        <EmptyState
-          icon={Repeat}
-          title="Sem cadência por aqui"
-          description="Volte pra lista pra ver as cadências disponíveis."
-          action={
-            <Button asChild>
-              <Link href="/cadences">
-                <ArrowLeft className="size-4" />
-                Voltar pra cadências
-              </Link>
-            </Button>
-          }
-        />
-      </div>
-    );
-  }
-
   const isPaused = cadence.status === 'paused';
 
-  function handleDuplicate() {
-    const dup = duplicateCadence(cadence!.id);
-    if (dup) {
-      toast.success(`"${dup.name}" criada como cópia (pausada).`, { duration: 3500 });
-      router.push(`/cadences/${dup.id}`);
+  async function handleDuplicate() {
+    const loadingId = toast.loading('Duplicando cadência…');
+    const result = await duplicateCadenceAction(cadence.id);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    toast.success(`"${cadence.name} (cópia)" criada (pausada).`, { duration: 3500 });
+    router.push(`/cadences/${result.id}`);
   }
 
-  function handleDelete() {
+  async function handleDelete() {
     // TODO(M5+): trocar `window.confirm` por AlertDialog Radix — quebra
     // estética em dark mode e tema do produto. Funcional o suficiente pra
     // demo mockada; AlertDialog primitivo entra antes do beta fechado.
-    if (!confirm(`Excluir a cadência "${cadence!.name}"? Essa ação não pode ser desfeita.`)) {
+    if (!confirm(`Excluir a cadência "${cadence.name}"? Essa ação não pode ser desfeita.`)) {
       return;
     }
-    const ok = deleteCadence(cadence!.id);
-    if (ok) {
-      toast.success('Cadência excluída.', { duration: 3500 });
-      router.push('/cadences');
+    const loadingId = toast.loading('Excluindo cadência…');
+    const result = await deleteCadenceAction(cadence.id);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    toast.success('Cadência excluída.', { duration: 3500 });
+    router.push('/cadences');
   }
 
-  function handleToggleStatus() {
-    const updated = toggleCadenceStatus(cadence!.id);
-    if (updated) {
-      toast.success(
-        updated.status === 'active'
-          ? 'Cadência ativada — passos seguintes voltam a disparar.'
-          : 'Cadência pausada — sem novos disparos até reativar.',
-        { duration: 3500 },
-      );
+  async function handleToggleStatus() {
+    const wasActive = cadence.status === 'active';
+    const loadingId = toast.loading(wasActive ? 'Pausando cadência…' : 'Ativando cadência…');
+    const result = await toggleCadenceStatusAction(cadence.id);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    toast.success(
+      wasActive
+        ? 'Cadência pausada — sem novos disparos até reativar.'
+        : 'Cadência ativada — passos seguintes voltam a disparar.',
+      { duration: 3500 },
+    );
   }
 
-  function handleDeleteStep(step: CadenceStep) {
+  async function handleDeleteStep(step: CadenceStep) {
     // TODO(M5+): mesmo motivo do `handleDelete` — trocar por AlertDialog.
     if (!confirm('Remover este passo? Os leads que já passaram por ele não são afetados.')) {
       return;
     }
-    const ok = deleteStep(cadence!.id, step.id);
-    if (ok) {
-      toast.success(`Passo D+${step.dayOffset} removido.`, { duration: 3000 });
+    const loadingId = toast.loading('Removendo passo…');
+    const result = await deleteStepAction(cadence.id, step.id);
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    toast.success(`Passo D+${step.dayOffset} removido.`, { duration: 3000 });
   }
 
   return (
@@ -198,7 +191,7 @@ export function CadenceEditorView({ id }: CadenceEditorViewProps) {
 
         <div className="text-caption text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
           <span>
-            Etapa: <strong className="text-foreground">{getStageName(cadence.stageId)}</strong>
+            Etapa: <strong className="text-foreground">{stageName}</strong>
           </span>
           <span aria-hidden>·</span>
           <span>

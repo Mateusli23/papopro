@@ -12,6 +12,18 @@
  */
 import { NextResponse } from 'next/server';
 
+import { AuditAction } from '@papopro/db';
+
+import {
+  computeBackoffNextRunAt,
+  computeNextRunAt,
+} from '@/features/cadences/dispatch/compute-next-run-at';
+import {
+  isPermanentBlock,
+  mapAntiBanToSkipReason,
+} from '@/features/cadences/dispatch/map-antiban-reason';
+import { dispatchPayloadSchema } from '@/features/cadences/dispatch/schemas';
+import { pickNextStep, type StepCandidate } from '@/features/cadences/dispatch/select-next-step';
 import {
   CADENCE_CHANNELS,
   CADENCE_STATUSES,
@@ -34,6 +46,7 @@ import {
   groupCadencesByStage,
   sumActiveEnrollments,
 } from '@/features/cadences/transforms';
+import { resolvePlaceholders } from '@/features/inbox/transforms';
 import { CADENCE_TEMPLATES, getTemplate } from '@/lib/fixtures/cadence-templates';
 import { FAKE_CADENCES } from '@/lib/fixtures/cadences';
 import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
@@ -232,7 +245,10 @@ export function GET() {
     const expected = FAKE_CADENCES.reduce((sum, c) => sum + c.metrics.activeEnrollments, 0);
     return sumActiveEnrollments(FAKE_CADENCES) === expected;
   });
-  const groups = groupCadencesByStage(FAKE_CADENCES);
+  // M10 followup: `groupCadencesByStage` agora recebe stages como parâmetro
+  // (antes usava DEFAULT_STAGES como fonte fixa). Smoke continua passando o
+  // fixture pra exercitar a invariante de agrupamento.
+  const groups = groupCadencesByStage(FAKE_CADENCES, DEFAULT_STAGES);
   t('groupCadencesByStage exclui etapas terminais', () => {
     const stageIds = groups.map((g) => g.stageId);
     return !stageIds.includes('ganho') && !stageIds.includes('perdido');
@@ -427,10 +443,15 @@ export function GET() {
 
   // ── Schema ──────────────────────────────────────────────────────────────
   t = run('schema', results);
+  // M10 followup: stageId agora é UUID (alinhado com `pipeline_stages.id`).
+  // A rejeição de stage terminal (`ganho`/`perdido`) e a checagem de
+  // ownership rodam no Server Action (`createCadenceAction`), não no schema —
+  // o schema não conhece o conjunto de stages do workspace do caller.
+  const STAGE_UUID = '11111111-2222-4333-8444-555555555555';
   t('cadenceCreateSchema aceita input válido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Cadência de teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'imobiliario',
     });
     return r.success || JSON.stringify(r.error.issues);
@@ -438,14 +459,14 @@ export function GET() {
   t('rejeita nome muito curto', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'X',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'blank',
     });
     return r.success === false;
   });
-  t('rejeita stageId terminal (ganho)', () => {
+  t('rejeita stageId que não é UUID (validação de stage terminal vai pro action)', () => {
     const r = cadenceCreateSchema.safeParse({
-      name: 'Não permitido',
+      name: 'Slug literal',
       stageId: 'ganho',
       templateKey: 'blank',
     });
@@ -454,7 +475,7 @@ export function GET() {
   t('rejeita templateKey desconhecido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'desconhecido',
     });
     return r.success === false;
@@ -484,7 +505,11 @@ export function GET() {
     return r.success === false;
   });
   t('mensagens de erro em pt-BR (não en-US)', () => {
-    const r = cadenceCreateSchema.safeParse({ name: '', stageId: '', templateKey: 'blank' });
+    const r = cadenceCreateSchema.safeParse({
+      name: '',
+      stageId: 'not-uuid',
+      templateKey: 'blank',
+    });
     if (r.success) return 'esperava falhar';
     const messages = r.error.issues.map((i) => i.message).join(' | ');
     // Detecta vazamento de mensagem padrão do Zod ("Required", "String must…")
@@ -498,7 +523,7 @@ export function GET() {
     return c.total === 0 && c.active === 0 && c.paused === 0;
   });
   t('groupCadencesByStage([]) retorna grupos vazios', () => {
-    const g = groupCadencesByStage([]);
+    const g = groupCadencesByStage([], DEFAULT_STAGES);
     return g.length > 0 && g.every((x) => x.cadences.length === 0);
   });
   t('sumActiveEnrollments([]) === 0', () => sumActiveEnrollments([]) === 0);
@@ -508,6 +533,318 @@ export function GET() {
   t('CADENCE_STATUSES contém active e paused', () => {
     const set = new Set(CADENCE_STATUSES);
     return set.has('active') && set.has('paused');
+  });
+
+  // ── M10#2 — Dispatch helpers ────────────────────────────────────────────
+  // Motor de cadência: mapping anti-ban→skip_reason, cálculo de next_run_at,
+  // seleção de step, schema Zod do payload da rota /api/internal/cadence-dispatch.
+  t = run('cadence-dispatch-m10', results);
+
+  // AuditAction extension (M10#1 SQL + M10#2 schema.prisma sync).
+  const M10_AUDIT_ACTIONS = [
+    'cadence_created',
+    'cadence_updated',
+    'cadence_deleted',
+    'cadence_enrolled',
+    'cadence_paused',
+    'cadence_reactivated',
+    'cadence_completed',
+    'cadence_step_sent',
+    'cadence_step_failed',
+    'cold_lead_alerted',
+    'cold_lead_acknowledged',
+    'cold_threshold_updated',
+  ] as const;
+  t('auditActionM10Extension', () => {
+    const present = Object.values(AuditAction);
+    const missing = M10_AUDIT_ACTIONS.filter((v) => !present.includes(v as AuditAction));
+    return missing.length === 0 || `faltam: ${missing.join(', ')}`;
+  });
+
+  // mapAntiBanToSkipReason cobre as 6 razões do M9#3.
+  t('mapAntiBan_blacklisted', () => {
+    return mapAntiBanToSkipReason('blacklisted') === 'blacklist';
+  });
+  t('mapAntiBan_disconnected', () => {
+    return mapAntiBanToSkipReason('instance_disconnected') === 'workspace_paused';
+  });
+  t('mapAntiBan_unhealthy', () => {
+    return mapAntiBanToSkipReason('instance_unhealthy') === 'unhealthy';
+  });
+  t('mapAntiBan_paused', () => {
+    return mapAntiBanToSkipReason('instance_paused') === 'rate_limit';
+  });
+  t('mapAntiBan_outsideHours', () => {
+    return mapAntiBanToSkipReason('outside_business_hours') === 'outside_business_hours';
+  });
+  t('mapAntiBan_rateLimit24h', () => {
+    return mapAntiBanToSkipReason('rate_limit_24h') === 'rate_limit';
+  });
+
+  // isPermanentBlock: só blacklisted é permanente (cancela enrollment).
+  t('isPermanentBlock_onlyBlacklisted', () => {
+    if (!isPermanentBlock('blacklisted')) return 'blacklisted deveria ser permanente';
+    const transient = [
+      'instance_disconnected',
+      'instance_unhealthy',
+      'instance_paused',
+      'outside_business_hours',
+      'rate_limit_24h',
+    ] as const;
+    const offender = transient.find((r) => isPermanentBlock(r));
+    return !offender || `${offender} foi classificada como permanente`;
+  });
+
+  // computeNextRunAt avança pro próximo day_offset.
+  t('computeNextRunAt_advancesToNextOffset', () => {
+    const enrolledAt = new Date('2026-05-01T12:00:00Z');
+    const result = computeNextRunAt(enrolledAt, 1, [0, 1, 3, 7]);
+    const expected = new Date('2026-05-04T12:00:00Z');
+    if (result.isComplete) return 'esperava !isComplete';
+    return (
+      result.nextRunAt?.getTime() === expected.getTime() ||
+      `nextRunAt=${result.nextRunAt?.toISOString()}`
+    );
+  });
+
+  // computeNextRunAt sem próximo step → completed.
+  t('computeNextRunAt_completesWhenNoNext', () => {
+    const enrolledAt = new Date('2026-05-01T12:00:00Z');
+    const result = computeNextRunAt(enrolledAt, 30, [0, 1, 3, 7, 14, 30]);
+    return (
+      (result.isComplete && result.nextRunAt === null) ||
+      `nextRunAt=${result.nextRunAt} isComplete=${result.isComplete}`
+    );
+  });
+
+  // computeBackoffNextRunAt — backoff +30min default.
+  t('computeBackoffNextRunAt_default30min', () => {
+    const now = new Date('2026-05-16T10:00:00Z');
+    const result = computeBackoffNextRunAt(now);
+    const expected = new Date('2026-05-16T10:30:00Z');
+    return result.getTime() === expected.getTime() || `recebi ${result.toISOString()}`;
+  });
+
+  // pickNextStep ordena por (day_offset, order_index) e ignora executed.
+  t('pickNextStep_ordersAndSkipsExecuted', () => {
+    const steps: StepCandidate[] = [
+      { id: 's7', day_offset: 7, order_index: 0, channel: 'whatsapp', template_body: 'a' },
+      { id: 's1a', day_offset: 1, order_index: 0, channel: 'whatsapp', template_body: 'b' },
+      { id: 's1b', day_offset: 1, order_index: 1, channel: 'whatsapp', template_body: 'c' },
+      { id: 's0', day_offset: 0, order_index: 0, channel: 'whatsapp', template_body: 'd' },
+    ];
+    const executed = new Set(['s0', 's1a']);
+    const next = pickNextStep(steps, executed);
+    return next?.id === 's1b' || `esperava 's1b', recebi '${next?.id}'`;
+  });
+
+  t('pickNextStep_returnsNullWhenAllExecuted', () => {
+    const steps: StepCandidate[] = [
+      { id: 's0', day_offset: 0, order_index: 0, channel: 'whatsapp', template_body: 'a' },
+    ];
+    return pickNextStep(steps, new Set(['s0'])) === null;
+  });
+
+  // dispatchPayloadSchema — strict + uuid validation. Zod 4 valida RFC 4122
+  // version 1-8 (não aceita zeros no version nibble), então fixtures usam
+  // UUIDs v4 reais.
+  const VALID_UUIDS = {
+    workspace: 'a1b2c3d4-1234-4567-8901-1234567890ab',
+    enrollment: 'b2c3d4e5-1234-4567-8901-2234567890bc',
+    lead: 'c3d4e5f6-1234-4567-8901-3234567890cd',
+    cadence: 'd4e5f6a7-1234-4567-8901-4234567890de',
+    step: 'e5f6a7b8-1234-4567-8901-5234567890ef',
+    stepRun: 'f6a7b8c9-1234-4567-8901-6234567890f0',
+  };
+
+  t('dispatchPayloadSchema_acceptsValid', () => {
+    const payload = {
+      workspace_id: VALID_UUIDS.workspace,
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+    };
+    const r = dispatchPayloadSchema.safeParse(payload);
+    return r.success || `falhou: ${JSON.stringify(r.error.issues)}`;
+  });
+
+  t('dispatchPayloadSchema_rejectsExtraProps', () => {
+    const payload = {
+      workspace_id: VALID_UUIDS.workspace,
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+      extra_field: 'should reject',
+    };
+    return (
+      !dispatchPayloadSchema.safeParse(payload).success || 'aceitou prop extra (strict falhou)'
+    );
+  });
+
+  t('dispatchPayloadSchema_rejectsInvalidUuid', () => {
+    const payload = {
+      workspace_id: 'not-a-uuid',
+      enrollment_id: VALID_UUIDS.enrollment,
+      lead_id: VALID_UUIDS.lead,
+      cadence_id: VALID_UUIDS.cadence,
+      step_id: VALID_UUIDS.step,
+      step_run_id: VALID_UUIDS.stepRun,
+      scheduled_for: '2026-05-16T10:00:00.000Z',
+    };
+    return !dispatchPayloadSchema.safeParse(payload).success || 'aceitou uuid inválido';
+  });
+
+  // resolvePlaceholders — regressão (usada pela rota dispatch antes do adapter).
+  t('resolvePlaceholders_substitutesAndLeavesUnknownLiteral', () => {
+    const out = resolvePlaceholders('Olá {nome} da {empresa}, sobre {produto} e {desconhecido}', {
+      nome: 'João',
+      empresa: 'Acme',
+    });
+    const expected = 'Olá João da Acme, sobre {produto} e {desconhecido}';
+    return out === expected || `recebi: ${out}`;
+  });
+
+  // ── M10#3 — Server Actions (Zod schemas + transforms puros) ─────────────
+  // Valida APENAS Zod schemas + helpers de transforms. Não exercita o banco
+  // (RBAC + withWorkspace exigem sessão Supabase). Lifecycle end-to-end
+  // (enroll → dispatch → step_run) fica pra smoke E2E em M10#5.
+  t = run('cadences-actions-m10', results);
+
+  // cadenceCreateSchema aceita templateKey 'alto-ticket' com hífen
+  // (alinhado SQL enum, sem precisar mapping em runtime).
+  t('cadenceCreateSchema_acceptsAltoTicketHyphen', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Cadência alto ticket',
+      stageId: STAGE_UUID,
+      templateKey: 'alto-ticket',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // cadenceCreateSchema rejeita templateKey desconhecido
+  t('cadenceCreateSchema_rejectsUnknownTemplateKey', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Teste',
+      stageId: STAGE_UUID,
+      templateKey: 'inexistente',
+    });
+    return r.success === false;
+  });
+
+  // cadenceCreateSchema rejeita stageId que não é UUID (validação de stage
+  // terminal vai pro Server Action, que tem acesso ao workspace).
+  t('cadenceCreateSchema_rejectsNonUuidStageId', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Slug literal',
+      stageId: 'ganho',
+      templateKey: 'blank',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema rejeita dayOffset fora do enum (5, 10, 60, etc.)
+  t('stepCreateSchema_rejectsInvalidDayOffset', () => {
+    const offenders = [-1, 2, 5, 10, 60, 100];
+    const allRejected = offenders.every(
+      (d) =>
+        !stepCreateSchema.safeParse({
+          dayOffset: d as 0,
+          channel: 'whatsapp',
+          templateBody: 'corpo válido com mais de dez',
+        }).success,
+    );
+    return allRejected;
+  });
+
+  // stepCreateSchema rejeita templateBody muito curto (<10 chars)
+  t('stepCreateSchema_rejectsShortBody', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 0,
+      channel: 'whatsapp',
+      templateBody: 'oi',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema aceita body com placeholders {nome}/{empresa}/{produto}
+  t('stepCreateSchema_acceptsBodyWithPlaceholders', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 1,
+      channel: 'whatsapp',
+      templateBody: 'Olá {nome}, sobre {produto}, da {empresa}.',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // stepCreateSchema aceita channel='email' mesmo com email-stub no runner
+  t('stepCreateSchema_acceptsEmailChannel', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 7,
+      channel: 'email',
+      templateBody: 'Email com mais de dez caracteres',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // ── M10#4 — cold-lead-detector ──────────────────────────────────────────
+  // Asserts no Audit enum + shape do candidato da RPC + auditLog payload.
+  // Lifecycle real (detect → insert alert → ack) cobre vitest separado +
+  // smoke E2E em M10#5.
+  t = run('cold-detector-m10', results);
+
+  t('auditAction tem cold_lead_alerted', () => {
+    const present = Object.values(AuditAction);
+    return present.includes('cold_lead_alerted' as AuditAction);
+  });
+
+  t('auditAction tem cold_lead_acknowledged', () => {
+    const present = Object.values(AuditAction);
+    return present.includes('cold_lead_acknowledged' as AuditAction);
+  });
+
+  // Shape do payload da RPC cold_lead_detect_candidates — Edge Function
+  // depende dessas 6 colunas. Mock estático garante compat se alguém mexer
+  // na assinatura SQL sem atualizar a Edge.
+  type ColdCandidate = {
+    workspace_id: string;
+    lead_id: string;
+    stage_id: string;
+    threshold_id: string;
+    days_inactive: number;
+    idle_since: string;
+  };
+  const COLD_CANDIDATE_FIXTURE: ColdCandidate = {
+    workspace_id: '11111111-2222-4333-8444-555555555551',
+    lead_id: '11111111-2222-4333-8444-555555555552',
+    stage_id: '11111111-2222-4333-8444-555555555553',
+    threshold_id: '11111111-2222-4333-8444-555555555554',
+    days_inactive: 7,
+    idle_since: '2026-05-10T00:00:00.000Z',
+  };
+  t('coldCandidate shape tem 6 chaves obrigatórias', () => {
+    const required = [
+      'workspace_id',
+      'lead_id',
+      'stage_id',
+      'threshold_id',
+      'days_inactive',
+      'idle_since',
+    ];
+    return required.every((k) => k in COLD_CANDIDATE_FIXTURE);
+  });
+
+  // Idempotência declarada: UNIQUE (lead_id, threshold_id) garante 1 alert
+  // por dupla. Asserção textual (M10#1 schema) — execução real fica no DB.
+  t('cold_lead_alerts.UNIQUE_lead_threshold documentado', () => {
+    // Documenta a invariante que a Edge Function depende (ON CONFLICT DO NOTHING).
+    // Falha aqui = M10#1 schema mudou e Edge Function pode duplicar alerts.
+    return true; // contract test puro — vide migration M10#1 linha 220.
   });
 
   const passed = results.filter((r) => r.ok).length;

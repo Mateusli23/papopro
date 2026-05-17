@@ -76,4 +76,13 @@ export {
   MessageDirection,
   MessageKind,
   Role,
+  // M10#3 — Cadência + Cold Lead (enums adicionados em M10#1 SQL + M10#3 Prisma sync)
+  CadenceStatus,
+  CadenceStepChannel,
+  CadenceTemplateKey,
+  CadenceEnrollmentStatus,
+  CadenceEnrollmentPauseReason,
+  CadenceStepRunStatus,
+  CadenceStepRunSkipReason,
+  LeadTemperature,
 } from '@prisma/client';
