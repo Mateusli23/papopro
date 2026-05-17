@@ -245,7 +245,10 @@ export function GET() {
     const expected = FAKE_CADENCES.reduce((sum, c) => sum + c.metrics.activeEnrollments, 0);
     return sumActiveEnrollments(FAKE_CADENCES) === expected;
   });
-  const groups = groupCadencesByStage(FAKE_CADENCES);
+  // M10 followup: `groupCadencesByStage` agora recebe stages como parâmetro
+  // (antes usava DEFAULT_STAGES como fonte fixa). Smoke continua passando o
+  // fixture pra exercitar a invariante de agrupamento.
+  const groups = groupCadencesByStage(FAKE_CADENCES, DEFAULT_STAGES);
   t('groupCadencesByStage exclui etapas terminais', () => {
     const stageIds = groups.map((g) => g.stageId);
     return !stageIds.includes('ganho') && !stageIds.includes('perdido');
@@ -440,10 +443,15 @@ export function GET() {
 
   // ── Schema ──────────────────────────────────────────────────────────────
   t = run('schema', results);
+  // M10 followup: stageId agora é UUID (alinhado com `pipeline_stages.id`).
+  // A rejeição de stage terminal (`ganho`/`perdido`) e a checagem de
+  // ownership rodam no Server Action (`createCadenceAction`), não no schema —
+  // o schema não conhece o conjunto de stages do workspace do caller.
+  const STAGE_UUID = '11111111-2222-4333-8444-555555555555';
   t('cadenceCreateSchema aceita input válido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Cadência de teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'imobiliario',
     });
     return r.success || JSON.stringify(r.error.issues);
@@ -451,14 +459,14 @@ export function GET() {
   t('rejeita nome muito curto', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'X',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'blank',
     });
     return r.success === false;
   });
-  t('rejeita stageId terminal (ganho)', () => {
+  t('rejeita stageId que não é UUID (validação de stage terminal vai pro action)', () => {
     const r = cadenceCreateSchema.safeParse({
-      name: 'Não permitido',
+      name: 'Slug literal',
       stageId: 'ganho',
       templateKey: 'blank',
     });
@@ -467,7 +475,7 @@ export function GET() {
   t('rejeita templateKey desconhecido', () => {
     const r = cadenceCreateSchema.safeParse({
       name: 'Teste',
-      stageId: 'novo',
+      stageId: STAGE_UUID,
       templateKey: 'desconhecido',
     });
     return r.success === false;
@@ -497,7 +505,11 @@ export function GET() {
     return r.success === false;
   });
   t('mensagens de erro em pt-BR (não en-US)', () => {
-    const r = cadenceCreateSchema.safeParse({ name: '', stageId: '', templateKey: 'blank' });
+    const r = cadenceCreateSchema.safeParse({
+      name: '',
+      stageId: 'not-uuid',
+      templateKey: 'blank',
+    });
     if (r.success) return 'esperava falhar';
     const messages = r.error.issues.map((i) => i.message).join(' | ');
     // Detecta vazamento de mensagem padrão do Zod ("Required", "String must…")
@@ -511,7 +523,7 @@ export function GET() {
     return c.total === 0 && c.active === 0 && c.paused === 0;
   });
   t('groupCadencesByStage([]) retorna grupos vazios', () => {
-    const g = groupCadencesByStage([]);
+    const g = groupCadencesByStage([], DEFAULT_STAGES);
     return g.length > 0 && g.every((x) => x.cadences.length === 0);
   });
   t('sumActiveEnrollments([]) === 0', () => sumActiveEnrollments([]) === 0);
@@ -696,6 +708,88 @@ export function GET() {
     });
     const expected = 'Olá João da Acme, sobre {produto} e {desconhecido}';
     return out === expected || `recebi: ${out}`;
+  });
+
+  // ── M10#3 — Server Actions (Zod schemas + transforms puros) ─────────────
+  // Valida APENAS Zod schemas + helpers de transforms. Não exercita o banco
+  // (RBAC + withWorkspace exigem sessão Supabase). Lifecycle end-to-end
+  // (enroll → dispatch → step_run) fica pra smoke E2E em M10#5.
+  t = run('cadences-actions-m10', results);
+
+  // cadenceCreateSchema aceita templateKey 'alto-ticket' com hífen
+  // (alinhado SQL enum, sem precisar mapping em runtime).
+  t('cadenceCreateSchema_acceptsAltoTicketHyphen', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Cadência alto ticket',
+      stageId: STAGE_UUID,
+      templateKey: 'alto-ticket',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // cadenceCreateSchema rejeita templateKey desconhecido
+  t('cadenceCreateSchema_rejectsUnknownTemplateKey', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Teste',
+      stageId: STAGE_UUID,
+      templateKey: 'inexistente',
+    });
+    return r.success === false;
+  });
+
+  // cadenceCreateSchema rejeita stageId que não é UUID (validação de stage
+  // terminal vai pro Server Action, que tem acesso ao workspace).
+  t('cadenceCreateSchema_rejectsNonUuidStageId', () => {
+    const r = cadenceCreateSchema.safeParse({
+      name: 'Slug literal',
+      stageId: 'ganho',
+      templateKey: 'blank',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema rejeita dayOffset fora do enum (5, 10, 60, etc.)
+  t('stepCreateSchema_rejectsInvalidDayOffset', () => {
+    const offenders = [-1, 2, 5, 10, 60, 100];
+    const allRejected = offenders.every(
+      (d) =>
+        !stepCreateSchema.safeParse({
+          dayOffset: d as 0,
+          channel: 'whatsapp',
+          templateBody: 'corpo válido com mais de dez',
+        }).success,
+    );
+    return allRejected;
+  });
+
+  // stepCreateSchema rejeita templateBody muito curto (<10 chars)
+  t('stepCreateSchema_rejectsShortBody', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 0,
+      channel: 'whatsapp',
+      templateBody: 'oi',
+    });
+    return r.success === false;
+  });
+
+  // stepCreateSchema aceita body com placeholders {nome}/{empresa}/{produto}
+  t('stepCreateSchema_acceptsBodyWithPlaceholders', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 1,
+      channel: 'whatsapp',
+      templateBody: 'Olá {nome}, sobre {produto}, da {empresa}.',
+    });
+    return r.success || JSON.stringify(r.error.issues);
+  });
+
+  // stepCreateSchema aceita channel='email' mesmo com email-stub no runner
+  t('stepCreateSchema_acceptsEmailChannel', () => {
+    const r = stepCreateSchema.safeParse({
+      dayOffset: 7,
+      channel: 'email',
+      templateBody: 'Email com mais de dez caracteres',
+    });
+    return r.success || JSON.stringify(r.error.issues);
   });
 
   const passed = results.filter((r) => r.ok).length;

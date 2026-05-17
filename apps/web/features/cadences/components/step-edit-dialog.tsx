@@ -24,8 +24,8 @@ import {
 } from '@papopro/ui';
 import { Loader2, Mail, MessageCircle } from '@papopro/ui/icons';
 
+import { addStepAction, updateStepAction } from '../actions';
 import { CADENCE_CHANNELS, DAY_OFFSETS, stepCreateSchema, type StepCreateInput } from '../schemas';
-import { addStep, updateStep } from '../store';
 import type { CadenceStep } from '../types';
 
 import { PlaceholderHint } from './placeholder-hint';
@@ -85,18 +85,19 @@ export function StepEditDialog({
     }
   }, [open, step, defaultDayOffset, reset]);
 
-  function onSubmit(data: StepCreateInput) {
-    if (step) {
-      const updated = updateStep(cadenceId, step.id, data);
-      if (updated) {
-        toast.success('Passo atualizado.', { duration: 3000 });
-      }
-    } else {
-      const created = addStep(cadenceId, data);
-      if (created) {
-        toast.success(`Passo D+${data.dayOffset} adicionado.`, { duration: 3000 });
-      }
+  async function onSubmit(data: StepCreateInput) {
+    const loadingId = toast.loading(step ? 'Atualizando passo…' : 'Adicionando passo…');
+    const result = step
+      ? await updateStepAction({ cadenceId, stepId: step.id, ...data })
+      : await addStepAction({ cadenceId, ...data });
+    toast.dismiss(loadingId);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
     }
+    toast.success(step ? 'Passo atualizado.' : `Passo D+${data.dayOffset} adicionado.`, {
+      duration: 3000,
+    });
     onOpenChange(false);
   }
 
