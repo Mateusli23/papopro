@@ -1747,6 +1747,50 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 ---
 
+## Release: M11 #1–#4 — foundation IA (Agentes + lib/ai + UI + Cérebro upload, 17-mai-26)
+
+**Primeiro release de M11.** Quatro sub-PRs de M11 (foundation + lib/ai + UI wiring + Cérebro upload) saem juntos em `PR dev → main`. Os sub-PRs #5–#7 (runtime router uazapi + handoffs + métricas/limits) ficam pra release subsequente, mesma estratégia de M10 (#74 + #77).
+
+**Conteúdo do release:**
+
+| Sub-PR | Branch (deletada) | PR                                                   | Resumo                                                                                                                                                                                                                                        |
+| ------ | ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M11#1  | `m11-ai-agents`   | [#82](https://github.com/Mateusli23/papopro/pull/82) | Schema 10 tabelas (`ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`, `lead_summaries`, `knowledge_*` × 4) + 7 enums + 8 audit_action values + RLS em todas + HNSW pgvector + smoke contratos (90/90). |
+| M11#2  | `m11-2-ai-lib`    | [#83](https://github.com/Mateusli23/papopro/pull/83) | `lib/ai/` (pricing + usage + claude + embeddings + memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk@0.96` + `openai@6.38`) + smoke 31. Custo IA medido em `cost_micros bigint`.                                                     |
+| M11#3  | `m11-3-ui-wiring` | [#84](https://github.com/Mateusli23/papopro/pull/84) | UI hidratada do servidor + 16 Server Actions (CRUD/versionamento/roteamento/handoff config/KB campos/simulation) + helper `buildSystemPrompt` + simulation chat chamando Claude real. Store M5 + fixtures deletados (net deletion).           |
+| M11#4  | `m11-4-knowledge` | [#85](https://github.com/Mateusli23/papopro/pull/85) | Cérebro upload (PDF/TXT/MD) + extração (`pdf-parse@2.4.5`) + chunking + embedding síncrono + bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados. Smoke chunking +11.                                                 |
+
+**Diferenciais do PRD entregues no release (parcial — runtime fica pra M11#5+):**
+
+1. **Agentes IA configuráveis** ponta-a-ponta no editor: prompt + persona + tom + roteamento + handoff config + versionamento + restore + simulação contra Claude real (Sonnet 4.6 com prompt caching).
+2. **Cérebro da Empresa** funcional: 5 campos estruturados + upload de documentos com extração, chunking e embedding em pgvector. Simulação consulta via RAG (`topKKnowledge` retorna resultados reais).
+
+**O que ainda NÃO está no release** (vai pra próximo dev→main):
+
+- Atendimento real (uazapi inbound → roteador → agent_session production → Claude → WhatsApp) — **M11#5**
+- Handoffs agente↔agente e agente→humano em runtime — **M11#6**
+- Métricas por agente em `/reports`, enforcement 3 ativos no Pro IA, diff visual de versões, DOC/DOCX (lib `mammoth`) — **M11#7**
+
+**Configuração pendente do operador pós-release** (vai no body do PR):
+
+1. **Migrations na ordem:**
+   - `apply_migration name=m11_1_ai_agents_schema`
+   - `apply_migration name=m11_2_usage_events_schema`
+   - `apply_migration name=m11_4_knowledge_storage_setup`
+2. **Validações pós-apply:**
+   - `SELECT typname FROM pg_type WHERE typname LIKE 'agent_%' OR typname LIKE 'knowledge_%'` → 7 tipos esperados
+   - `SELECT indexname FROM pg_indexes WHERE indexname = 'knowledge_embeddings_hnsw_idx'`
+   - `SELECT id, allowed_mime_types FROM storage.buckets WHERE id = 'knowledge-base'`
+3. **Vercel env vars (críticas a partir deste release):**
+   - `ANTHROPIC_API_KEY` (sem isso, simulation chat falha com erro propositivo)
+   - `OPENAI_API_KEY` (sem isso, KB upload marca documento como `failed`)
+4. **Custo:** A partir deste release o produto consome Anthropic + OpenAI. Simulation Sonnet 4.6 ~\$0.05–\$0.30/turno. KB indexing ~\$0.0003/50KB texto. Monitorar `usage_events` desde primeiro turno.
+5. **Sem Edge Function nem cron job** — processing de KB é síncrono no Server Action; runtime router via webhook (M11#5).
+
+**Próximo passo:** **M11#5** (roteador runtime — uazapi inbound dispara `agent_session kind='production'` + chama Claude com memória 3 camadas + responde via M9 adapter).
+
+---
+
 ## M11 — Agentes IA + Cérebro da Empresa (pgvector)
 
 **Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
