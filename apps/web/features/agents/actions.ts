@@ -51,6 +51,7 @@ import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isUuid } from '@/lib/utils/uuid';
 
+import { reindexStructuredField } from './knowledge-actions';
 import {
   agentCreateSchema,
   agentUpdateSchema,
@@ -877,6 +878,19 @@ export async function updateKnowledgeBaseAction(rawInput: unknown): Promise<Void
         });
       }
     });
+
+    // M11#4: re-indexa apenas os campos que vieram no patch (Zod `.optional()`
+    // — campo ausente = inalterado, não re-chunkear). Roda em paralelo via
+    // `Promise.allSettled` pra que falha em embedding de 1 campo não bloqueie
+    // os outros. Erros logam non-fatal — campo fica com chunks antigos até
+    // próximo save.
+    const FIELDS = ['about', 'products', 'faq', 'scripts', 'policy'] as const;
+    const reindexTasks = FIELDS.filter((f) => parsed.data[f] !== undefined).map((field) =>
+      reindexStructuredField({ workspaceId, field, content: parsed.data[field] ?? '' }).catch(
+        (err) => reportNonFatal(`agents.updateKb.reindex.${field}`, err, { workspaceId, userId }),
+      ),
+    );
+    await Promise.allSettled(reindexTasks);
 
     revalidatePath('/agents');
     return { ok: true };

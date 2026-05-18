@@ -1751,15 +1751,15 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
 
-| Sub-PR    | Escopo                                                                                                                                                                                                                          | Branch            | Status      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
-| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                 | `m11-ai-agents`   | ✅ entregue |
-| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.      | `m11-2-ai-lib`    | ✅ entregue |
-| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados. | `m11-3-ui-wiring` | ✅ entregue |
-| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                                       | `m11-4-knowledge` | ⏳ pendente |
-| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                               | `m11-5-router`    | ⏳ pendente |
-| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).               | `m11-6-handoffs`  | ⏳ pendente |
-| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).           | `m11-7-metrics`   | ⏳ pendente |
+| Sub-PR    | Escopo                                                                                                                                                                                                                                           | Branch            | Status      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                                  | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.                       | `m11-2-ai-lib`    | ✅ entregue |
+| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados.                  | `m11-3-ui-wiring` | ✅ entregue |
+| **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up. | `m11-4-knowledge` | ✅ entregue |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                | `m11-5-router`    | ⏳ pendente |
+| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).                                | `m11-6-handoffs`  | ⏳ pendente |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                            | `m11-7-metrics`   | ⏳ pendente |
 
 **Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
 
@@ -1931,6 +1931,57 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 1. **`ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env — críticas a partir de M11#3.** Sem elas, `simulateAgentMessageAction` retorna erro propositivo e UI bloqueia o envio; outras actions (CRUD, versionamento, roteamento, handoff config, KB campos) funcionam normais.
 2. Migrations M11#1 + M11#2 já aplicadas (M11#3 não cria migration nova).
 3. **Custo $X começa aqui.** Cada simulation chat consome ~$0.05-$0.30/turno (Sonnet 4.6). Monitorar `usage_events` desde primeiro turno.
+
+### M11#4 — Cérebro upload + extração + chunking + embedding (entregue 2026-05-17)
+
+**Branch:** `m11-4-knowledge`
+
+**Objetivo:** completar o "Cérebro da Empresa" — admin sobe PDF/TXT/MD, sistema extrai texto, chunkeia, gera embeddings via OpenAI (M11#2 `embedTexts`), persiste em `knowledge_chunks` + `knowledge_embeddings`. Os 5 campos estruturados de M11#3 agora também ficam indexados após cada save. A partir daqui, `assembleContext.topKKnowledge` (M11#2) retorna **resultados reais** no simulation chat.
+
+**Decisões fechadas:**
+
+- **Processing síncrono na Server Action** (não Edge Function em background) — MVP: arquivos típicos ≤2MB texto extraído processam em <15s. Edge Function async fica pra V2 quando volumes pedirem.
+- **PDF/TXT/MD suportados em M11#4** — DOC/DOCX entram em sub-PR follow-up (lib `mammoth`). Schema M11#1 enum `knowledge_doc_kind` aceita os 5; processing dos não-suportados retorna `failed` com `error_detail` propositivo.
+- **`pdf-parse@^2.4.5`** (class-based `PDFParse` v2 API) — pure JS, ~250KB, sem nativo. Lazy import só carrega quando precisa.
+- **Chunking 2800 chars target, 8000 cap, 400 overlap** — split por `\n\n` → sentence → char. Overlap preserva contexto entre chunks pra busca semântica.
+- **Hard delete imediato do Storage** no `deleteKnowledgeDocumentAction` (vs soft 30d do M8#6 attachments) — chunks + embeddings ocupam DB; arquivo só atrasa cleanup.
+- **Status lifecycle**: `uploading` → `processing` → `processed` | `failed`. Server Action faz tudo numa request; se falhar, status fica `failed` + `error_detail` (admin reupload).
+- **Re-indexação inline dos 5 campos estruturados** no `updateKnowledgeBaseAction` (via `reindexStructuredField` helper) — `Promise.allSettled` paraleliza os 5; falha em 1 não bloqueia outros.
+- **MIME whitelist no bucket** — `application/pdf`, `text/plain`, `text/markdown` + 2 reservados (`doc`/`docx`) que aceitam upload mas processing falha.
+- **Storage path** `<workspaceId>/<documentId>/<sanitizedFilename>` — workspace_id no prefix permite policies RLS em `storage.objects` (mesmo padrão M8#6 attachments).
+- **`sanitizeFileName` char-by-char** (não regex com control chars) — ESLint `no-control-regex` evita o pattern; iteração explícita testa códigos < 32 e separadores filesystem.
+- **Custo trivial** — 50KB texto = ~12k tokens × \$0.02/1M = \$0.00024 por upload. `recordUsage(feature='kb_indexing')` registra em `usage_events`.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260528120000_m11_4_knowledge_storage_setup.sql`](../supabase/migrations/20260528120000_m11_4_knowledge_storage_setup.sql) — bucket `knowledge-base` (privado, 10MB, MIME whitelist) + 3 policies RLS em `storage.objects` + RPC helper `delete_structured_field_chunks` (SECURITY DEFINER, atravessa RLS pra delete + cascade de chunks).
+- [x] [`apps/web/lib/knowledge/chunking.ts`](../apps/web/lib/knowledge/chunking.ts) (novo, puro) — `chunkText(text, opts?) → ChunkOutput[]` com 3 níveis de fallback (parágrafo → sentence → char). `splitLargeParagraph` + `estimateTokens` exportados pra smoke.
+- [x] [`apps/web/lib/knowledge/extract.ts`](../apps/web/lib/knowledge/extract.ts) (novo, server-only) — `extractText({ buffer, kind })` despacha pra `extractPdf` (lazy import `pdf-parse@2.4.5` class API) ou `extractPlainText` (UTF-8 direto). DOC/DOCX lança erro propositivo.
+- [x] [`apps/web/features/agents/knowledge-actions.ts`](../apps/web/features/agents/knowledge-actions.ts) (novo, ~430 linhas) — 2 Server Actions + 1 helper exportado: `uploadKnowledgeDocumentAction` (FormData → Storage upload → extract → chunk → embed → persist + `recordUsage` `feature='kb_indexing'`; erros marcam `failed`), `deleteKnowledgeDocumentAction` (soft delete row + hard delete Storage; cascade limpa chunks+embeddings), `reindexStructuredField` (delete chunks antigos do campo + re-chunk + re-embed; chamado pelo `updateKnowledgeBaseAction`).
+- [x] [`apps/web/features/agents/actions.ts`](../apps/web/features/agents/actions.ts) — `updateKnowledgeBaseAction` agora dispara `reindexStructuredField` pros 5 campos em paralelo após upsert (`Promise.allSettled` + `reportNonFatal` em cada falha).
+- [x] [`apps/web/features/agents/queries.ts`](../apps/web/features/agents/queries.ts) — `getKnowledgeBaseFields` agora popula `files` com documentos reais de `knowledge_documents` (não mais `[]` stub). Serializers `serializeDocKind`/`serializeDocStatus` mapeiam enum DB (5 kinds, 4 statuses) → contrato M5 UI (3 kinds, 2 statuses).
+- [x] [`apps/web/features/agents/components/knowledge-upload-zone.tsx`](../apps/web/features/agents/components/knowledge-upload-zone.tsx) — dropzone funcional (não mais stub). Drag+drop ou click-to-pick. `FormData` + `uploadKnowledgeDocumentAction` + loading state + toast por arquivo (success/error/failed-with-detail). `router.refresh()` após sucesso.
+- [x] [`apps/web/features/agents/components/knowledge-file-list.tsx`](../apps/web/features/agents/components/knowledge-file-list.tsx) — lista real com status badge, tamanho formatado, timestamp, `deleteKnowledgeDocumentAction` com confirm dialog + `router.refresh()`.
+- [x] [`apps/web/features/agents/components/knowledge-base-tab.tsx`](../apps/web/features/agents/components/knowledge-base-tab.tsx) — microcopy atualizado (sem mais "em breve"), upload zone só visível pra Owner/Admin.
+- [x] [`apps/web/package.json`](../apps/web/package.json) — `pdf-parse@^2.4.5` + `@types/pdf-parse@^1.1.5`. Install no Windows com `NODE_OPTIONS=--use-system-ca` + `--ignore-scripts` (TLS antivírus workaround M11#2).
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+11 checks** em grupo `chunking-m11-4` (vazio, whitespace, texto pequeno, target/max chars, overlap default/desligado, chunkIndex sequencial, tokens estimados, consolidação de parágrafos curtos). Total smoke: 63/63.
+- [x] `pnpm db:generate` ✅, `pnpm typecheck` ✅, `pnpm lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **63/63 verde** ✅, smoke `/api/smoke-test/ai` (M11#2) 31/31 sem regressão ✅.
+
+**Não-objetivos M11#4 (explícitos):**
+
+- **DOC/DOCX** — lib `mammoth` em sub-PR follow-up (~50 linhas de mudança).
+- **OCR pra PDFs scanneados** (sem camada de texto extraível) — V2.
+- **Edge Function async processing** — V2 quando volumes pedirem.
+- **Versionamento da KB** (snapshots por mudança) — V2.
+- **Re-indexação automática quando troca o modelo de embedding** — manual via migration script futura.
+- **Roteador runtime real** (uazapi inbound consume KB) → M11#5.
+
+**Ops pós-deploy:**
+
+1. `supabase apply_migration name=m11_4_knowledge_storage_setup` (cria bucket + policies + RPC).
+2. Validar bucket: `SELECT id, allowed_mime_types FROM storage.buckets WHERE id = 'knowledge-base'`.
+3. **`OPENAI_API_KEY` já configurada em M11#3 ops** — sem isso, upload retorna `failed` com erro propositivo.
+4. **Custo embedding por upload ~\$0.0003 / 50KB texto** — trivial; sem alerta.
 
 ---
 
