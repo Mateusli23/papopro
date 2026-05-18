@@ -20,8 +20,8 @@ import { Plus, X } from '@papopro/ui/icons';
 
 import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 
+import { addRouteAction } from '../actions';
 import { routeCreateSchema } from '../schemas';
-import { addRoute } from '../store';
 import { ROUTE_KIND_OPTIONS } from '../transforms';
 import type { Agent, RouteKind } from '../types';
 
@@ -57,13 +57,17 @@ export function AgentRoutingPanel({ agent }: AgentRoutingPanelProps) {
     setValue('');
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     const parsed = routeCreateSchema.safeParse({ kind, value });
     if (!parsed.success) {
       toast.error(parsed.error.issues[0]?.message ?? 'Valor inválido', { duration: 3000 });
       return;
     }
-    addRoute(agent.id, parsed.data);
+    const result = await addRouteAction(agent.id, parsed.data);
+    if (!result.ok) {
+      toast.error(result.error, { duration: 3000 });
+      return;
+    }
     toast.success('Regra adicionada — primeiro hit decide o agente.', { duration: 3000 });
     reset();
   }

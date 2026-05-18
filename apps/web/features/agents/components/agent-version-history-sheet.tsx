@@ -20,7 +20,7 @@ import { History, RotateCcw } from '@papopro/ui/icons';
 
 import { showUndoableToast } from '@/lib/utils/show-undoable-toast';
 
-import { restoreVersion } from '../store';
+import { restoreAgentVersionAction } from '../actions';
 import type { Agent, AgentVersion } from '../types';
 
 /**
@@ -90,22 +90,22 @@ export function AgentVersionHistorySheet({
               version={version}
               isCurrent={version.id === agent.currentVersionId}
               isLatest={idx === 0}
-              onRestore={() => {
+              onRestore={async () => {
                 // Capturamos a versão que estava ativa **antes** do restore
                 // pra que o undo volte exatamente pra ela. Sem essa captura,
                 // se o user clicar 2 restores rápidos, o undo do segundo
                 // poderia voltar pro primeiro restaurado em vez do original.
                 const previousVersionId = agent.currentVersionId;
                 const agentId = agent.id;
-                const ok = restoreVersion(agentId, version.id);
-                if (!ok) return;
+                const result = await restoreAgentVersionAction(agentId, version.id);
+                if (!result.ok) return;
                 onOpenChange(false);
                 const id = showUndoableToast(
                   <span>
                     Versão <strong>v{version.versionNumber}</strong> restaurada
                   </span>,
                   () => {
-                    restoreVersion(agentId, previousVersionId);
+                    void restoreAgentVersionAction(agentId, previousVersionId);
                   },
                 );
                 undoToastIdsRef.current.push(id);

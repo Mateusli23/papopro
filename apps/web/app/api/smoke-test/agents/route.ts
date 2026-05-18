@@ -1,16 +1,27 @@
 /**
- * Smoke test de Agentes IA — valida transforms puras, fixtures, templates
- * pré-configurados e schemas Zod.
+ * Smoke test de Agentes IA (M11#1 + M11#3) — valida contratos puros do
+ * domínio: enums DB, audit actions, schemas Zod, helpers puros, transforms
+ * (countAgents, getNextRouteMatch), templates, e `buildSystemPrompt`.
  *
- * Existe pra dar confiança nos contratos do domínio antes de Vitest entrar
- * em M7+, e pra fixar shapes que viram Server Actions em M11 (`createAgent`,
- * `saveVersion`, `addRoute`) e prompt-execution-via-Claude também em M11.
- * Tipos permanecem; muda só a fonte (fixture → Postgres + pgvector).
+ * **Zero hit em DB e em API externa.** Funções puras + import de enums do
+ * Prisma client gerado. Lifecycle real (criar agente, mandar mensagem na
+ * simulation) fica em validação manual via UI ou em E2E Playwright (M13).
  *
- * Curl: `curl http://localhost:3000/api/smoke-test/agents` →
- * `{summary, results}` JSON. HTTP 200 se `failed === 0`, 500 caso contrário.
+ * Curl: `curl http://localhost:3000/api/smoke-test/agents` → JSON.
+ * HTTP 200 se `failed === 0`, 500 caso contrário.
  */
 import { NextResponse } from 'next/server';
+
+import {
+  AgentRouteKind,
+  AgentSessionKind,
+  AgentStatus,
+  AgentTone,
+  AuditAction,
+  KnowledgeDocKind,
+  KnowledgeDocStatus,
+  KnowledgeSourceKind,
+} from '@papopro/db';
 
 import {
   AGENT_STATUSES,
@@ -18,33 +29,16 @@ import {
   ROUTE_KINDS,
   agentCreateSchema,
   agentUpdateSchema,
-  kbFileUploadSchema,
+  handoffTriggerUpdateSchema,
   kbUpdateSchema,
   routeCreateSchema,
+  versionCreateSchema,
 } from '@/features/agents/schemas';
-import {
-  MAX_ACTIVE_AGENTS,
-  applyAddKbFile,
-  applyAddRoute,
-  applyCreateAgent,
-  applyDeleteAgent,
-  applyDeleteKbFile,
-  applyDeleteRoute,
-  applyDuplicateAgent,
-  applyRestoreVersion,
-  applySaveVersion,
-  applyToggleStatus,
-  applyUpdateAgent,
-  applyUpdateHandoffTrigger,
-  applyUpdateKbSection,
-  applyUpdateRoute,
-  countAgents,
-  filterAgents,
-  getNextRouteMatch,
-} from '@/features/agents/transforms';
+import { countAgents, getNextRouteMatch } from '@/features/agents/transforms';
+import type { Agent } from '@/features/agents/types';
+import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
 import { AGENT_TEMPLATES, getAgentTemplate } from '@/lib/fixtures/agent-templates';
-import { FAKE_AGENTS } from '@/lib/fixtures/agents';
-import { FAKE_KNOWLEDGE_BASE } from '@/lib/fixtures/knowledge-base';
+import { chunkText, estimateTokens } from '@/lib/knowledge/chunking';
 
 interface CheckResult {
   group: string;
@@ -71,595 +65,203 @@ function run(group: string, results: CheckResult[]) {
   };
 }
 
-// ID generators determinísticos pros testes — começam alto pra não colidir
-// com fixtures (`agt_NNNNN`, `route_NNNNN`, `htg_NNNNN`, `ver_NNNNN`).
-let agentCounter = 9000;
-const agentIdGen = () => `agt_test_${(++agentCounter).toString().padStart(5, '0')}`;
-let routeCounter = 9000;
-const routeIdGen = () => `route_test_${(++routeCounter).toString().padStart(5, '0')}`;
-let triggerCounter = 9000;
-const triggerIdGen = () => `htg_test_${(++triggerCounter).toString().padStart(5, '0')}`;
-let versionCounter = 9000;
-const versionIdGen = () => `ver_test_${(++versionCounter).toString().padStart(5, '0')}`;
-let fileCounter = 9000;
-const fileIdGen = () => `kbf_test_${(++fileCounter).toString().padStart(5, '0')}`;
+/**
+ * Constrói um agente "vazio" mínimo pra testar transforms puras
+ * (countAgents, getNextRouteMatch) sem depender de fixtures.
+ */
+function makeAgent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: overrides.id ?? 'agt_test_00001',
+    workspaceId: overrides.workspaceId ?? 'ws_demo',
+    name: overrides.name ?? 'Test',
+    status: overrides.status ?? 'testing',
+    prompt: overrides.prompt ?? 'Você é um agente de teste com prompt longo o suficiente.',
+    persona: overrides.persona ?? '',
+    tone: overrides.tone ?? 'consultivo',
+    routes: overrides.routes ?? [],
+    handoffTriggers: overrides.handoffTriggers ?? [],
+    versions: overrides.versions ?? [
+      {
+        id: 'ver_test_00001',
+        agentId: overrides.id ?? 'agt_test_00001',
+        versionNumber: 1,
+        prompt: 'p'.repeat(30),
+        persona: '',
+        tone: 'consultivo',
+        createdBy: 'Você',
+        createdAt: 'now',
+      },
+    ],
+    currentVersionId: overrides.currentVersionId ?? 'ver_test_00001',
+    metrics: overrides.metrics ?? {
+      totalConversations: 0,
+      resolutionRate: 0,
+      avgResponseTimeSec: 0,
+      inferredSatisfaction: 0,
+    },
+    createdAt: 'now',
+    updatedAt: 'now',
+    ...overrides,
+  };
+}
 
 export const dynamic = 'force-dynamic';
 
 export function GET() {
   const results: CheckResult[] = [];
 
-  // ── Fixtures ────────────────────────────────────────────────────────────
-  let t = run('fixtures', results);
-  t(
-    'FAKE_AGENTS tem pelo menos 3 agentes',
-    () => FAKE_AGENTS.length >= 3 || `length=${FAKE_AGENTS.length}`,
-  );
-  t('IDs de agente únicos', () => {
-    const ids = FAKE_AGENTS.map((a) => a.id);
-    return new Set(ids).size === ids.length;
+  // ── M11#1: Enums Prisma ─────────────────────────────────────────────────
+  let t = run('db-enums-m11', results);
+  t('AgentStatus tem 3 values (testing/active/paused)', () => {
+    const vals = Object.values(AgentStatus).sort();
+    return JSON.stringify(vals) === JSON.stringify(['active', 'paused', 'testing']);
   });
-  t('toda agente tem workspaceId não-vazio', () =>
-    FAKE_AGENTS.every((a) => typeof a.workspaceId === 'string' && a.workspaceId.length > 0),
-  );
-  t('toda agente referencia template existente (ou undefined)', () => {
-    const keys = new Set(AGENT_TEMPLATES.map((t) => t.key));
-    const offender = FAKE_AGENTS.find((a) => a.templateKey && !keys.has(a.templateKey));
-    return !offender || `agente ${offender.id} aponta pra template "${offender.templateKey}"`;
+  t('AgentTone tem 4 values', () => {
+    const vals = Object.values(AgentTone).sort();
+    return JSON.stringify(vals) === JSON.stringify(['amigavel', 'consultivo', 'direto', 'formal']);
   });
-  t('toda agente tem ≥ 1 versão', () => {
-    const offender = FAKE_AGENTS.find((a) => a.versions.length === 0);
-    return !offender || `agente ${offender.id} sem versões`;
+  t('AgentRouteKind tem 4 values', () => {
+    const vals = Object.values(AgentRouteKind).sort();
+    return JSON.stringify(vals) === JSON.stringify(['keyword', 'stage', 'tag', 'whatsapp_number']);
   });
-  t('currentVersionId aponta pra versão existente', () => {
-    const offender = FAKE_AGENTS.find((a) => !a.versions.some((v) => v.id === a.currentVersionId));
-    return !offender || `agente ${offender.id} com currentVersionId solto`;
+  t('AgentSessionKind tem 2 values (production/simulation)', () => {
+    const vals = Object.values(AgentSessionKind).sort();
+    return JSON.stringify(vals) === JSON.stringify(['production', 'simulation']);
   });
-  t('status enum válido', () => {
-    const allowed = new Set(AGENT_STATUSES);
-    const offender = FAKE_AGENTS.find((a) => !allowed.has(a.status));
-    return !offender || `agente ${offender.id} com status "${offender.status}"`;
+  t('KnowledgeSourceKind tem 2 values', () => {
+    const vals = Object.values(KnowledgeSourceKind).sort();
+    return JSON.stringify(vals) === JSON.stringify(['document', 'structured_field']);
   });
-  t('métricas em [0,1] pras taxas', () => {
-    const offender = FAKE_AGENTS.find(
-      (a) =>
-        a.metrics.resolutionRate < 0 ||
-        a.metrics.resolutionRate > 1 ||
-        a.metrics.inferredSatisfaction < 0 ||
-        a.metrics.inferredSatisfaction > 1,
-    );
-    return !offender || `agente ${offender.id} com taxa fora de [0,1]`;
-  });
-  t('métricas não-negativas (counters/segundos)', () => {
-    const offender = FAKE_AGENTS.find(
-      (a) => a.metrics.totalConversations < 0 || a.metrics.avgResponseTimeSec < 0,
-    );
-    return !offender || `agente ${offender.id} com métrica negativa`;
-  });
-  t(
-    `máximo ${MAX_ACTIVE_AGENTS} agentes ativos no fixture`,
-    () =>
-      FAKE_AGENTS.filter((a) => a.status === 'active').length <= MAX_ACTIVE_AGENTS ||
-      'fixture excede limite de ativos',
-  );
-  t(
-    'Cérebro tem 5 seções definidas (não undefined)',
-    () =>
-      typeof FAKE_KNOWLEDGE_BASE.about === 'string' &&
-      typeof FAKE_KNOWLEDGE_BASE.products === 'string' &&
-      typeof FAKE_KNOWLEDGE_BASE.faq === 'string' &&
-      typeof FAKE_KNOWLEDGE_BASE.scripts === 'string' &&
-      typeof FAKE_KNOWLEDGE_BASE.policy === 'string',
-  );
-  t('Cérebro tem ≥ 1 arquivo exemplo com sizeBytes > 0', () => {
-    const offender = FAKE_KNOWLEDGE_BASE.files.find((f) => f.sizeBytes <= 0);
+  t('KnowledgeDocStatus tem 4 values', () => {
+    const vals = Object.values(KnowledgeDocStatus).sort();
     return (
-      (FAKE_KNOWLEDGE_BASE.files.length >= 1 && !offender) ||
-      `${FAKE_KNOWLEDGE_BASE.files.length} files, offender=${offender?.id ?? '—'}`
+      JSON.stringify(vals) === JSON.stringify(['failed', 'processed', 'processing', 'uploading'])
     );
+  });
+  t('KnowledgeDocKind tem 5 values', () => {
+    const vals = Object.values(KnowledgeDocKind).sort();
+    return JSON.stringify(vals) === JSON.stringify(['doc', 'docx', 'md', 'pdf', 'txt']);
+  });
+  t('AgentStatus DB casa com AGENT_STATUSES da UI', () => {
+    const ui = [...AGENT_STATUSES].sort();
+    const db = Object.values(AgentStatus).sort();
+    return JSON.stringify(ui) === JSON.stringify(db);
+  });
+  t('AgentRouteKind DB casa com ROUTE_KINDS da UI', () => {
+    const ui = [...ROUTE_KINDS].sort();
+    const db = Object.values(AgentRouteKind).sort();
+    return JSON.stringify(ui) === JSON.stringify(db);
   });
 
-  // ── Templates ───────────────────────────────────────────────────────────
+  // ── M11#1: AuditAction values ───────────────────────────────────────────
+  t = run('audit-actions-m11', results);
+  const M11_AUDIT_ACTIONS = [
+    'agent_created',
+    'agent_version_saved',
+    'agent_activated',
+    'agent_paused',
+    'agent_deleted',
+    'handoff_triggered',
+    'knowledge_doc_uploaded',
+    'knowledge_doc_processed',
+  ] as const;
+  for (const action of M11_AUDIT_ACTIONS) {
+    t(`AuditAction.${action} existe`, () => {
+      return Object.values(AuditAction).includes(action as AuditAction);
+    });
+  }
+
+  // ── M11#1: handoff_config shape ─────────────────────────────────────────
+  t = run('db-handoff-config-shape-m11', results);
+  t('HANDOFF_TRIGGER_KINDS tem 6 valores', () => HANDOFF_TRIGGER_KINDS.length === 6);
+  t('HANDOFF_TRIGGER_KINDS cobre os 6 esperados', () => {
+    const expected = [
+      'agent_to_agent',
+      'commercial_intent',
+      'keyword',
+      'manual',
+      'outside_business_hours',
+      'stage_negotiation',
+    ];
+    return JSON.stringify([...HANDOFF_TRIGGER_KINDS].sort()) === JSON.stringify(expected);
+  });
+
+  // ── Templates (seed pra createAgentAction) ──────────────────────────────
   t = run('templates', results);
-  t(
-    'AGENT_TEMPLATES tem 4 templates',
-    () => AGENT_TEMPLATES.length === 4 || `length=${AGENT_TEMPLATES.length}`,
-  );
+  t('AGENT_TEMPLATES tem 4 templates', () => AGENT_TEMPLATES.length === 4);
   t('keys são únicos', () => {
-    const keys = AGENT_TEMPLATES.map((t) => t.key);
+    const keys = AGENT_TEMPLATES.map((tpl) => tpl.key);
     return new Set(keys).size === keys.length;
   });
   t('templates não-blank têm prompt ≥ 50 chars', () => {
-    const offender = AGENT_TEMPLATES.find((t) => t.key !== 'blank' && t.defaultPrompt.length < 50);
+    const offender = AGENT_TEMPLATES.find(
+      (tpl) => tpl.key !== 'blank' && tpl.defaultPrompt.length < 50,
+    );
     return !offender || `template ${offender.key} prompt curto`;
   });
   t('"blank" tem prompt vazio', () => {
-    const blank = AGENT_TEMPLATES.find((t) => t.key === 'blank');
-    return blank?.defaultPrompt === '' || `blank prompt = "${blank?.defaultPrompt}"`;
+    const blank = AGENT_TEMPLATES.find((tpl) => tpl.key === 'blank');
+    return blank?.defaultPrompt === '';
   });
-  t('todo template tem simulationScript com ≥ 3 turnos', () => {
-    const offender = AGENT_TEMPLATES.find((t) => t.simulationScript.length < 3);
-    return !offender || `template ${offender.key} script curto`;
-  });
-  t('simulationScript usa só "in"/"out"', () => {
-    const offender = AGENT_TEMPLATES.find((t) =>
-      t.simulationScript.some((s) => s.direction !== 'in' && s.direction !== 'out'),
-    );
-    return !offender || `template ${offender.key} tem direction inválido`;
-  });
-  t('todo template tem 6 handoff triggers default (todos os kinds)', () => {
+  t('todo template tem 6 handoff triggers default', () => {
     const expected = new Set(HANDOFF_TRIGGER_KINDS);
     const offender = AGENT_TEMPLATES.find(
-      (t) =>
-        t.defaultHandoffTriggers.length !== 6 ||
-        !t.defaultHandoffTriggers.every((h) => expected.has(h.kind)),
+      (tpl) =>
+        tpl.defaultHandoffTriggers.length !== 6 ||
+        !tpl.defaultHandoffTriggers.every((h) => expected.has(h.kind)),
     );
     return !offender || `template ${offender.key} triggers incompletos`;
   });
   t('getAgentTemplate("recovery") retorna o template certo', () => {
-    const r = getAgentTemplate('recovery');
-    return r?.key === 'recovery' || `got ${r?.key}`;
+    return getAgentTemplate('recovery')?.key === 'recovery';
   });
 
-  // ── Filters ─────────────────────────────────────────────────────────────
-  t = run('filters', results);
-  t('sem filtros retorna todos', () => filterAgents(FAKE_AGENTS, {}).length === FAKE_AGENTS.length);
-  t('filterAgents status=active', () => {
-    const r = filterAgents(FAKE_AGENTS, { status: 'active' });
-    return r.every((a) => a.status === 'active');
-  });
-  t('filterAgents status=paused', () => {
-    const r = filterAgents(FAKE_AGENTS, { status: 'paused' });
-    return r.every((a) => a.status === 'paused');
-  });
-  t('filterAgents status=testing', () => {
-    const r = filterAgents(FAKE_AGENTS, { status: 'testing' });
-    return r.every((a) => a.status === 'testing');
-  });
-  t('busca case-insensitive em name', () => {
-    const some = FAKE_AGENTS[0];
-    if (!some) return 'fixture vazia';
-    const r = filterAgents(FAKE_AGENTS, { search: some.name.toLowerCase() });
-    return r.some((a) => a.id === some.id);
-  });
-  t('busca em persona', () => {
-    const withPersona = FAKE_AGENTS.find((a) => a.persona.length > 5);
-    if (!withPersona) return 'sem persona pra testar';
-    const term = withPersona.persona.slice(0, 5);
-    const r = filterAgents(FAKE_AGENTS, { search: term });
-    return r.some((a) => a.id === withPersona.id);
-  });
-  t('combinação status + search', () => {
-    const r = filterAgents(FAKE_AGENTS, { status: 'active', search: 'a' });
-    return r.every((a) => a.status === 'active');
-  });
-
-  // ── Aggregations ────────────────────────────────────────────────────────
-  t = run('aggregations', results);
-  t('countAgents total bate com array length', () => {
-    const c = countAgents(FAKE_AGENTS);
-    return c.total === FAKE_AGENTS.length;
-  });
-  t('soma active+paused+testing == total', () => {
-    const c = countAgents(FAKE_AGENTS);
-    return c.active + c.paused + c.testing === c.total;
-  });
-  t('countAgents([]) retorna zeros', () => {
+  // ── Transforms puras (countAgents, getNextRouteMatch) ───────────────────
+  t = run('transforms-pure', results);
+  t('countAgents([]) zerado', () => {
     const c = countAgents([]);
-    return (
-      c.total === 0 &&
-      c.active === 0 &&
-      c.paused === 0 &&
-      c.testing === 0 &&
-      c.totalConversations === 0
-    );
+    return c.total === 0 && c.active === 0 && c.paused === 0 && c.testing === 0;
   });
-  t('getNextRouteMatch sem match retorna undefined', () => {
-    const r = getNextRouteMatch(FAKE_AGENTS, { stageId: 'stage-que-nao-existe' });
-    return r === undefined;
+  t('countAgents soma status corretamente', () => {
+    const agents = [
+      makeAgent({ id: 'a1', status: 'active' }),
+      makeAgent({ id: 'a2', status: 'paused' }),
+      makeAgent({ id: 'a3', status: 'testing' }),
+      makeAgent({ id: 'a4', status: 'active' }),
+    ];
+    const c = countAgents(agents);
+    return c.active === 2 && c.paused === 1 && c.testing === 1 && c.total === 4;
   });
-  t('getNextRouteMatch retorna primeiro hit (ordem do array)', () => {
-    // Constrói cenário: 2 agentes ativos, ambos com regra stage=novo.
-    // Espera o primeiro do array.
-    const a1: import('@/features/agents/types').Agent = {
-      ...FAKE_AGENTS[0]!,
+  t('getNextRouteMatch([]) retorna undefined', () => {
+    return getNextRouteMatch([], { stageId: 'novo' }) === undefined;
+  });
+  t('getNextRouteMatch retorna primeiro hit', () => {
+    const a1 = makeAgent({
       id: 'agt_a',
       status: 'active',
       routes: [{ id: 'r1', kind: 'stage', value: 'novo', createdAt: 'now' }],
-    };
-    const a2: import('@/features/agents/types').Agent = {
-      ...FAKE_AGENTS[0]!,
+    });
+    const a2 = makeAgent({
       id: 'agt_b',
       status: 'active',
       routes: [{ id: 'r2', kind: 'stage', value: 'novo', createdAt: 'now' }],
-    };
+    });
     const r = getNextRouteMatch([a1, a2], { stageId: 'novo' });
-    return r?.id === 'agt_a' || `got ${r?.id}`;
+    return r?.id === 'agt_a';
   });
   t('getNextRouteMatch ignora agentes não-ativos', () => {
-    const paused: import('@/features/agents/types').Agent = {
-      ...FAKE_AGENTS[0]!,
+    const paused = makeAgent({
       id: 'agt_paused',
       status: 'paused',
       routes: [{ id: 'r1', kind: 'stage', value: 'novo', createdAt: 'now' }],
-    };
-    const r = getNextRouteMatch([paused], { stageId: 'novo' });
-    return r === undefined;
+    });
+    return getNextRouteMatch([paused], { stageId: 'novo' }) === undefined;
   });
 
-  // ── Mutations: agente ────────────────────────────────────────────────────
-  t = run('mutations-agent', results);
-  t('applyCreateAgent usa template (clona prompt/persona)', () => {
-    const tpl = getAgentTemplate('qualification');
-    if (!tpl) return 'template missing';
-    const { created } = applyCreateAgent(
-      [],
-      { name: 'Test SDR', templateKey: 'qualification' },
-      tpl,
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    return created.prompt === tpl.defaultPrompt && created.persona === tpl.defaultPersona;
-  });
-  t('applyCreateAgent começa em status testing', () => {
-    const { created } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    return created.status === 'testing';
-  });
-  t('applyCreateAgent zera métricas', () => {
-    const { created } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    return (
-      created.metrics.totalConversations === 0 &&
-      created.metrics.resolutionRate === 0 &&
-      created.metrics.avgResponseTimeSec === 0 &&
-      created.metrics.inferredSatisfaction === 0
-    );
-  });
-  t('applyCreateAgent cria v1 com mesmo trio', () => {
-    const tpl = getAgentTemplate('qualification');
-    if (!tpl) return 'template missing';
-    const { created } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'qualification' },
-      tpl,
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const v1 = created.versions[0];
-    return (
-      created.versions.length === 1 &&
-      created.currentVersionId === v1?.id &&
-      v1?.versionNumber === 1
-    );
-  });
-  t('applyUpdateAgent altera prompt sem criar versão', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const next = applyUpdateAgent(agents, created.id, {
-      prompt: 'Você é um agente experiente que atende leads novos com calma.',
-    });
-    const after = next.find((a) => a.id === created.id);
-    return after?.prompt.startsWith('Você é um') === true && after?.versions.length === 1;
-  });
-  t('applyToggleStatus testing→active funciona quando há vagas', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const r = applyToggleStatus(agents, created.id);
-    return !r.limitReached && r.agents.find((a) => a.id === created.id)?.status === 'active';
-  });
-  t(`applyToggleStatus bloqueia quando há ${MAX_ACTIVE_AGENTS} ativos`, () => {
-    // Cria 3 agentes ativos manualmente
-    const base: Array<import('@/features/agents/types').Agent> = ['a', 'b', 'c'].map((suf) => ({
-      id: `agt_${suf}`,
-      workspaceId: 'ws_demo',
-      name: `Agent ${suf}`,
-      status: 'active',
-      prompt: 'p'.repeat(30),
-      persona: '',
-      tone: 'consultivo',
-      routes: [],
-      handoffTriggers: [],
-      versions: [
-        {
-          id: `ver_${suf}`,
-          agentId: `agt_${suf}`,
-          versionNumber: 1,
-          prompt: 'p'.repeat(30),
-          persona: '',
-          tone: 'consultivo',
-          createdBy: 'Você',
-          createdAt: 'now',
-        },
-      ],
-      currentVersionId: `ver_${suf}`,
-      metrics: {
-        totalConversations: 0,
-        resolutionRate: 0,
-        avgResponseTimeSec: 0,
-        inferredSatisfaction: 0,
-      },
-      createdAt: 'now',
-      updatedAt: 'now',
-    }));
-    const target: import('@/features/agents/types').Agent = {
-      ...base[0]!,
-      id: 'agt_target',
-      status: 'paused',
-      versions: [{ ...base[0]!.versions[0]!, agentId: 'agt_target', id: 'ver_target' }],
-      currentVersionId: 'ver_target',
-    };
-    const r = applyToggleStatus([...base, target], 'agt_target');
-    return r.limitReached && r.agents.find((a) => a.id === 'agt_target')?.status === 'paused';
-  });
-  t('applyDuplicateAgent força status testing', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'Original', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const r = applyDuplicateAgent(
-      agents,
-      created.id,
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-    );
-    return r.created?.status === 'testing' && r.created?.name.includes('(cópia)');
-  });
-  t('applyDeleteAgent remove o alvo', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'Y', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const next = applyDeleteAgent(agents, created.id);
-    return next.length === agents.length - 1;
-  });
-  t('applySaveVersion incrementa versionNumber e seta currentVersionId', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'Z', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const updated = applyUpdateAgent(agents, created.id, {
-      prompt: 'Novo prompt com 25 caracteres ok',
-    });
-    const r = applySaveVersion(updated, created.id, 'mudei tom', versionIdGen);
-    const after = r.agents.find((a) => a.id === created.id);
-    return (
-      after?.versions.length === 2 &&
-      after?.versions[0]?.versionNumber === 2 &&
-      after?.currentVersionId === r.created?.id
-    );
-  });
-  t('applyRestoreVersion troca o draft sem criar versão nova', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'W', templateKey: 'qualification' },
-      getAgentTemplate('qualification'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const v1 = created.versions[0]!;
-    const updated = applyUpdateAgent(agents, created.id, {
-      prompt: 'Outro prompt completamente diferente aqui',
-    });
-    const restored = applyRestoreVersion(updated, created.id, v1.id);
-    const after = restored.find((a) => a.id === created.id);
-    return after?.prompt === v1.prompt && after?.versions.length === 1;
-  });
-
-  // ── Mutations: routing & handoff ────────────────────────────────────────
-  t = run('mutations-routing-handoff', results);
-  t('applyAddRoute insere com value trimado', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'R', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const r = applyAddRoute(
-      agents,
-      created.id,
-      { kind: 'tag', value: '  imovel-rj  ' },
-      routeIdGen,
-    );
-    return r.created?.value === 'imovel-rj';
-  });
-  t('applyUpdateRoute altera value', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'R', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const added = applyAddRoute(agents, created.id, { kind: 'stage', value: 'novo' }, routeIdGen);
-    if (!added.created) return 'add failed';
-    const next = applyUpdateRoute(added.agents, created.id, added.created.id, {
-      value: 'em_contato',
-    });
-    const after = next.find((a) => a.id === created.id);
-    return after?.routes[0]?.value === 'em_contato';
-  });
-  t('applyDeleteRoute remove a regra', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'R', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const added = applyAddRoute(agents, created.id, { kind: 'stage', value: 'novo' }, routeIdGen);
-    if (!added.created) return 'add failed';
-    const next = applyDeleteRoute(added.agents, created.id, added.created.id);
-    const after = next.find((a) => a.id === created.id);
-    return after?.routes.length === 0;
-  });
-  t('applyAddRoute preserva ordem (append no fim)', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'R', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const a1 = applyAddRoute(agents, created.id, { kind: 'stage', value: 'novo' }, routeIdGen);
-    const a2 = applyAddRoute(a1.agents, created.id, { kind: 'tag', value: 'vip' }, routeIdGen);
-    const after = a2.agents.find((a) => a.id === created.id);
-    return after?.routes[0]?.kind === 'stage' && after?.routes[1]?.kind === 'tag';
-  });
-  t('applyUpdateHandoffTrigger toggle por kind', () => {
-    const tpl = getAgentTemplate('qualification');
-    if (!tpl) return 'template missing';
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'H', templateKey: 'qualification' },
-      tpl,
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const next = applyUpdateHandoffTrigger(agents, created.id, 'outside_business_hours', {
-      enabled: true,
-    });
-    const after = next.find((a) => a.id === created.id);
-    return (
-      after?.handoffTriggers.find((t) => t.kind === 'outside_business_hours')?.enabled === true
-    );
-  });
-  t('applyUpdateHandoffTrigger atualiza config keywords', () => {
-    const tpl = getAgentTemplate('qualification');
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'H', templateKey: 'qualification' },
-      tpl,
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
-    );
-    const next = applyUpdateHandoffTrigger(agents, created.id, 'keyword', {
-      config: { keywords: ['gerente', 'supervisor'] },
-    });
-    const after = next.find((a) => a.id === created.id);
-    return after?.handoffTriggers.find((t) => t.kind === 'keyword')?.config?.keywords?.length === 2;
-  });
-
-  // ── Mutations: knowledge base ───────────────────────────────────────────
-  t = run('mutations-knowledge', results);
-  t('applyUpdateKbSection altera seção sem afetar outras', () => {
-    const next = applyUpdateKbSection(FAKE_KNOWLEDGE_BASE, { about: 'Nova descrição' });
-    return next.about === 'Nova descrição' && next.products === FAKE_KNOWLEDGE_BASE.products;
-  });
-  t('applyAddKbFile cria arquivo com status processed', () => {
-    const r = applyAddKbFile(
-      FAKE_KNOWLEDGE_BASE,
-      { name: 'novo.pdf', sizeBytes: 1024, kind: 'pdf' },
-      fileIdGen,
-    );
-    return r.created.status === 'processed' && r.created.sizeBytes === 1024;
-  });
-  t('applyAddKbFile prepende novo arquivo no array', () => {
-    const r = applyAddKbFile(
-      FAKE_KNOWLEDGE_BASE,
-      { name: 'novo.pdf', sizeBytes: 1024, kind: 'pdf' },
-      fileIdGen,
-    );
-    return r.kb.files[0]?.id === r.created.id;
-  });
-  t('applyDeleteKbFile remove o alvo', () => {
-    const first = FAKE_KNOWLEDGE_BASE.files[0];
-    if (!first) return 'fixture sem arquivos';
-    const next = applyDeleteKbFile(FAKE_KNOWLEDGE_BASE, first.id);
-    return next.files.length === FAKE_KNOWLEDGE_BASE.files.length - 1;
-  });
-  t('applyDeleteKbFile com id inexistente é no-op', () => {
-    const next = applyDeleteKbFile(FAKE_KNOWLEDGE_BASE, 'kbf_no_existe');
-    return next === FAKE_KNOWLEDGE_BASE;
-  });
-
-  // ── Schema validation ───────────────────────────────────────────────────
-  t = run('schema', results);
-  t('agentCreateSchema válido', () => {
-    return agentCreateSchema.safeParse({
-      name: 'Sofia',
-      templateKey: 'qualification',
-    }).success;
+  // ── Schemas Zod (M11#3 Server Actions validam por essas) ────────────────
+  t = run('schemas', results);
+  t('agentCreateSchema aceita input válido', () => {
+    return agentCreateSchema.safeParse({ name: 'Sofia', templateKey: 'qualification' }).success;
   });
   t('agentCreateSchema rejeita name curto', () => {
     return !agentCreateSchema.safeParse({ name: 'a', templateKey: 'blank' }).success;
@@ -679,15 +281,21 @@ export function GET() {
   t('routeCreateSchema rejeita value vazio', () => {
     return !routeCreateSchema.safeParse({ kind: 'tag', value: '   ' }).success;
   });
+  t('handoffTriggerUpdateSchema aceita config keywords', () => {
+    return handoffTriggerUpdateSchema.safeParse({
+      kind: 'keyword',
+      enabled: true,
+      config: { keywords: ['humano', 'atendente'] },
+    }).success;
+  });
+  t('versionCreateSchema aceita notes opcional', () => {
+    return versionCreateSchema.safeParse({}).success;
+  });
+  t('versionCreateSchema rejeita notes longas (>240)', () => {
+    return !versionCreateSchema.safeParse({ notes: 'x'.repeat(241) }).success;
+  });
   t('kbUpdateSchema aceita seções vazias', () => {
     return kbUpdateSchema.safeParse({ about: '', products: '' }).success;
-  });
-  t('kbFileUploadSchema rejeita arquivo > 10MB', () => {
-    return !kbFileUploadSchema.safeParse({
-      name: 'x.pdf',
-      sizeBytes: 11 * 1024 * 1024,
-      kind: 'pdf',
-    }).success;
   });
   t('mensagens em pt-BR (sem vazar "Required")', () => {
     const r = agentCreateSchema.safeParse({});
@@ -696,37 +304,153 @@ export function GET() {
     return !msgs.includes('Required') && !msgs.includes('String must');
   });
 
-  // ── Edge cases ──────────────────────────────────────────────────────────
-  t = run('edge-cases', results);
-  t('countAgents([]) zerado', () => {
-    const c = countAgents([]);
-    return c.total === 0 && c.active === 0;
+  // ── M11#3: build-system-prompt helper ───────────────────────────────────
+  t = run('build-system-prompt-m11-3', results);
+  t('buildSystemPrompt retorna string não-vazia', () => {
+    const s = buildSystemPrompt({ name: 'Sofia', persona: '', prompt: '', tone: 'consultivo' });
+    return typeof s === 'string' && s.length > 50;
   });
-  t('filterAgents([]) retorna []', () => filterAgents([]).length === 0);
-  t('getNextRouteMatch([], _) retorna undefined', () => {
-    return getNextRouteMatch([], { stageId: 'novo' }) === undefined;
+  t('buildSystemPrompt inclui nome do agente', () => {
+    return buildSystemPrompt({
+      name: 'Sofia',
+      persona: '',
+      prompt: '',
+      tone: 'consultivo',
+    }).includes('Sofia');
   });
-  t('agente sem regras nunca matcha', () => {
-    const { created, agents } = applyCreateAgent(
-      [],
-      { name: 'X', templateKey: 'blank' },
-      getAgentTemplate('blank'),
-      agentIdGen,
-      routeIdGen,
-      triggerIdGen,
-      versionIdGen,
-      'ws_demo',
+  t('buildSystemPrompt inclui descrição do tom', () => {
+    const s = buildSystemPrompt({ name: 'X', persona: '', prompt: '', tone: 'consultivo' });
+    return s.includes('consultivo') && s.includes('Tom de voz');
+  });
+  t('buildSystemPrompt varia output por tom', () => {
+    const a = buildSystemPrompt({ name: 'X', persona: '', prompt: '', tone: 'consultivo' });
+    const b = buildSystemPrompt({ name: 'X', persona: '', prompt: '', tone: 'direto' });
+    return a !== b;
+  });
+  t('buildSystemPrompt inclui persona quando passada', () => {
+    const s = buildSystemPrompt({
+      name: 'X',
+      persona: 'Vendedor experiente em imobiliário',
+      prompt: '',
+      tone: 'amigavel',
+    });
+    return s.includes('Vendedor experiente em imobiliário') && s.includes('persona');
+  });
+  t('buildSystemPrompt omite persona vazia', () => {
+    const s = buildSystemPrompt({ name: 'X', persona: '   ', prompt: '', tone: 'formal' });
+    return !s.includes('**Sua persona:**');
+  });
+  t('buildSystemPrompt inclui prompt configurado', () => {
+    const s = buildSystemPrompt({
+      name: 'X',
+      persona: '',
+      prompt: 'Você ajuda leads a escolher imóveis em SP.',
+      tone: 'consultivo',
+    });
+    return s.includes('ajuda leads a escolher imóveis');
+  });
+  t('buildSystemPrompt sempre inclui guardrails fixos pt-BR', () => {
+    const s = buildSystemPrompt({ name: 'X', persona: '', prompt: '', tone: 'consultivo' });
+    return (
+      s.includes('português brasileiro') &&
+      s.includes('Diretrizes gerais') &&
+      s.includes('knowledge-base')
     );
-    const active = agents.map((a) =>
-      a.id === created.id ? { ...a, status: 'active' as const } : a,
+  });
+  t('buildSystemPrompt aceita workspaceName opcional', () => {
+    const s = buildSystemPrompt({
+      name: 'X',
+      persona: '',
+      prompt: '',
+      tone: 'consultivo',
+      workspaceName: 'Imobiliária Foo',
+    });
+    return s.includes('Imobiliária Foo');
+  });
+  t('buildSystemPrompt cobre os 4 tons sem crash', () => {
+    const tones = ['consultivo', 'amigavel', 'direto', 'formal'] as const;
+    for (const tone of tones) {
+      const s = buildSystemPrompt({ name: 'X', persona: '', prompt: '', tone });
+      if (typeof s !== 'string' || s.length < 50) return `tone=${tone} produced bad output`;
+    }
+    return true;
+  });
+
+  // ── M11#4: chunking helper ──────────────────────────────────────────────
+  t = run('chunking-m11-4', results);
+
+  t('chunkText vazio retorna []', () => chunkText('').length === 0);
+  t('chunkText apenas whitespace retorna []', () => chunkText('   \n\n\t  ').length === 0);
+
+  t('chunkText texto pequeno retorna 1 chunk', () => {
+    const chunks = chunkText('Texto curto que cabe num chunk só.');
+    return chunks.length === 1 && chunks[0]?.content.includes('Texto curto') === true;
+  });
+
+  t('chunkText respeita target chars com texto grande', () => {
+    // Texto de 10k chars com parágrafos. Target=2800 → 3-4 chunks esperados.
+    const para = 'a'.repeat(500);
+    const text = Array(20).fill(para).join('\n\n');
+    const chunks = chunkText(text);
+    return (
+      chunks.length >= 3 && chunks.length <= 6 && chunks.every((c) => c.content.length <= 8000)
     );
-    return getNextRouteMatch(active, { stageId: 'novo' }) === undefined;
   });
-  t('AGENT_STATUSES contém os 3 valores', () => {
-    return AGENT_STATUSES.length === 3 && AGENT_STATUSES.includes('testing');
+
+  t('chunkText preserva ordem (chunkIndex sequencial)', () => {
+    const text = Array(10).fill('Parágrafo de teste com algum conteúdo.'.repeat(50)).join('\n\n');
+    const chunks = chunkText(text);
+    for (let i = 0; i < chunks.length; i++) {
+      if (chunks[i]?.chunkIndex !== i) return `chunkIndex[${i}] = ${chunks[i]?.chunkIndex}`;
+    }
+    return true;
   });
-  t('ROUTE_KINDS tem 4 valores', () => {
-    return ROUTE_KINDS.length === 4;
+
+  t('chunkText respeita maxChars hard cap (8000)', () => {
+    // Texto monolítico sem parágrafos nem sentenças → cai em char split.
+    const text = 'x'.repeat(20000);
+    const chunks = chunkText(text);
+    return chunks.every((c) => c.content.length <= 8000);
+  });
+
+  t('chunkText adiciona overlap entre chunks consecutivos (default)', () => {
+    const para1 = 'AAAA'.repeat(750); // ~3000 chars
+    const para2 = 'BBBB'.repeat(750);
+    const chunks = chunkText(`${para1}\n\n${para2}`);
+    if (chunks.length < 2) return `só ${chunks.length} chunks — não dá pra testar overlap`;
+    // Segundo chunk deve começar com tail do primeiro (AAAA...) antes do BBBB.
+    const second = chunks[1]?.content ?? '';
+    return second.startsWith('AAAA') || `second starts with "${second.slice(0, 8)}"`;
+  });
+
+  t('chunkText overlapChars=0 desliga overlap', () => {
+    const para1 = 'A'.repeat(3000);
+    const para2 = 'B'.repeat(3000);
+    const chunks = chunkText(`${para1}\n\n${para2}`, { overlapChars: 0 });
+    if (chunks.length < 2) return 'esperado 2+ chunks';
+    return chunks[1]?.content.startsWith('B') === true;
+  });
+
+  t('chunkText preenche tokens estimados', () => {
+    const chunks = chunkText('Texto pra estimar tokens. '.repeat(50));
+    return chunks.every((c) => c.tokens > 0 && c.tokens < c.content.length);
+  });
+
+  t('estimateTokens retorna ~chars/4', () => {
+    // 100 chars → ~25 tokens.
+    const tokens = estimateTokens('a'.repeat(100));
+    return tokens === 25;
+  });
+
+  t('chunkText texto com parágrafos curtos consolida no mesmo chunk', () => {
+    const text = 'Curto 1.\n\nCurto 2.\n\nCurto 3.\n\nCurto 4.\n\nCurto 5.';
+    const chunks = chunkText(text);
+    // Todos os parágrafos curtos cabem num chunk só (target=2800).
+    return (
+      chunks.length === 1 &&
+      chunks[0]?.content.includes('Curto 1') === true &&
+      chunks[0]?.content.includes('Curto 5') === true
+    );
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────

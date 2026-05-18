@@ -17,32 +17,37 @@ import { Bot, Brain, PlusCircle, Search } from '@papopro/ui/icons';
 import { AgentCreateDialog } from '@/features/agents/components/agent-create-dialog';
 import { AgentList } from '@/features/agents/components/agent-list';
 import { KnowledgeBaseTab } from '@/features/agents/components/knowledge-base-tab';
-import { useAgents } from '@/features/agents/store';
 import { MAX_ACTIVE_AGENTS, countAgents } from '@/features/agents/transforms';
+import type { Agent, KnowledgeBase } from '@/features/agents/types';
 
 /**
  * `/agents` — central de Agentes IA do workspace.
  *
  * Estrutura: header com KPIs + CTA "Novo agente"; abas "Agentes" e "Cérebro
  * da Empresa". A aba Agentes lista os agentes com busca; aba Cérebro mostra
- * 5 seções editáveis de base de conhecimento + arquivos.
+ * 5 seções editáveis de base de conhecimento (M11#3) — upload de documentos
+ * fica pra M11#4.
  *
- * Por que tabs aqui (e não rota separada)?
- *  - PRD §3.9 trata agentes e Cérebro como mesmo escopo conceitual.
- *  - Vendedor pula entre eles enquanto configura o agente — Tabs evita
- *    navegação completa.
- *  - Padrão Notion-like que reduz fricção visual.
+ * **M11#3:** hidratada via Server Component. `initialAgents` + `initialKb`
+ * vêm como prop; mutations passam por Server Actions que chamam
+ * `revalidatePath('/agents')` — o Server Component refeitcha e re-passa.
  *
- * Em M11 vira Server Component lendo `agents` via Prisma + RLS; este
- * componente fica `'use client'` só pra busca/dialog/atalhos.
+ * Em produção a `MAX_ACTIVE_AGENTS=3` é só visual no MVP — enforcement real
+ * do limite Pro IA entra em M11#7 via `lib/limits.ts:canActivateAgent`.
  */
-export function AgentsView() {
-  const agents = useAgents();
+
+interface AgentsViewProps {
+  initialAgents: Agent[];
+  initialKb: KnowledgeBase | null;
+  callerRole: string;
+}
+
+export function AgentsView({ initialAgents, initialKb, callerRole }: AgentsViewProps) {
   const [search, setSearch] = React.useState('');
   const [createOpen, setCreateOpen] = React.useState(false);
   const [tab, setTab] = React.useState<'agents' | 'kb'>('agents');
 
-  const counts = React.useMemo(() => countAgents(agents), [agents]);
+  const counts = React.useMemo(() => countAgents(initialAgents), [initialAgents]);
 
   return (
     <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -67,7 +72,7 @@ export function AgentsView() {
         </TabsList>
 
         <TabsContent value="agents" className="flex flex-col gap-4 pt-4">
-          {agents.length > 0 && (
+          {initialAgents.length > 0 && (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="success" className="text-caption gap-1">
@@ -87,12 +92,6 @@ export function AgentsView() {
                     <span>pausados</span>
                   </Badge>
                 )}
-                {counts.totalConversations > 0 && (
-                  <Badge variant="outline" className="text-caption gap-1">
-                    <span className="tabular-nums">{counts.totalConversations}</span>
-                    <span>conversas atendidas</span>
-                  </Badge>
-                )}
               </div>
 
               <div className="relative w-full sm:w-72">
@@ -110,14 +109,14 @@ export function AgentsView() {
           )}
 
           <AgentList
-            agents={agents}
+            agents={initialAgents}
             search={search || undefined}
             onCreateClick={() => setCreateOpen(true)}
           />
         </TabsContent>
 
         <TabsContent value="kb" className="pt-4">
-          <KnowledgeBaseTab />
+          <KnowledgeBaseTab initialKb={initialKb} callerRole={callerRole} />
         </TabsContent>
       </Tabs>
 

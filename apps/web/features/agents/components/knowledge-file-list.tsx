@@ -2,24 +2,26 @@
 
 import * as React from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { format, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { toast } from 'react-hot-toast';
 
 import { Badge, Button, EmptyState, cn } from '@papopro/ui';
 import { File, FileText, Trash2 } from '@papopro/ui/icons';
 
-import { showUndoableToast } from '@/lib/utils/show-undoable-toast';
-
-import { addKbFile, deleteKbFile } from '../store';
+import { deleteKnowledgeDocumentAction } from '../knowledge-actions';
 import type { KnowledgeFile } from '../types';
 
 /**
- * Lista de arquivos do Cérebro da Empresa. Cada linha mostra ícone por kind,
- * nome do arquivo, size formatado, status, timestamp de upload e botão
- * remover (com Desfazer 5s no toast).
+ * Lista de arquivos do Cérebro (M11#4) — agora funcional.
  *
- * Estado vazio = EmptyState orientador. Em M11 vira tabela paginável quando
- * o workspace passar de 50 arquivos.
+ * Cada linha mostra ícone por kind, nome, size formatado, status badge,
+ * timestamp e botão remover. Remoção chama `deleteKnowledgeDocumentAction`
+ * que soft-deleta a row (cascade limpa chunks + embeddings via FK).
+ *
+ * Estado vazio = EmptyState orientador (admin sobe no upload acima).
  */
 
 const KIND_ICON = {
@@ -38,7 +40,7 @@ export function KnowledgeFileList({ files }: KnowledgeFileListProps) {
       <EmptyState
         icon={File}
         title="Nenhum arquivo enviado"
-        description="Aceita PDF, DOC e TXT até 10 MB. Em M11 viram embeddings pra busca semântica."
+        description="Aceita PDF, TXT e MD até 10 MB. Cada arquivo vira chunks + embeddings em pgvector pra busca semântica."
       />
     );
   }
@@ -57,24 +59,25 @@ interface FileRowProps {
 }
 
 function FileRow({ file }: FileRowProps) {
+  const router = useRouter();
   const Icon = KIND_ICON[file.kind];
+  const [deleting, setDeleting] = React.useState(false);
 
-  function handleDelete() {
-    const snapshot = file;
-    deleteKbFile(file.id);
-    showUndoableToast(
-      <span>
-        <strong>{file.name}</strong> removido
-      </span>,
-      () => {
-        // Desfazer = re-adicionar com mesmos metadados.
-        addKbFile({
-          name: snapshot.name,
-          sizeBytes: snapshot.sizeBytes,
-          kind: snapshot.kind,
-        });
-      },
-    );
+  async function handleDelete() {
+    if (
+      !confirm(`Remover "${file.name}" do Cérebro? Chunks e embeddings também serão deletados.`)
+    ) {
+      return;
+    }
+    setDeleting(true);
+    const result = await deleteKnowledgeDocumentAction(file.id);
+    setDeleting(false);
+    if (!result.ok) {
+      toast.error(result.error, { duration: 5000 });
+      return;
+    }
+    toast.success(`${file.name} removido.`, { duration: 3000 });
+    router.refresh();
   }
 
   const uploadedAtAbs = format(parseISO(file.uploadedAt), "dd/MM/yyyy 'às' HH:mm", {
@@ -93,7 +96,7 @@ function FileRow({ file }: FileRowProps) {
             variant={file.status === 'processed' ? 'success' : 'secondary'}
             className="text-caption shrink-0"
           >
-            {file.status === 'processed' ? 'Processado' : 'Processando'}
+            {file.status === 'processed' ? 'Indexado' : 'Processando…'}
           </Badge>
         </div>
         <div className="text-caption text-muted-foreground/80 flex flex-wrap items-center gap-x-2">
@@ -108,6 +111,7 @@ function FileRow({ file }: FileRowProps) {
         variant="ghost"
         size="icon"
         onClick={handleDelete}
+        disabled={deleting}
         aria-label={`Remover ${file.name}`}
         className={cn('text-muted-foreground hover:text-destructive size-8 shrink-0')}
       >

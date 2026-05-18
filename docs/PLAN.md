@@ -1747,34 +1747,285 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 ---
 
+## Release: M11 #1–#4 — foundation IA (Agentes + lib/ai + UI + Cérebro upload, 17-mai-26)
+
+**Primeiro release de M11.** Quatro sub-PRs de M11 (foundation + lib/ai + UI wiring + Cérebro upload) saem juntos em `PR dev → main`. Os sub-PRs #5–#7 (runtime router uazapi + handoffs + métricas/limits) ficam pra release subsequente, mesma estratégia de M10 (#74 + #77).
+
+**Conteúdo do release:**
+
+| Sub-PR | Branch (deletada) | PR                                                   | Resumo                                                                                                                                                                                                                                        |
+| ------ | ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M11#1  | `m11-ai-agents`   | [#82](https://github.com/Mateusli23/papopro/pull/82) | Schema 10 tabelas (`ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`, `lead_summaries`, `knowledge_*` × 4) + 7 enums + 8 audit_action values + RLS em todas + HNSW pgvector + smoke contratos (90/90). |
+| M11#2  | `m11-2-ai-lib`    | [#83](https://github.com/Mateusli23/papopro/pull/83) | `lib/ai/` (pricing + usage + claude + embeddings + memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk@0.96` + `openai@6.38`) + smoke 31. Custo IA medido em `cost_micros bigint`.                                                     |
+| M11#3  | `m11-3-ui-wiring` | [#84](https://github.com/Mateusli23/papopro/pull/84) | UI hidratada do servidor + 16 Server Actions (CRUD/versionamento/roteamento/handoff config/KB campos/simulation) + helper `buildSystemPrompt` + simulation chat chamando Claude real. Store M5 + fixtures deletados (net deletion).           |
+| M11#4  | `m11-4-knowledge` | [#85](https://github.com/Mateusli23/papopro/pull/85) | Cérebro upload (PDF/TXT/MD) + extração (`pdf-parse@2.4.5`) + chunking + embedding síncrono + bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados. Smoke chunking +11.                                                 |
+
+**Diferenciais do PRD entregues no release (parcial — runtime fica pra M11#5+):**
+
+1. **Agentes IA configuráveis** ponta-a-ponta no editor: prompt + persona + tom + roteamento + handoff config + versionamento + restore + simulação contra Claude real (Sonnet 4.6 com prompt caching).
+2. **Cérebro da Empresa** funcional: 5 campos estruturados + upload de documentos com extração, chunking e embedding em pgvector. Simulação consulta via RAG (`topKKnowledge` retorna resultados reais).
+
+**O que ainda NÃO está no release** (vai pra próximo dev→main):
+
+- Atendimento real (uazapi inbound → roteador → agent_session production → Claude → WhatsApp) — **M11#5**
+- Handoffs agente↔agente e agente→humano em runtime — **M11#6**
+- Métricas por agente em `/reports`, enforcement 3 ativos no Pro IA, diff visual de versões, DOC/DOCX (lib `mammoth`) — **M11#7**
+
+**Configuração pendente do operador pós-release** (vai no body do PR):
+
+1. **Migrations na ordem:**
+   - `apply_migration name=m11_1_ai_agents_schema`
+   - `apply_migration name=m11_2_usage_events_schema`
+   - `apply_migration name=m11_4_knowledge_storage_setup`
+2. **Validações pós-apply:**
+   - `SELECT typname FROM pg_type WHERE typname LIKE 'agent_%' OR typname LIKE 'knowledge_%'` → 7 tipos esperados
+   - `SELECT indexname FROM pg_indexes WHERE indexname = 'knowledge_embeddings_hnsw_idx'`
+   - `SELECT id, allowed_mime_types FROM storage.buckets WHERE id = 'knowledge-base'`
+3. **Vercel env vars (críticas a partir deste release):**
+   - `ANTHROPIC_API_KEY` (sem isso, simulation chat falha com erro propositivo)
+   - `OPENAI_API_KEY` (sem isso, KB upload marca documento como `failed`)
+4. **Custo:** A partir deste release o produto consome Anthropic + OpenAI. Simulation Sonnet 4.6 ~\$0.05–\$0.30/turno. KB indexing ~\$0.0003/50KB texto. Monitorar `usage_events` desde primeiro turno.
+5. **Sem Edge Function nem cron job** — processing de KB é síncrono no Server Action; runtime router via webhook (M11#5).
+
+**Próximo passo:** **M11#5** (roteador runtime — uazapi inbound dispara `agent_session kind='production'` + chama Claude com memória 3 camadas + responde via M9 adapter).
+
+---
+
 ## M11 — Agentes IA + Cérebro da Empresa (pgvector)
+
+**Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
+
+| Sub-PR    | Escopo                                                                                                                                                                                                                                           | Branch            | Status      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                                  | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.                       | `m11-2-ai-lib`    | ✅ entregue |
+| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados.                  | `m11-3-ui-wiring` | ✅ entregue |
+| **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up. | `m11-4-knowledge` | ✅ entregue |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                | `m11-5-router`    | ⏳ pendente |
+| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).                                | `m11-6-handoffs`  | ⏳ pendente |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                            | `m11-7-metrics`   | ⏳ pendente |
+
+**Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
+
+### M11#1 — schema + RLS + Prisma sync + smoke contratos (entregue 2026-05-17)
 
 **Branch:** `m11-ai-agents`
 
-**Objetivo:** Agentes Claude configuráveis atendendo conversas com memória em 3 camadas, base de conhecimento em pgvector, handoffs (agente↔agente e agente→humano), versionamento de prompt.
+**Objetivo:** entregar a fundação persistente de M11 sem qualquer Server Action, lib/ai ou UI wiring. Garante que o domínio (10 tabelas + 7 enums) está modelado fielmente ao contrato fechado em M5 (`apps/web/features/agents/types.ts`), com RLS multi-tenant, AuditAction values reservados, e smoke validando shape antes do código de runtime chegar (M11#2+).
+
+**Decisões de escopo:**
+
+- **10 tabelas, não 11.** `agent_handoff_triggers` colapsado em coluna `handoff_config jsonb` em `ai_agents`. Justificativa: os 6 gatilhos são fixos por design (M5 types.ts), `enabled` + `config` por gatilho cabem em JSONB, e tabela separada teria sempre 6 rows fixas por agente — overhead sem ganho. Shape validado por Zod no Server Action (M11#3).
+- **`knowledge_embeddings` separada de `knowledge_chunks`.** Permite re-embed (mudou de modelo) sem rewrite de chunks + isola HNSW index numa tabela menor (chunks tem `text` grande; embeddings tem só `vector(1536)`).
+- **Reuso de `message_direction`** pra `agent_messages.direction` (mesma semântica in/out — não vale criar enum duplicado).
+- **Sem seed em M11#1.** Diferente de M10#1 (cadências template seedadas no signup), agentes IA + KB são criação explícita do usuário via UI (M11#3+). Seed atrapalharia onboarding ("você já tem 3 agentes mockados").
+- **`usage_events` fica pra M11#2.** Schema de metering cross-feature criado junto com `lib/ai/claude.ts`. M11#1 já reserva os 4 campos de tokens em `agent_messages` (input/output/cache_read/cache_creation) — contabilização local já funciona; agregação global vem depois.
+- **Tipo `vector(1536)` via `Unsupported`** no Prisma. Decisão obrigatória: Prisma 6 não tipa pgvector nativamente. `Unsupported("vector(1536)")` faz o client reconhecer a coluna sem permitir leitura/escrita via API tipada — queries top-K via `$queryRaw` (que é o que pgvector exige pra `<=>` cosine operator de qualquer jeito).
 
 **Entregas:**
 
-- [ ] Schema: `ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`, `lead_summaries`, `knowledge_base_fields`, `knowledge_documents`, `knowledge_chunks`, `knowledge_embeddings` (pgvector)
-- [ ] Extensão `pgvector` habilitada no Supabase
-- [ ] `lib/ai/claude.ts` — wrapper Anthropic SDK com **prompt caching** habilitado (system + base de conhecimento estável)
-- [ ] `lib/ai/embeddings.ts` — `text-embedding-3-small` (OpenAI), batch + cache local
-- [ ] `lib/ai/memory.ts` — sessão (últimas N mensagens, isolada por agente), lead (resumo persistido em `lead_summaries`, compartilhado), empresa (top-K via pgvector, compartilhado)
-- [ ] Editor de agente (M5 já tem UI) — conectado ao backend; salva versão a cada update
-- [ ] Versionamento e rollback de prompt (lista de versões + diff visual)
-- [ ] Chat de simulação dentro do editor — usa Claude real com prompt da versão em edição, sem efeito colateral
-- [ ] Roteador de agentes por etapa, tag, número conectado, palavra-chave
-- [ ] Handoff agente → agente: gatilho (palavra-chave, mudança de etapa, comando), resumo automático passado ao próximo, pausa do anterior
-- [ ] Handoff humano: manual (botão "Assumir conversa"), palavra-chave, intenção comercial detectada, mudança para Negociação, fora do horário comercial
-- [ ] Pausa automática do agente após handoff humano (até vendedor reativar)
-- [ ] Resumo entregue ao vendedor no handoff: perfil do lead, demandas, etapa, próxima ação sugerida, qual agente vinha atendendo
-- [ ] Cérebro da Empresa: campos estruturados (sobre, produtos, FAQ, scripts, política) + upload PDF/DOC/DOCX/TXT/MD com extração de texto e chunking + embeddings
-- [ ] Versionamento da base de conhecimento (snapshots por mudança)
-- [ ] Métricas por agente: total de conversas, taxa de resolução sem handoff, tempo médio de resposta, satisfação inferida (sentimento da última mensagem)
-- [ ] Enforcement: limite de 3 agentes ativos no Pro IA (M12 fará billing-aware)
-- [ ] Custo de tokens contabilizado em `usage_events` (preparação para M12)
+- [x] [`supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql`](../supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql) — **10 tabelas + 7 enums + 8 audit_action values + RLS + HNSW index**:
+  - **Agentes (5):** `ai_agents`, `agent_versions`, `agent_routing_rules`, `agent_sessions`, `agent_messages`
+  - **Memória lead (1):** `lead_summaries` (UNIQUE em `lead_id`, compartilhado entre agentes)
+  - **Cérebro da Empresa (4):** `knowledge_base_fields` (singleton por workspace), `knowledge_documents`, `knowledge_chunks`, `knowledge_embeddings` (vector(1536), HNSW cosine)
+  - **Enums:** `agent_status`, `agent_tone`, `agent_route_kind`, `agent_session_kind`, `knowledge_source_kind`, `knowledge_doc_status`, `knowledge_doc_kind`
+  - **AuditAction values novos:** `agent_created`, `agent_version_saved`, `agent_activated`, `agent_paused`, `agent_deleted`, `handoff_triggered`, `knowledge_doc_uploaded`, `knowledge_doc_processed`
+  - **CHECK constraint crítico** em `agent_sessions`: `kind=production` exige `conversation_id + lead_id NOT NULL`; `kind=simulation` exige ambos NULL. Impede sessão de teste tocar lead real por engano.
+  - **CHECK constraint crítico** em `knowledge_chunks`: `source=document` exige `document_id`; `source=structured_field` exige `structured_field` (discriminação rígida).
+  - **FK circular `ai_agents.active_version_id` → `agent_versions.id`** resolvida via `ALTER TABLE ADD CONSTRAINT` após criação das duas tabelas. `ON DELETE SET NULL` (delete de versão NÃO cascateia pro agente).
+  - **RLS via `current_workspace_id()`** em todas as 10 tabelas, padrão M7–M10/M12. `agent_versions` + `agent_routing_rules` herdam via subquery `agent_id IN (SELECT id FROM ai_agents WHERE workspace_id = …)` (padrão `cadence_steps`/`pipeline_stages`).
+  - **`agent_messages` é append-only** — sem policy UPDATE/DELETE (audit + tokens preservados).
+  - **HNSW index** `USING hnsw (embedding vector_cosine_ops)` em `knowledge_embeddings` — pronto pra busca top-K via `<=>` operator. Parâmetros default (m=16, ef_construction=64) suficientes pra volumes MVP.
+  - **Sem backfill** — workspaces existentes ficam sem agentes nem KB até o usuário criar via UI (M11#3+).
+- [x] [`packages/db/prisma/schema.prisma`](../packages/db/prisma/schema.prisma) — sync completo com SQL:
+  - **+7 enums** (`AgentStatus`/`AgentTone`/`AgentRouteKind`/`AgentSessionKind`/`KnowledgeSourceKind`/`KnowledgeDocStatus`/`KnowledgeDocKind`)
+  - **+8 `AuditAction` values** espelhando ALTER TYPE
+  - **+10 models** (`AiAgent`, `AgentVersion`, `AgentRoutingRule`, `AgentSession`, `AgentMessage`, `LeadSummary`, `KnowledgeBaseField`, `KnowledgeDocument`, `KnowledgeChunk`, `KnowledgeEmbedding`)
+  - **Relations** em `Workspace` (+8 navigations), `User` (+3 `@relation`s nomeadas: `AiAgentCreatedBy`, `AgentVersionCreatedBy`, `KnowledgeDocumentUploadedBy`), `Lead` (+`summary`+`agentSessions`), `Conversation` (+`agentSessions`).
+  - **FK circular** modelada via 2 `@relation`s nomeadas em `AgentVersion` (`AiAgentVersions` pra histórico + `AiAgentActiveVersion` pro ponteiro).
+  - **`embedding Unsupported("vector(1536)")`** — única coluna que não passa pela API tipada do Prisma (acessada via `$queryRaw` em M11#2+).
+- [x] [`packages/db/src/index.ts`](../packages/db/src/index.ts) — re-export dos 7 enums novos pra que smoke + Server Actions (M11#3) importem via `@papopro/db` (mesmo padrão `SubscriptionPlan`/`CadenceStatus`).
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+19 checks novos** em 3 grupos, sem hit no DB:
+  - `db-enums-m11` (9): cada um dos 7 enums tem o set exato de values + AgentStatus/AgentRouteKind casam com `AGENT_STATUSES`/`ROUTE_KINDS` da UI M5 (anti-regressão de contrato).
+  - `audit-actions-m11` (8): cada um dos 8 audit values novos existe no enum.
+  - `db-handoff-config-shape-m11` (2): `HANDOFF_TRIGGER_KINDS` tem 6 valores + cobre os 6 esperados (contrato JSONB).
+  - Total smoke `/api/smoke-test/agents`: era 71 (M5 transforms), passa pra **90**.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **90/90 verde** ✅.
 
-**Commit final:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
+**Não-objetivos M11#1 (explícitos — ficam pra sub-PRs):**
+
+- `lib/ai/{claude,embeddings,memory}.ts` → M11#2
+- `usage_events` schema (metering cross-feature) → M11#2
+- Server Actions de agente (`createAgent`/`saveVersion`/`activate`) → M11#3
+- UI hidratada do servidor (editor + lista) → M11#3
+- Server Actions de roteamento (`addRoute`/`reorderRoutes`/`deleteRoute`) → M11#3
+- Chat de simulação chamando Claude real → M11#3
+- Upload de documento + Edge Function de chunking+embedding → M11#4
+- Trigger inbound (uazapi webhook) → match no roteador → cria session → despacha Claude → M11#5
+- Handoffs agente→agente e agente→humano → M11#6
+- Métricas por agente + enforcement de 3 ativos no Pro IA → M11#7
+- E2E Playwright do flow "criar agente → conectar → atender" → M13
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. Aplicar migration via MCP `apply_migration name=m11_1_ai_agents_schema` (depende de M12#1 já aplicada).
+2. Validar via `SELECT typname FROM pg_type WHERE typname LIKE 'agent_%' OR typname LIKE 'knowledge_%'` — esperado 7 tipos.
+3. Validar HNSW index criado: `SELECT indexname FROM pg_indexes WHERE indexname = 'knowledge_embeddings_hnsw_idx'`.
+4. **Nada mais** — sem Edge Function, sem cron job, sem secret, sem env var.
+
+### M11#2 — lib/ai/ + usage_events + SDKs Anthropic/OpenAI (entregue 2026-05-17)
+
+**Branch:** `m11-2-ai-lib`
+
+**Objetivo:** entregar o motor de IA — a camada `apps/web/lib/ai/` que Server Actions (M11#3) e Edge Functions (M11#4/#5) vão importar pra chamar Claude, gerar embeddings, e montar a memória 3 camadas em runtime. Sem UI, sem chamadas reais no smoke (zero hit Anthropic/OpenAI). Schema mínimo (`usage_events`) pra metering cross-feature de custo IA.
+
+**Decisões fechadas:**
+
+- **`usage_events` tabela única, não uma por kind.** Padrão `audit_logs`/`webhook_events` (1 tabela + enum discriminador). Evita N migrations futuras pra `summary_call`/`transcription_call`/etc. Schema do payload (tokens + cost) é estável entre kinds.
+- **`cost_micros` é bigint USD × 10⁶.** Evita float drift em `SUM` de milhões de rows. `bigint` cobre até ~$9.2T (suficiente).
+- **Preço armazenado em `micros/1M tokens`, não `micros/token`.** Cache read $0.30/1M = 0.3 micros/token truncaria pra 0 em integer; embedding $0.02/1M = 0.02 micros/token idem. Em micros/1M (300_000 e 20_000) tudo vira integer perfeito; dividimos por 1M no final (perda ≤ 1 micro/chamada, irrelevante).
+- **Sonnet 4.6 default** (env `ANTHROPIC_MODEL`). Haiku 4.5 disponível pra workspaces que aceitem qualidade menor por ~4× custo a menos.
+- **`text-embedding-3-small`** (1536 dims, $0.02/1M) — alinha com decisão M11#1 (`vector(1536)` na schema).
+- **Non-streaming pra agentes.** Decisão M11#2: resposta inteira de uma vez (mensagem WhatsApp, baixa latência ≠ urgente). Streaming entra em M11#3 quando chat de simulação no editor precisar.
+- **Retry built-in do SDK.** Anthropic e OpenAI SDKs têm `maxRetries` com backoff exponencial em 429/5xx. Setamos 3 (default é 2). Não reimplementamos loop manual.
+- **Prompt caching obrigatório** (CLAUDE.md §6). System + cacheableBlocks em até 4 system text blocks com `cache_control: ephemeral`. Quando >3 cacheable blocks chegam, consolidamos num único block (sacrifica granularidade, mantém o teto Anthropic).
+- **`vector(1536)` via `$queryRaw`/`$executeRaw`** — decisão M11#1. Top-K usa `<=>` (cosine distance), upsert usa `ON CONFLICT (chunk_id) DO UPDATE`.
+- **Cache local em memória (sha1) — não distribuído.** `Map<hash, vector>` por processo. Dedup eficaz dentro do mesmo cold start (re-indexação, retries). Redis fica pra V2 quando o volume justificar.
+- **`claude.ts`/`embeddings.ts`/`memory.ts` não persistem.** Wrappers de API retornam `{ text, usage, ... }`. Caller (Server Action de M11#3) chama `recordUsage(...)` + `prisma.agentMessage.create(...)` separado. Mantém wrappers testáveis sem mock de DB.
+- **Memória 3 camadas montada em paralelo** quando possível. `assembleContext` dispara 3 promises (sessão + lead + embed query) em `Promise.all`, depois resolve top-K que depende do embed.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260527120000_m11_2_usage_events_schema.sql`](../supabase/migrations/20260527120000_m11_2_usage_events_schema.sql) — tabela `usage_events` + enum `usage_event_kind` (3 values) + RLS (SELECT/INSERT por workspace; append-only) + 3 indexes (workspace+created, workspace+kind+created, entity partial).
+- [x] [`packages/db/prisma/schema.prisma`](../packages/db/prisma/schema.prisma) + [`packages/db/src/index.ts`](../packages/db/src/index.ts) — `UsageEventKind` enum + `UsageEvent` model (com `BigInt` em `costMicros`) + relation em `Workspace`. Re-export do enum.
+- [x] [`apps/web/package.json`](../apps/web/package.json) — `@anthropic-ai/sdk@^0.96.0` + `openai@^6.38.0`. Instalação no Windows precisou `NODE_OPTIONS=--use-system-ca` + `--ignore-scripts` (antivírus interceptando TLS, memória `dev-local-windows-antivirus-tls`).
+- [x] [`apps/web/lib/ai/pricing.ts`](../apps/web/lib/ai/pricing.ts) — `ANTHROPIC_PRICING_MICROS_PER_MILLION` + `OPENAI_PRICING_MICROS_PER_MILLION` (snapshot 2026-05-17). `computeCostMicros(model, usage) → bigint` puro + sanity checks (negativo, modelo desconhecido). `getDefaultAnthropicModel`/`getDefaultEmbeddingModel`.
+- [x] [`apps/web/lib/ai/usage.ts`](../apps/web/lib/ai/usage.ts) — `recordUsage({ workspaceId, eventKind, feature, model, usage, entityKind?, entityId? })` via `withWorkspace(tx)` + cálculo automático de `cost_micros`. Sem UPDATE/DELETE (tabela append-only).
+- [x] [`apps/web/lib/ai/claude.ts`](../apps/web/lib/ai/claude.ts) — lazy singleton `getAnthropic()` (server-only + throw em falta de API key) + `complete({ workspaceId, sessionId, feature, system, cacheableBlocks?, messages, model?, maxTokens? }) → { text, usage, model, stopReason }`. System blocks com `cache_control: ephemeral` (1 system + ≤3 KB chunks; consolidação automática se >3). `maxRetries: 3` no construtor.
+- [x] [`apps/web/lib/ai/embeddings.ts`](../apps/web/lib/ai/embeddings.ts) — lazy singleton `getOpenAI()` + `embedTexts({ workspaceId, texts, model? }) → { embeddings, usage, model, cacheHits }`. Batch de até 96 + dedup via `hashEmbeddingInput(text, model)` sha1 + cache local `Map`. `upsertChunkEmbedding({ workspaceId, chunkId, vector, model })` via `$executeRaw` com `ON CONFLICT (chunk_id) DO UPDATE`. `clearEmbeddingCache`/`getEmbeddingCacheSize` pra observabilidade.
+- [x] [`apps/web/lib/ai/memory.ts`](../apps/web/lib/ai/memory.ts) — `assembleContext({ workspaceId, agentId, sessionId?, leadId?, latestUserMessage, topK?, sessionMessagesTake? }) → { sessionMessages, leadSummary, knowledgeChunks, cacheableBlocks }`. `topKKnowledge({ workspaceId, queryVector, k? })` via pgvector `<=>` + JOIN com `knowledge_chunks`. `updateLeadSummary({ workspaceId, leadId, agentId, recentMessages, existingSummary }) → { newSummary, usage, model }` pra job background. `formatKnowledgeBlock`/`buildSummaryPrompt` puros (testáveis).
+- [x] [`apps/web/app/api/smoke-test/ai/route.ts`](../apps/web/app/api/smoke-test/ai/route.ts) — **28 checks** em 5 grupos (`pricing-m11-2` 14, `usage-event-shape-m11-2` 4, `embedding-cache-m11-2` 5, `memory-contract-m11-2` 6, `claude-contract-m11-2` 1). Zero hit Anthropic/OpenAI.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅, smoke `/api/smoke-test/ai` 28/28 verde ✅. Smoke `/api/smoke-test/agents` (M11#1) ainda 90/90 ✅ (sem regressão).
+
+**Não-objetivos M11#2 (explícitos):**
+
+- Server Actions (`createAgentAction`, `sendAgentMessageAction`, etc.) → M11#3
+- UI hidratada do servidor + chat de simulação chamando Claude real → M11#3
+- Upload de documento + Edge Function de chunking + embedding em background → M11#4
+- Trigger inbound (uazapi webhook → match no roteador → cria session → despacha Claude) → M11#5
+- Handoffs agente↔agente + agente→humano → M11#6
+- Métricas por agente + enforcement 3 ativos no Pro IA → M11#7
+- Cache distribuído (Redis) pra embeddings → V2
+- Streaming responses (chat simulação real-time) → M11#3
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. `supabase apply_migration name=m11_2_usage_events_schema` (depende de M11#1 já aplicada).
+2. Validar enum: `SELECT typname FROM pg_type WHERE typname = 'usage_event_kind'`.
+3. Configurar `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env quando entrar M11#3 (M11#2 sozinho não usa as chaves em runtime — smoke não bate API).
+4. **Custo $0 antes de M11#3** — esta entrega só prepara a biblioteca.
+
+### M11#3 — UI wiring + Server Actions chamando Claude real (entregue 2026-05-17)
+
+**Branch:** `m11-3-ui-wiring`
+
+**Objetivo:** trocar o store in-memory de M5 (que rodava sobre fixtures `FAKE_AGENTS`/`FAKE_KNOWLEDGE_BASE`) por persistência real via Server Actions sobre o schema M11#1, hidratar a UI a partir do servidor (Server Components), e conectar o chat de simulação ao Claude real via `lib/ai/` (M11#2). **Sub-PR onde o custo Anthropic/OpenAI passa de $0 a $X** — cada uso do simulation chat consome tokens.
+
+**Decisões fechadas:**
+
+- **Substituir o store, não coexistir.** `features/agents/store.ts` e fixtures (`FAKE_AGENTS`, `FAKE_KNOWLEDGE_BASE`) deletados — workspaces começam vazios (estado vazio orienta criação). Templates (`AGENT_TEMPLATES`) ficam — usados por `createAgentAction` pra materializar v1.
+- **Server Actions + `revalidatePath`, não TanStack Query.** Padrão M8/M10/M12. Componente Client chama Server Action → action revalidatePath → Server Component refetcha → re-passa via prop.
+- **Sem enforcement 3 agentes ativos no Pro IA.** Fica pra M11#7 (junto com métricas + `lib/limits.ts` billing-aware). Em M11#3 deixa qualquer quantidade.
+- **Métricas zeradas até M11#7.** `Agent.metrics` retorna `{ 0, 0, 0, 0 }` em queries serializer — VIEW Postgres real entra com M11#7 (agregando `agent_sessions` + `agent_messages`).
+- **Simulation = sandbox isolado.** `agent_session kind='simulation'` (CHECK constraint M11#1 garante `conversation_id`+`lead_id` NULL). Mensagens persistem em `agent_messages` pra rastreabilidade + tokens registrados em `usage_events`. "Nova simulação" fecha sessão atual (`ended_at = NOW()`).
+- **Memória 3 camadas em simulation:** session ✅, lead ❌ (sem `leadId`), empresa ✅ (Cérebro). `assembleContext` lida com `leadId=undefined` retornando `leadSummary: null`.
+- **`handoff_config` JSONB serializer:** `queries.ts:serializeHandoffConfig` materializa os 6 triggers (com defaults `enabled:false` quando JSONB não tem entrada). `manual` sempre começa enabled em `createAgentAction`.
+- **Cérebro upload de documentos fica pra M11#4.** M11#3 conecta apenas os 5 campos estruturados (`about`/`products`/`faq`/`scripts`/`policy`) via `updateKnowledgeBaseAction` (Owner/Admin only). Components `KnowledgeFileList`/`KnowledgeUploadZone` viraram stubs "em breve".
+- **Roteador runtime fica pra M11#5.** M11#3 só persiste as regras em `agent_routing_rules`; uazapi inbound → match → cria session production entra em M11#5.
+- **Handoffs em runtime ficam pra M11#6.** M11#3 só persiste o estado dos 6 triggers em `handoff_config`; lógica de "passar pra outro agente/humano" entra em M11#6.
+- **Custo $0.05-$0.30 por turno de simulation** (Sonnet 4.6 default). UI mostra disclaimer no header do chat: "Chamada Claude real — não vai pro WhatsApp. Cada turno consome tokens".
+- **Erro propositivo em falta de API key:** action retorna "IA não configurada — verifique a chave Anthropic em Configurações." em vez de erro técnico.
+
+**Entregas:**
+
+- [x] [`apps/web/features/agents/queries.ts`](../apps/web/features/agents/queries.ts) (novo, ~280 linhas) — `listAgentsForWorkspace`, `getAgentDetailById`, `getKnowledgeBaseFields`, `getActiveSimulationState`. Serializer JSONB→UI (`serializeHandoffConfig`, `serializeAgent`) preserva contrato `features/agents/types.ts`.
+- [x] [`apps/web/features/agents/actions.ts`](../apps/web/features/agents/actions.ts) (novo, ~700 linhas) — **16 Server Actions**: `createAgentAction`, `updateAgentDraftAction`, `toggleAgentStatusAction`, `setAgentStatusAction`, `duplicateAgentAction`, `deleteAgentAction`, `saveAgentVersionAction`, `restoreAgentVersionAction`, `addRouteAction`, `updateRouteAction`, `deleteRouteAction`, `updateHandoffTriggerAction`, `updateKnowledgeBaseAction`, `simulateAgentMessageAction`, `endSimulationSessionAction`. RBAC (`requireRole`), `withWorkspace(tx)`, audit log na mesma tx, `revalidatePath`. Defense-in-depth (`workspaceId` em todo `where`).
+- [x] [`apps/web/lib/ai/build-system-prompt.ts`](../apps/web/lib/ai/build-system-prompt.ts) (novo) — helper puro que monta o 1º system block enviado ao Claude. Anti-overtrigger (sem "CRITICAL: YOU MUST"), 4 tons descritos, guardrails fixos pt-BR.
+- [x] [`apps/web/app/(dashboard)/agents/page.tsx`](<../apps/web/app/(dashboard)/agents/page.tsx>) — vira Server Component async, fetch via `listAgentsForWorkspace` + `getKnowledgeBaseFields`, passa via prop.
+- [x] [`apps/web/app/(dashboard)/agents/[id]/page.tsx`](<../apps/web/app/(dashboard)/agents/[id]/page.tsx>) — Server Component async, fetch via `getAgentDetailById` + `getActiveSimulationState`, 404 via `notFound()` quando id inválido ou agente deletado.
+- [x] [`apps/web/app/(dashboard)/agents/agents-view.tsx`](<../apps/web/app/(dashboard)/agents/agents-view.tsx>) + [`agent-editor-view.tsx`](<../apps/web/app/(dashboard)/agents/[id]/agent-editor-view.tsx>) — recebem dados via prop, removeram `useAgents`/`useAgent`. Editor sobe handlers de save/duplicate/delete + name debounce 600ms.
+- [x] **13 components refatorados** — todos os imports de `../store` trocados por `../actions`. Mutations passam por Server Actions; debounce 800ms no prompt editor, 600ms no persona. `KnowledgeFileList` + `KnowledgeUploadZone` viraram stubs (M11#4 implementa).
+- [x] [`apps/web/features/agents/components/agent-simulation-chat.tsx`](../apps/web/features/agents/components/agent-simulation-chat.tsx) — **substitui canned script** por chamada real `simulateAgentMessageAction`. Optimistic UI (mensagem do user aparece antes do response). Header com disclaimer de custo. "Nova simulação" chama `endSimulationSessionAction`.
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — re-escrito do zero. **52 checks** em 7 grupos (db-enums-m11: 9, audit-actions-m11: 8, db-handoff-config-shape-m11: 2, templates: 6, transforms-pure: 5, schemas: 12, build-system-prompt-m11-3: 10). Sem hit DB/API.
+- [x] **Cleanup:** `apps/web/features/agents/store.ts`, `apps/web/features/agents/hooks/use-simulation-script.ts`, `apps/web/lib/fixtures/agents.ts`, `apps/web/lib/fixtures/knowledge-base.ts` deletados. `agent-templates.ts` mantido (usado por `createAgentAction`).
+- [x] `pnpm db:generate` ✅, `pnpm typecheck` ✅, `pnpm lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **52/52 verde** ✅, smoke `/api/smoke-test/ai` (M11#2) 31/31 sem regressão ✅.
+
+**Não-objetivos M11#3 (explícitos):**
+
+- Upload de documentos do Cérebro (PDF/DOC/DOCX/TXT/MD) + extração + chunking + embedding → **M11#4** (Edge Function)
+- Roteador runtime real (uazapi inbound → match → cria session production → despacha Claude) → **M11#5**
+- Handoffs agente↔agente + agente→humano em runtime → **M11#6**
+- Métricas reais por agente em `/reports` + enforcement 3 ativos no Pro IA → **M11#7**
+- Diff visual entre versões (era opcional em M11#3) → adiado pra M11#7
+- Real-time updates de simulação via SSE/Supabase Realtime → V2
+- E2E Playwright do flow "criar → conversar → ativar" → M13
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. **`ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env — críticas a partir de M11#3.** Sem elas, `simulateAgentMessageAction` retorna erro propositivo e UI bloqueia o envio; outras actions (CRUD, versionamento, roteamento, handoff config, KB campos) funcionam normais.
+2. Migrations M11#1 + M11#2 já aplicadas (M11#3 não cria migration nova).
+3. **Custo $X começa aqui.** Cada simulation chat consome ~$0.05-$0.30/turno (Sonnet 4.6). Monitorar `usage_events` desde primeiro turno.
+
+### M11#4 — Cérebro upload + extração + chunking + embedding (entregue 2026-05-17)
+
+**Branch:** `m11-4-knowledge`
+
+**Objetivo:** completar o "Cérebro da Empresa" — admin sobe PDF/TXT/MD, sistema extrai texto, chunkeia, gera embeddings via OpenAI (M11#2 `embedTexts`), persiste em `knowledge_chunks` + `knowledge_embeddings`. Os 5 campos estruturados de M11#3 agora também ficam indexados após cada save. A partir daqui, `assembleContext.topKKnowledge` (M11#2) retorna **resultados reais** no simulation chat.
+
+**Decisões fechadas:**
+
+- **Processing síncrono na Server Action** (não Edge Function em background) — MVP: arquivos típicos ≤2MB texto extraído processam em <15s. Edge Function async fica pra V2 quando volumes pedirem.
+- **PDF/TXT/MD suportados em M11#4** — DOC/DOCX entram em sub-PR follow-up (lib `mammoth`). Schema M11#1 enum `knowledge_doc_kind` aceita os 5; processing dos não-suportados retorna `failed` com `error_detail` propositivo.
+- **`pdf-parse@^2.4.5`** (class-based `PDFParse` v2 API) — pure JS, ~250KB, sem nativo. Lazy import só carrega quando precisa.
+- **Chunking 2800 chars target, 8000 cap, 400 overlap** — split por `\n\n` → sentence → char. Overlap preserva contexto entre chunks pra busca semântica.
+- **Hard delete imediato do Storage** no `deleteKnowledgeDocumentAction` (vs soft 30d do M8#6 attachments) — chunks + embeddings ocupam DB; arquivo só atrasa cleanup.
+- **Status lifecycle**: `uploading` → `processing` → `processed` | `failed`. Server Action faz tudo numa request; se falhar, status fica `failed` + `error_detail` (admin reupload).
+- **Re-indexação inline dos 5 campos estruturados** no `updateKnowledgeBaseAction` (via `reindexStructuredField` helper) — `Promise.allSettled` paraleliza os 5; falha em 1 não bloqueia outros.
+- **MIME whitelist no bucket** — `application/pdf`, `text/plain`, `text/markdown` + 2 reservados (`doc`/`docx`) que aceitam upload mas processing falha.
+- **Storage path** `<workspaceId>/<documentId>/<sanitizedFilename>` — workspace_id no prefix permite policies RLS em `storage.objects` (mesmo padrão M8#6 attachments).
+- **`sanitizeFileName` char-by-char** (não regex com control chars) — ESLint `no-control-regex` evita o pattern; iteração explícita testa códigos < 32 e separadores filesystem.
+- **Custo trivial** — 50KB texto = ~12k tokens × \$0.02/1M = \$0.00024 por upload. `recordUsage(feature='kb_indexing')` registra em `usage_events`.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260528120000_m11_4_knowledge_storage_setup.sql`](../supabase/migrations/20260528120000_m11_4_knowledge_storage_setup.sql) — bucket `knowledge-base` (privado, 10MB, MIME whitelist) + 3 policies RLS em `storage.objects` + RPC helper `delete_structured_field_chunks` (SECURITY DEFINER, atravessa RLS pra delete + cascade de chunks).
+- [x] [`apps/web/lib/knowledge/chunking.ts`](../apps/web/lib/knowledge/chunking.ts) (novo, puro) — `chunkText(text, opts?) → ChunkOutput[]` com 3 níveis de fallback (parágrafo → sentence → char). `splitLargeParagraph` + `estimateTokens` exportados pra smoke.
+- [x] [`apps/web/lib/knowledge/extract.ts`](../apps/web/lib/knowledge/extract.ts) (novo, server-only) — `extractText({ buffer, kind })` despacha pra `extractPdf` (lazy import `pdf-parse@2.4.5` class API) ou `extractPlainText` (UTF-8 direto). DOC/DOCX lança erro propositivo.
+- [x] [`apps/web/features/agents/knowledge-actions.ts`](../apps/web/features/agents/knowledge-actions.ts) (novo, ~430 linhas) — 2 Server Actions + 1 helper exportado: `uploadKnowledgeDocumentAction` (FormData → Storage upload → extract → chunk → embed → persist + `recordUsage` `feature='kb_indexing'`; erros marcam `failed`), `deleteKnowledgeDocumentAction` (soft delete row + hard delete Storage; cascade limpa chunks+embeddings), `reindexStructuredField` (delete chunks antigos do campo + re-chunk + re-embed; chamado pelo `updateKnowledgeBaseAction`).
+- [x] [`apps/web/features/agents/actions.ts`](../apps/web/features/agents/actions.ts) — `updateKnowledgeBaseAction` agora dispara `reindexStructuredField` pros 5 campos em paralelo após upsert (`Promise.allSettled` + `reportNonFatal` em cada falha).
+- [x] [`apps/web/features/agents/queries.ts`](../apps/web/features/agents/queries.ts) — `getKnowledgeBaseFields` agora popula `files` com documentos reais de `knowledge_documents` (não mais `[]` stub). Serializers `serializeDocKind`/`serializeDocStatus` mapeiam enum DB (5 kinds, 4 statuses) → contrato M5 UI (3 kinds, 2 statuses).
+- [x] [`apps/web/features/agents/components/knowledge-upload-zone.tsx`](../apps/web/features/agents/components/knowledge-upload-zone.tsx) — dropzone funcional (não mais stub). Drag+drop ou click-to-pick. `FormData` + `uploadKnowledgeDocumentAction` + loading state + toast por arquivo (success/error/failed-with-detail). `router.refresh()` após sucesso.
+- [x] [`apps/web/features/agents/components/knowledge-file-list.tsx`](../apps/web/features/agents/components/knowledge-file-list.tsx) — lista real com status badge, tamanho formatado, timestamp, `deleteKnowledgeDocumentAction` com confirm dialog + `router.refresh()`.
+- [x] [`apps/web/features/agents/components/knowledge-base-tab.tsx`](../apps/web/features/agents/components/knowledge-base-tab.tsx) — microcopy atualizado (sem mais "em breve"), upload zone só visível pra Owner/Admin.
+- [x] [`apps/web/package.json`](../apps/web/package.json) — `pdf-parse@^2.4.5` + `@types/pdf-parse@^1.1.5`. Install no Windows com `NODE_OPTIONS=--use-system-ca` + `--ignore-scripts` (TLS antivírus workaround M11#2).
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+11 checks** em grupo `chunking-m11-4` (vazio, whitespace, texto pequeno, target/max chars, overlap default/desligado, chunkIndex sequencial, tokens estimados, consolidação de parágrafos curtos). Total smoke: 63/63.
+- [x] `pnpm db:generate` ✅, `pnpm typecheck` ✅, `pnpm lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **63/63 verde** ✅, smoke `/api/smoke-test/ai` (M11#2) 31/31 sem regressão ✅.
+
+**Não-objetivos M11#4 (explícitos):**
+
+- **DOC/DOCX** — lib `mammoth` em sub-PR follow-up (~50 linhas de mudança).
+- **OCR pra PDFs scanneados** (sem camada de texto extraível) — V2.
+- **Edge Function async processing** — V2 quando volumes pedirem.
+- **Versionamento da KB** (snapshots por mudança) — V2.
+- **Re-indexação automática quando troca o modelo de embedding** — manual via migration script futura.
+- **Roteador runtime real** (uazapi inbound consume KB) → M11#5.
+
+**Ops pós-deploy:**
+
+1. `supabase apply_migration name=m11_4_knowledge_storage_setup` (cria bucket + policies + RPC).
+2. Validar bucket: `SELECT id, allowed_mime_types FROM storage.buckets WHERE id = 'knowledge-base'`.
+3. **`OPENAI_API_KEY` já configurada em M11#3 ops** — sem isso, upload retorna `failed` com erro propositivo.
+4. **Custo embedding por upload ~\$0.0003 / 50KB texto** — trivial; sem alerta.
 
 ---
 

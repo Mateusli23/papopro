@@ -5,7 +5,7 @@ import * as React from 'react';
 import { Card, cn } from '@papopro/ui';
 import { Brain } from '@papopro/ui/icons';
 
-import { useKnowledgeBase } from '../store';
+import type { KnowledgeBase } from '../types';
 
 import { KnowledgeFileList } from './knowledge-file-list';
 import { KnowledgeSectionEditor } from './knowledge-section-editor';
@@ -73,8 +73,26 @@ const SECTIONS = [
   },
 ];
 
-export function KnowledgeBaseTab() {
-  const kb = useKnowledgeBase();
+interface KnowledgeBaseTabProps {
+  initialKb: KnowledgeBase | null;
+  callerRole: string;
+}
+
+export function KnowledgeBaseTab({ initialKb, callerRole }: KnowledgeBaseTabProps) {
+  // Workspace sem KB → começa com 5 campos vazios (UI já trata).
+  const kb: KnowledgeBase = initialKb ?? {
+    workspaceId: '',
+    about: '',
+    products: '',
+    faq: '',
+    scripts: '',
+    policy: '',
+    files: [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  // Owner/Admin podem editar; outros papéis só leem.
+  const canEdit = callerRole === 'Owner' || callerRole === 'Admin';
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[200px_1fr]">
@@ -121,6 +139,7 @@ export function KnowledgeBaseTab() {
             description={s.description}
             placeholder={s.placeholder}
             value={kb[s.sectionKey]}
+            disabled={!canEdit}
           />
         ))}
 
@@ -128,12 +147,12 @@ export function KnowledgeBaseTab() {
           <div className="flex flex-col gap-1">
             <h3 className="text-body font-semibold">Arquivos</h3>
             <p className="text-caption text-muted-foreground/80">
-              Documentos que alimentam todos os agentes do workspace. Mock — em M11 viram embeddings
-              via pgvector.
+              Documentos do workspace — extração + chunking + embedding em pgvector. Todos os
+              agentes consultam via RAG no chat de simulação e (em M11#5) no atendimento real.
             </p>
           </div>
 
-          <KnowledgeUploadZone />
+          {canEdit && <KnowledgeUploadZone />}
           <KnowledgeFileList files={kb.files} />
         </Card>
       </div>

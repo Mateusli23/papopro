@@ -88,4 +88,14 @@ export {
   // M12#1 — Stripe billing
   SubscriptionPlan,
   SubscriptionStatus,
+  // M11#1 — Agentes IA + Cérebro da Empresa (pgvector)
+  AgentStatus,
+  AgentTone,
+  AgentRouteKind,
+  AgentSessionKind,
+  KnowledgeSourceKind,
+  KnowledgeDocStatus,
+  KnowledgeDocKind,
+  // M11#2 — usage_events (metering cross-feature de IA)
+  UsageEventKind,
 } from '@prisma/client';

@@ -2,83 +2,96 @@
 
 import * as React from 'react';
 
+import { useRouter } from 'next/navigation';
+
 import { toast } from 'react-hot-toast';
 
 import { Button, cn } from '@papopro/ui';
-import { Upload } from '@papopro/ui/icons';
+import { Loader2, Upload } from '@papopro/ui/icons';
 
-import { kbFileUploadSchema } from '../schemas';
-import { addKbFile } from '../store';
-import type { KnowledgeFile } from '../types';
+import { uploadKnowledgeDocumentAction } from '../knowledge-actions';
 
 /**
- * Zona de drag-and-drop pra upload de arquivos do Cérebro. **Mock total** —
- * lemos só `name`/`size`/`type` do `File`, **nunca** chamamos `FileReader`
- * ou `Blob.text()`. O conteúdo real vai ser processado em M11 com extração
- * de texto + chunking + embeddings via pgvector.
+ * Dropzone de upload do Cérebro (M11#4) — funcional.
  *
- * Fluxo:
- *  1. Usuário arrasta arquivo (ou clica → file picker)
- *  2. Validamos via Zod (size, kind permitido)
- *  3. Mock processing 1.5s (status `'processing'`)
- *  4. Chama `addKbFile` no store (status `'processed'`)
- *  5. Toast confirmando
+ * Aceita PDF, TXT, MD até 10 MB. Cada upload faz tudo na request:
+ * upload Storage → extração → chunking → embedding → persist. Tipos
+ * extras (DOC/DOCX) entram no Storage mas processing retorna `failed`
+ * (lib de extração em follow-up).
+ *
+ * **Custo:** cada upload consome embeddings OpenAI (~\$0.0003 pra ~50KB
+ * texto). UI mostra disclaimer.
+ *
+ * **Não desabilita pra non-Owner/Admin no client** — Server Action
+ * `requireRole(['Owner','Admin'])` rejeita; UI mostra toast com a mensagem
+ * propositiva. Mesmo padrão de outras actions sensíveis.
  */
 
-const ACCEPTED_EXTENSIONS = ['pdf', 'doc', 'docx', 'txt'] as const;
-const ACCEPT_ATTR = '.pdf,.doc,.docx,.txt';
+const ACCEPT_ATTR = '.pdf,.txt,.md';
+const MAX_BYTES = 10 * 1024 * 1024;
 
 interface KnowledgeUploadZoneProps {
   className?: string;
 }
 
 export function KnowledgeUploadZone({ className }: KnowledgeUploadZoneProps) {
+  const router = useRouter();
   const [dragOver, setDragOver] = React.useState(false);
   const [processing, setProcessing] = React.useState<string[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
-  function processFile(file: File) {
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    if (!ACCEPTED_EXTENSIONS.includes(ext as (typeof ACCEPTED_EXTENSIONS)[number])) {
-      toast.error(`Tipo de arquivo não suportado: ${ext}. Aceita PDF, DOC, TXT.`, {
+  async function processFile(file: File) {
+    if (file.size > MAX_BYTES) {
+      toast.error(`${file.name}: arquivo muito grande (máx 10 MB).`, { duration: 4000 });
+      return;
+    }
+
+    setProcessing((prev) => [...prev, file.name]);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const result = await uploadKnowledgeDocumentAction(formData);
+      if (!result.ok) {
+        toast.error(result.error, { duration: 5000 });
+        return;
+      }
+      if (result.status === 'failed') {
+        toast.error(`${file.name}: ${result.errorDetail ?? 'não foi possível processar.'}`, {
+          duration: 6000,
+        });
+        return;
+      }
+      toast.success(`${file.name} indexado — disponível pros agentes via RAG.`, {
         duration: 4000,
       });
-      return;
-    }
-
-    // Normaliza extensão pra `kind` — `docx` vira `doc` no schema.
-    const kind: KnowledgeFile['kind'] = ext === 'pdf' ? 'pdf' : ext === 'txt' ? 'txt' : 'doc';
-
-    const parsed = kbFileUploadSchema.safeParse({
-      name: file.name,
-      sizeBytes: file.size,
-      kind,
-    });
-    if (!parsed.success) {
-      toast.error(parsed.error.issues[0]?.message ?? 'Arquivo inválido', { duration: 4000 });
-      return;
-    }
-
-    // Mock processing 1.5s — vendedor vê o feedback "{file} processando…"
-    setProcessing((prev) => [...prev, file.name]);
-    setTimeout(() => {
-      addKbFile(parsed.data);
+      router.refresh();
+    } catch (err) {
+      toast.error(`${file.name}: erro inesperado — recarregue e tente novamente.`, {
+        duration: 5000,
+      });
+      console.error('[knowledge.upload]', err);
+    } finally {
       setProcessing((prev) => prev.filter((n) => n !== file.name));
-      toast.success(`${file.name} processado e disponível pros agentes.`, { duration: 4000 });
-    }, 1500);
+    }
   }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
-    files.forEach(processFile);
+    files.forEach((f) => {
+      void processFile(f);
+    });
   }
 
   function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
-    files.forEach(processFile);
-    // Reset input pra permitir uploads sucessivos do mesmo arquivo.
+    files.forEach((f) => {
+      void processFile(f);
+    });
+    // Reset pra permitir upload sucessivo do mesmo arquivo.
     e.target.value = '';
   }
 
@@ -112,8 +125,9 @@ export function KnowledgeUploadZone({ className }: KnowledgeUploadZoneProps) {
           </Button>
         </p>
         <p className="text-caption text-muted-foreground/80">
-          Aceita PDF, DOC e TXT até 10 MB. Cada arquivo é processado e fica disponível pra todos os
-          agentes do workspace.
+          PDF, TXT, MD até 10 MB. Cada arquivo é extraído, chunkeado e indexado em pgvector — fica
+          disponível pra todos os agentes do workspace via RAG. Cada upload consome embeddings
+          OpenAI (~\$0.0003 / 50KB texto).
         </p>
         <input
           ref={fileInputRef}
@@ -133,7 +147,7 @@ export function KnowledgeUploadZone({ className }: KnowledgeUploadZoneProps) {
               key={name}
               className="text-caption text-muted-foreground bg-muted/40 inline-flex items-center gap-2 rounded-md px-3 py-1"
             >
-              <span className="animate-spin">↻</span>
+              <Loader2 className="size-3 animate-spin" />
               <span>Processando {name}…</span>
             </li>
           ))}

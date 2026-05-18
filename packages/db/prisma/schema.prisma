@@ -104,6 +104,16 @@ enum AuditAction {
   subscription_canceled
   payment_succeeded
   payment_failed
+  // M11#1 — Agentes IA + Cérebro da Empresa (PG enum values criados via
+  // ALTER TYPE ADD VALUE em supabase/migrations/20260526120000_m11_1_ai_agents_schema.sql).
+  agent_created
+  agent_version_saved
+  agent_activated
+  agent_paused
+  agent_deleted
+  handoff_triggered
+  knowledge_doc_uploaded
+  knowledge_doc_processed
 
   @@map("audit_action")
 }
@@ -390,6 +400,105 @@ enum HealthScore {
 }
 
 // =============================================================================
+// Enums de Agentes IA + Cérebro da Empresa (M11#1)
+// =============================================================================
+//
+// Espelham `apps/web/features/agents/types.ts` (UI mockada de M5 que vira
+// contrato pro backend M11). Mudar shape aqui = retrabalho em cascata.
+
+/// Status agregado do agente. `testing` é default ao criar — força revisão
+/// antes de soltar o agente real (só responde no chat de simulação do editor).
+enum AgentStatus {
+  testing
+  active
+  paused
+
+  @@map("agent_status")
+}
+
+/// Tons de voz pré-definidos. Lista fechada por design — tom livre demais gera
+/// prompts inconsistentes e dificulta análise downstream.
+enum AgentTone {
+  consultivo
+  amigavel
+  direto
+  formal
+
+  @@map("agent_tone")
+}
+
+/// Tipos de regra de roteamento. Match no PRIMEIRO HIT ordenado por priority asc.
+///  - `stage` → lead na etapa do funil X recebe este agente
+///  - `tag` → lead com tag X recebe este agente
+///  - `whatsapp_number` → leads que chegam pelo número conectado X
+///  - `keyword` → lead falou a palavra-chave X na primeira mensagem
+enum AgentRouteKind {
+  stage
+  tag
+  whatsapp_number
+  keyword
+
+  @@map("agent_route_kind")
+}
+
+/// Tipo da sessão IA:
+///  - `production` → atende lead real, toca conversation/lead, alimenta
+///    métricas, dispara handoff
+///  - `simulation` → chat de teste no editor, sem efeito colateral
+enum AgentSessionKind {
+  production
+  simulation
+
+  @@map("agent_session_kind")
+}
+
+/// Discriminador de chunk do Cérebro da Empresa:
+///  - `structured_field` → vem dos 5 campos (about/products/faq/scripts/policy)
+///  - `document` → vem de chunking de um knowledge_document uploadado
+enum KnowledgeSourceKind {
+  structured_field
+  document
+
+  @@map("knowledge_source_kind")
+}
+
+/// Status do processing pipeline do documento. `uploading` = arquivo no
+/// Storage mas extração ainda não rodou; `processed` = chunks+embeddings
+/// persistidos, RAG pode usar.
+enum KnowledgeDocStatus {
+  uploading
+  processing
+  processed
+  failed
+
+  @@map("knowledge_doc_status")
+}
+
+/// Tipos de arquivo suportados pelo Cérebro (M5 cobre 3, M11 expande pra 5).
+enum KnowledgeDocKind {
+  pdf
+  doc
+  docx
+  txt
+  md
+
+  @@map("knowledge_doc_kind")
+}
+
+/// Tipo de evento de uso de IA (M11#2). Free-form `feature` na tabela
+/// `usage_events` permite mais granularidade sem migration.
+///  - `agent_call`     → chamada Claude messages.create (agente respondendo)
+///  - `embedding_call` → chamada OpenAI embeddings (indexação do Cérebro)
+///  - `summary_call`   → chamada Claude pra atualizar lead_summary (background)
+enum UsageEventKind {
+  agent_call
+  embedding_call
+  summary_call
+
+  @@map("usage_event_kind")
+}
+
+// =============================================================================
 // Tenant + identidade
 // =============================================================================
 
@@ -440,6 +549,15 @@ model Workspace {
   cadenceStepRuns         CadenceStepRun[]
   coldLeadThresholds      ColdLeadThreshold[]
   coldLeadAlerts          ColdLeadAlert[]
+  aiAgents                AiAgent[]
+  agentSessions           AgentSession[]
+  agentMessages           AgentMessage[]
+  leadSummaries           LeadSummary[]
+  knowledgeBaseField      KnowledgeBaseField?
+  knowledgeDocuments      KnowledgeDocument[]
+  knowledgeChunks         KnowledgeChunk[]
+  knowledgeEmbeddings     KnowledgeEmbedding[]
+  usageEvents             UsageEvent[]
 
   @@index([deletedAt])
   @@map("workspaces")
@@ -472,6 +590,9 @@ model User {
   attachmentsUploaded     Attachment[]             @relation("AttachmentUploadedBy")
   cadencesCreated         Cadence[]                @relation("CadenceCreatedBy")
   coldLeadAlertsAcked     ColdLeadAlert[]          @relation("ColdLeadAlertAckedBy")
+  aiAgentsCreated         AiAgent[]                @relation("AiAgentCreatedBy")
+  agentVersionsCreated    AgentVersion[]           @relation("AgentVersionCreatedBy")
+  knowledgeDocsUploaded   KnowledgeDocument[]      @relation("KnowledgeDocumentUploadedBy")
 
   @@map("users")
 }
@@ -757,6 +878,8 @@ model Lead {
   conversations      Conversation[]
   cadenceEnrollments CadenceEnrollment[]
   coldLeadAlerts     ColdLeadAlert[]
+  summary            LeadSummary?
+  agentSessions      AgentSession[]
 
   @@index([workspaceId, createdAt(sort: Desc)])
   @@index([workspaceId, status])
@@ -1074,6 +1197,7 @@ model Conversation {
   vendor           WorkspaceMember? @relation("ConversationVendor", fields: [vendorId], references: [id], onDelete: SetNull)
   whatsappAccount  WhatsappAccount  @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
   messages         Message[]
+  agentSessions    AgentSession[]
 
   @@unique([workspaceId, contactPhone])
   @@index([workspaceId, status, lastMessageAt(sort: Desc)])
@@ -1368,4 +1492,318 @@ model ColdLeadAlert {
   @@index([workspaceId, acknowledgedAt])
   @@index([leadId])
   @@map("cold_lead_alerts")
+}
+
+// =============================================================================
+// Agentes IA + Cérebro da Empresa (M11#1)
+// =============================================================================
+//
+// Espelham `apps/web/features/agents/types.ts` (UI mockada de M5 que vira
+// contrato pro backend M11). M11#1 entrega só schema + RLS + smoke; UI
+// conecta em M11#3 via Server Actions.
+//
+// Memória 3 camadas (CLAUDE.md §6):
+//   - SESSÃO = AgentMessage (isolada por agente)
+//   - LEAD   = LeadSummary (compartilhado entre agentes do workspace)
+//   - EMPRESA = KnowledgeBaseField + KnowledgeDocument + KnowledgeChunk
+//               + KnowledgeEmbedding (compartilhado por todos; pgvector top-K)
+
+/// Persona configurável do agente. `prompt`/`persona`/`tone` representam o
+/// DRAFT atual (editado no editor, ainda não-versionado). `activeVersionId`
+/// aponta pra versão "em produção" (a que o runtime usa ao iniciar sessão
+/// real). Restore de versão antiga = copia trio de volta pro draft e
+/// re-aponta `activeVersionId`.
+///
+/// `handoffConfig` JSONB carrega o estado dos 6 gatilhos de handoff
+/// (manual, keyword, commercial_intent, stage_negotiation,
+/// outside_business_hours, agent_to_agent). Shape validado por Zod no
+/// Server Action — não criamos tabela separada porque os 6 são fixos.
+///
+/// `templateKey` é soft (varchar, não enum) — alinhado com lookup de M5
+/// (`AgentTemplateKey: 'qualification' | 'attendance' | 'recovery' | 'blank'`).
+model AiAgent {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String      @map("workspace_id") @db.Uuid
+  name            String      @db.VarChar(80)
+  status          AgentStatus @default(testing)
+  persona         String      @default("") @db.VarChar(280)
+  tone            AgentTone   @default(consultivo)
+  avatarEmoji     String?     @map("avatar_emoji") @db.VarChar(8)
+  templateKey     String?     @map("template_key") @db.VarChar(32)
+  prompt          String      @default("")
+  activeVersionId String?     @map("active_version_id") @db.Uuid
+  handoffConfig   Json        @default("{}") @map("handoff_config")
+  createdById     String?     @map("created_by_id") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy     User?                @relation("AiAgentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  activeVersion AgentVersion?        @relation("AiAgentActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  versions      AgentVersion[]       @relation("AiAgentVersions")
+  routingRules  AgentRoutingRule[]
+  sessions      AgentSession[]
+  leadSummaries LeadSummary[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, status])
+  @@index([workspaceId, deletedAt])
+  @@map("ai_agents")
+}
+
+/// Snapshot imutável do trio (prompt+persona+tone). Roteamento e
+/// handoffConfig NÃO entram na versão (mudanças neles são instantâneas e
+/// não-versionadas). Restore não cria row aqui — copia trio pro draft do
+/// agente + reaponta `activeVersionId`.
+model AgentVersion {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId       String   @map("agent_id") @db.Uuid
+  versionNumber Int      @map("version_number")
+  prompt        String
+  persona       String   @default("") @db.VarChar(280)
+  tone          AgentTone
+  notes         String?  @db.VarChar(280)
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agent             AiAgent        @relation("AiAgentVersions", fields: [agentId], references: [id], onDelete: Cascade)
+  createdBy         User?          @relation("AgentVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  agentsUsingActive AiAgent[]      @relation("AiAgentActiveVersion")
+  sessions          AgentSession[]
+
+  @@unique([agentId, versionNumber])
+  @@index([agentId])
+  @@map("agent_versions")
+}
+
+/// Regra de roteamento. Match no PRIMEIRO HIT ordenado por `priority` asc.
+/// UI controla `priority` via drag-and-drop em M11#3. Sem unique (workspace
+/// pode ter 2 regras idênticas; UI deduplica no save, schema não impõe).
+model AgentRoutingRule {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId   String         @map("agent_id") @db.Uuid
+  kind      AgentRouteKind
+  value     String         @db.VarChar(120)
+  priority  Int            @default(0)
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  agent AiAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, priority])
+  @@index([kind, value])
+  @@map("agent_routing_rules")
+}
+
+/// Sessão de conversa atendida por um agente.
+///   - `kind=production` → conversationId+leadId NOT NULL, persiste em
+///     `AgentMessage`, alimenta métricas, dispara handoff
+///   - `kind=simulation` → chat de teste no editor, sem efeito colateral
+///     (conversationId+leadId NULL)
+///
+/// `versionId` registra qual versão do agente atendeu — útil pra debug
+/// ("essa resposta saiu na v3 ou na v4?"). `endedAt` NULL = sessão ativa.
+model AgentSession {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String           @map("workspace_id") @db.Uuid
+  agentId        String           @map("agent_id") @db.Uuid
+  versionId      String?          @map("version_id") @db.Uuid
+  conversationId String?          @map("conversation_id") @db.Uuid
+  leadId         String?          @map("lead_id") @db.Uuid
+  kind           AgentSessionKind @default(production)
+  startedAt      DateTime         @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt        DateTime?        @map("ended_at") @db.Timestamptz(6)
+  endedReason    String?          @map("ended_reason") @db.VarChar(64)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agent        AiAgent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  version      AgentVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  conversation Conversation?  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  lead         Lead?          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messages     AgentMessage[]
+
+  @@index([workspaceId, agentId, startedAt(sort: Desc)])
+  @@index([conversationId])
+  @@map("agent_sessions")
+}
+
+/// Log interno do diálogo IA (camada SESSÃO da memória 3 camadas).
+/// Append-only — sem UPDATE/DELETE policy. SEPARADO de `Message` (M9) porque
+/// inclui mensagens de simulation (não vão pro WhatsApp) e contabiliza
+/// tokens Claude.
+///
+/// `cacheReadInputTokens` ≠ 0 indica prompt caching efetivo
+/// (CLAUDE.md §6 — caching obrigatório no system+base estável).
+model AgentMessage {
+  id                       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId              String           @map("workspace_id") @db.Uuid
+  sessionId                String           @map("session_id") @db.Uuid
+  direction                MessageDirection
+  body                     String
+  model                    String?          @db.VarChar(64)
+  inputTokens              Int?             @map("input_tokens")
+  outputTokens             Int?             @map("output_tokens")
+  cacheReadInputTokens     Int?             @map("cache_read_input_tokens")
+  cacheCreationInputTokens Int?             @map("cache_creation_input_tokens")
+  createdAt                DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  session   AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("agent_messages")
+}
+
+/// Resumo persistente do lead (camada LEAD da memória 3 camadas).
+/// Compartilhado entre agentes do workspace — lead atende com agente A,
+/// resumo é visto pelo agente B na próxima sessão. Atualizado por job
+/// após cada interação (M11#2 background).
+model LeadSummary {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String   @map("workspace_id") @db.Uuid
+  leadId            String   @unique @map("lead_id") @db.Uuid
+  summary           String   @default("")
+  updatedByAgentId  String?  @map("updated_by_agent_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lead           Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  updatedByAgent AiAgent?  @relation(fields: [updatedByAgentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@map("lead_summaries")
+}
+
+/// 5 campos estruturados do "Cérebro da Empresa" (PRD §3.9). Singleton por
+/// workspace (UNIQUE em workspaceId). Mudança em campo re-gera chunks
+/// `source=structured_field` via job (M11#4).
+model KnowledgeBaseField {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @unique @map("workspace_id") @db.Uuid
+  about       String   @default("")
+  products    String   @default("")
+  faq         String   @default("")
+  scripts     String   @default("")
+  policy      String   @default("")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("knowledge_base_fields")
+}
+
+/// Documento uploadado pro Cérebro (PDF/DOC/DOCX/TXT/MD, ≤ 10MB). Arquivo
+/// vive em Supabase Storage (`storageBucket`/`storagePath`); aqui só
+/// metadata + status do pipeline (uploading → processing → processed | failed).
+/// Soft-delete via `deletedAt` (cleanup de órfãos no Storage via pg_cron em M13).
+model KnowledgeDocument {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String             @map("workspace_id") @db.Uuid
+  name           String             @db.VarChar(255)
+  kind           KnowledgeDocKind
+  sizeBytes      Int                @map("size_bytes")
+  status         KnowledgeDocStatus @default(uploading)
+  storageBucket  String             @default("knowledge-base") @map("storage_bucket") @db.VarChar(64)
+  storagePath    String             @map("storage_path")
+  errorDetail    String?            @map("error_detail")
+  uploadedById   String?            @map("uploaded_by_id") @db.Uuid
+  processedAt    DateTime?          @map("processed_at") @db.Timestamptz(6)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt      DateTime?          @map("deleted_at") @db.Timestamptz(6)
+
+  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  uploadedBy User?            @relation("KnowledgeDocumentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  chunks     KnowledgeChunk[]
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, status])
+  @@index([workspaceId, deletedAt])
+  @@map("knowledge_documents")
+}
+
+/// Pedaço de texto pra busca semântica. Discriminado via `source`:
+///   - `document` → `documentId` NOT NULL, `structuredField` NULL
+///   - `structured_field` → `documentId` NULL, `structuredField` em
+///     {about|products|faq|scripts|policy}
+///
+/// SEM unique — re-chunking gera rows novas (delete-and-insert em transação).
+model KnowledgeChunk {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String              @map("workspace_id") @db.Uuid
+  documentId      String?             @map("document_id") @db.Uuid
+  source          KnowledgeSourceKind
+  structuredField String?             @map("structured_field") @db.VarChar(32)
+  content         String
+  tokens          Int                 @default(0)
+  chunkIndex      Int                 @default(0) @map("chunk_index")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace  Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document   KnowledgeDocument?  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  embedding  KnowledgeEmbedding?
+
+  @@index([workspaceId])
+  @@index([documentId])
+  @@map("knowledge_chunks")
+}
+
+/// Embedding vetorial 1536-dim (text-embedding-3-small da OpenAI) por chunk.
+/// Separado pra:
+///   1. Permitir re-embed (mudou de modelo) sem rewrite dos chunks
+///   2. Isolar HNSW index numa tabela menor
+///
+/// `workspaceId` duplicado pra que top-K filtre antes do ORDER BY (HNSW +
+/// WHERE workspaceId é mais eficiente que JOIN com chunks).
+///
+/// **Tipo `embedding`**: Prisma 5 não tipa `vector(N)` nativamente — usamos
+/// `Unsupported` pra que o client conheça a coluna mas leitura/escrita só
+/// via `$queryRaw`/`$executeRaw` (que é o que pgvector exige pra `<=>`).
+model KnowledgeEmbedding {
+  id          String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  chunkId     String                       @unique @map("chunk_id") @db.Uuid
+  workspaceId String                       @map("workspace_id") @db.Uuid
+  embedding   Unsupported("vector(1536)")
+  model       String                       @default("text-embedding-3-small") @db.VarChar(64)
+  createdAt   DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chunk     KnowledgeChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@map("knowledge_embeddings")
+}
+
+/// Metering cross-feature de uso de IA (M11#2). Append-only — sem policy
+/// UPDATE/DELETE. `cost_micros` é USD × 10^6 (bigint) pra evitar float drift
+/// em SUM. `entity_kind`/`entity_id` opcionais — discriminam qual entidade
+/// originou o uso (`agent_session`/`agent_message`/`knowledge_document`/
+/// `lead_summary`). Sem FK declarada pra evitar cascade pesada + permitir
+/// entity_kind novo sem migration.
+model UsageEvent {
+  id                       String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId              String         @map("workspace_id") @db.Uuid
+  eventKind                UsageEventKind @map("event_kind")
+  feature                  String         @db.VarChar(32)
+  model                    String         @db.VarChar(64)
+  inputTokens              Int            @default(0) @map("input_tokens")
+  outputTokens             Int            @default(0) @map("output_tokens")
+  cacheReadInputTokens     Int            @default(0) @map("cache_read_input_tokens")
+  cacheCreationInputTokens Int            @default(0) @map("cache_creation_input_tokens")
+  costMicros               BigInt         @default(0) @map("cost_micros")
+  entityKind               String?        @map("entity_kind") @db.VarChar(32)
+  entityId                 String?        @map("entity_id") @db.Uuid
+  createdAt                DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([workspaceId, eventKind, createdAt(sort: Desc)])
+  @@index([entityKind, entityId])
+  @@map("usage_events")
 }

@@ -13,8 +13,8 @@ import {
   cn,
 } from '@papopro/ui';
 
+import { updateAgentDraftAction } from '../actions';
 import { AGENT_TONES } from '../schemas';
-import { updateAgent } from '../store';
 import type { Agent, AgentTone } from '../types';
 
 /**
@@ -47,14 +47,20 @@ export function AgentPersonaFields({ agent }: AgentPersonaFieldsProps) {
     setPersona(agent.persona);
   }, [agent.persona]);
 
+  // Debounce do persona pra evitar Server Action a cada keystroke.
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   function handlePersonaChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const next = e.target.value;
     setPersona(next);
-    updateAgent(agent.id, { persona: next });
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void updateAgentDraftAction(agent.id, { persona: next });
+    }, 600);
   }
 
-  function handleToneChange(value: string) {
-    updateAgent(agent.id, { tone: value as AgentTone });
+  async function handleToneChange(value: string) {
+    await updateAgentDraftAction(agent.id, { tone: value as AgentTone });
   }
 
   const personaLen = persona.length;

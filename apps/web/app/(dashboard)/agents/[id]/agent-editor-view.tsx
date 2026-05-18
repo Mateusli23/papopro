@@ -14,12 +14,16 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  EmptyState,
   Input,
-  PageHeader,
 } from '@papopro/ui';
-import { ArrowLeft, Bot, Copy, History, MoreVertical, Save, Trash2 } from '@papopro/ui/icons';
+import { ArrowLeft, Copy, History, MoreVertical, Save, Trash2 } from '@papopro/ui/icons';
 
+import {
+  deleteAgentAction,
+  duplicateAgentAction,
+  saveAgentVersionAction,
+  updateAgentDraftAction,
+} from '@/features/agents/actions';
 import { AgentHandoffPanel } from '@/features/agents/components/agent-handoff-panel';
 import { AgentMetricsPanel } from '@/features/agents/components/agent-metrics-panel';
 import { AgentPersonaFields } from '@/features/agents/components/agent-persona-fields';
@@ -29,99 +33,84 @@ import { AgentSimulationChat } from '@/features/agents/components/agent-simulati
 import { AgentStatusBadge } from '@/features/agents/components/agent-status-badge';
 import { AgentStatusToggle } from '@/features/agents/components/agent-status-toggle';
 import { AgentVersionHistorySheet } from '@/features/agents/components/agent-version-history-sheet';
-import {
-  deleteAgent,
-  duplicateAgent,
-  saveVersion,
-  updateAgent,
-  useAgent,
-} from '@/features/agents/store';
+import type { SimulationStateUI } from '@/features/agents/queries';
+import type { Agent } from '@/features/agents/types';
 
 /**
- * `/agents/[id]` — editor do agente IA.
+ * `/agents/[id]` — editor do agente IA (M11#3).
  *
- * Layout: header com título + status + ações ("Salvar versão", "Histórico",
- * dropdown extras); corpo em 2 colunas no desktop (prompt + persona + futuros
- * panels do passo 9 ocupam 2/3, métricas 1/3) e empilhado no mobile.
+ * Server Component pai (`page.tsx`) faz fetch via `getAgentDetailById` +
+ * `getActiveSimulationState`. Aqui recebemos como props e cada panel chama
+ * Server Actions diretamente.
  *
- * Quando o ID não bate com nenhum agente, mostra EmptyState com link de volta.
- *
- * Em M11 lê via Server Component + Prisma; a forma do view permanece — o
- * `useAgent(id)` vira `agent: Agent` prop.
+ * Mutations no body do header (`saveAgentVersionAction`, `duplicateAgentAction`,
+ * `deleteAgentAction`, `updateAgentDraftAction`) sobem aqui pra centralizar
+ * roteamento/router.refresh. Cada panel especializado faz o resto.
  */
 
 interface AgentEditorViewProps {
-  agentId: string;
+  agent: Agent;
+  initialSimulationState: SimulationStateUI | null;
+  callerRole: string;
 }
 
-export function AgentEditorView({ agentId }: AgentEditorViewProps) {
+export function AgentEditorView({
+  agent,
+  initialSimulationState,
+  callerRole,
+}: AgentEditorViewProps) {
   const router = useRouter();
-  const agent = useAgent(agentId);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const canDelete = callerRole === 'Owner' || callerRole === 'Admin';
 
-  if (!agent) {
-    return (
-      <div className="container mx-auto flex flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <PageHeader
-          title="Agente não encontrado"
-          description="O link pode estar quebrado ou o agente foi excluído."
-        />
-        <EmptyState
-          icon={Bot}
-          title="Sem agente por aqui"
-          description="Volte pra lista pra ver os agentes disponíveis."
-          action={
-            <Button asChild>
-              <Link href="/agents">
-                <ArrowLeft className="size-4" />
-                Voltar pra agentes
-              </Link>
-            </Button>
-          }
-        />
-      </div>
-    );
-  }
-
-  function handleSaveVersion() {
+  async function handleSaveVersion() {
     setSaving(true);
-    // Async-like UX — saveVersion é síncrono mas damos feedback de "salvando".
-    setTimeout(() => {
-      const created = saveVersion(agent!.id, {});
-      setSaving(false);
-      if (created) {
-        toast.success(
-          `Versão v${created.versionNumber} salva — versão anterior preservada no histórico.`,
-          { duration: 4000 },
-        );
-      }
-    }, 200);
-  }
-
-  function handleDuplicate() {
-    const dup = duplicateAgent(agent!.id);
-    if (dup) {
-      toast.success(`"${dup.name}" criada em modo de teste.`, { duration: 3500 });
-      router.push(`/agents/${dup.id}`);
-    }
-  }
-
-  function handleDelete() {
-    // TODO(M5+): AlertDialog Radix em vez de window.confirm — paridade com
-    // cadences. Funcional o suficiente pra demo mockada.
-    if (!confirm(`Excluir o agente "${agent!.name}"? Essa ação não pode ser desfeita.`)) {
+    const result = await saveAgentVersionAction(agent.id, {});
+    setSaving(false);
+    if (!result.ok) {
+      toast.error(result.error);
       return;
     }
-    const ok = deleteAgent(agent!.id);
-    if (ok) {
-      toast.success('Agente excluído.', { duration: 3500 });
-      router.push('/agents');
-    }
+    toast.success('Versão salva — versão anterior preservada no histórico.', {
+      duration: 4000,
+    });
+    router.refresh();
   }
 
+  async function handleDuplicate() {
+    const result = await duplicateAgentAction(agent.id);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`"${agent.name} (cópia)" criada em modo de teste.`, { duration: 3500 });
+    router.push(`/agents/${result.id}`);
+    router.refresh();
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Excluir o agente "${agent.name}"? Essa ação não pode ser desfeita.`)) {
+      return;
+    }
+    const result = await deleteAgentAction(agent.id);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success('Agente excluído.', { duration: 3500 });
+    router.push('/agents');
+    router.refresh();
+  }
+
+  // Debounce do name pra evitar Server Action a cada keystroke.
+  const nameDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   function handleNameChange(e: React.ChangeEvent<HTMLInputElement>) {
-    updateAgent(agent!.id, { name: e.target.value });
+    const next = e.target.value;
+    if (nameDebounceRef.current) clearTimeout(nameDebounceRef.current);
+    nameDebounceRef.current = setTimeout(() => {
+      void updateAgentDraftAction(agent.id, { name: next });
+    }, 600);
   }
 
   const currentVersion = agent.versions.find((v) => v.id === agent.currentVersionId);
@@ -148,7 +137,7 @@ export function AgentEditorView({ agentId }: AgentEditorViewProps) {
             </div>
             <div className="flex flex-col gap-1">
               <Input
-                value={agent.name}
+                defaultValue={agent.name}
                 onChange={handleNameChange}
                 className="text-title focus-visible:bg-muted/50 h-auto border-none bg-transparent p-0 font-semibold focus-visible:px-2"
               />
@@ -188,13 +177,17 @@ export function AgentEditorView({ agentId }: AgentEditorViewProps) {
                 <DropdownMenuItem onClick={handleDuplicate}>
                   <Copy className="size-4" /> Duplicar agente
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={handleDelete}
-                  className="text-destructive focus:bg-destructive/10 focus:text-destructive"
-                >
-                  <Trash2 className="size-4" /> Excluir
-                </DropdownMenuItem>
+                {canDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={handleDelete}
+                      className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+                    >
+                      <Trash2 className="size-4" /> Excluir
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -208,7 +201,7 @@ export function AgentEditorView({ agentId }: AgentEditorViewProps) {
           <AgentPersonaFields agent={agent} />
           <AgentRoutingPanel agent={agent} />
           <AgentHandoffPanel agent={agent} />
-          <AgentSimulationChat agent={agent} />
+          <AgentSimulationChat agent={agent} initialState={initialSimulationState} />
         </div>
 
         <div className="flex flex-col gap-4 lg:col-span-1">
