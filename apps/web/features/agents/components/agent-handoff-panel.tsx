@@ -4,7 +4,7 @@ import * as React from 'react';
 
 import { Card, Input, Label, Switch, cn } from '@papopro/ui';
 
-import { updateHandoffTrigger } from '../store';
+import { updateHandoffTriggerAction } from '../actions';
 import type { Agent, HandoffTrigger, HandoffTriggerKind } from '../types';
 
 /**
@@ -107,20 +107,20 @@ function HandoffRow({ agentId, trigger }: HandoffRowProps) {
     }
   }, [canonicalKeywords]);
 
-  function handleToggle(checked: boolean) {
-    updateHandoffTrigger(agentId, {
+  async function handleToggle(checked: boolean) {
+    await updateHandoffTriggerAction(agentId, {
       kind: trigger.kind,
       enabled: checked,
       config: trigger.config,
     });
   }
 
-  function handleKeywordsBlur() {
+  async function handleKeywordsBlur() {
     const keywords = keywordsRaw
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-    updateHandoffTrigger(agentId, {
+    await updateHandoffTriggerAction(agentId, {
       kind: trigger.kind,
       enabled: trigger.enabled,
       config: { ...trigger.config, keywords },

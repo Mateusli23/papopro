@@ -7,7 +7,7 @@ import { Trash2 } from '@papopro/ui/icons';
 
 import { getStageName } from '@/lib/fixtures/pipelines';
 
-import { deleteRoute } from '../store';
+import { deleteRouteAction } from '../actions';
 import type { AgentRoute, RouteKind } from '../types';
 
 /**
@@ -40,8 +40,8 @@ interface AgentRouteRowProps {
 }
 
 export function AgentRouteRow({ agentId, route, index }: AgentRouteRowProps) {
-  function handleDelete() {
-    deleteRoute(agentId, route.id);
+  async function handleDelete() {
+    await deleteRouteAction(agentId, route.id);
   }
 
   // Pra `kind === 'stage'`, formata o stageId pra nome legível.

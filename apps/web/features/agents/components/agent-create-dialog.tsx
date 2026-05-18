@@ -23,8 +23,8 @@ import { ChevronLeft, Loader2 } from '@papopro/ui/icons';
 
 import { getAgentTemplate } from '@/lib/fixtures/agent-templates';
 
+import { createAgentAction } from '../actions';
 import { agentCreateSchema, type AgentCreateInput } from '../schemas';
-import { createAgent } from '../store';
 import type { AgentTemplateKey } from '../types';
 
 import { AgentTemplatePicker } from './agent-template-picker';
@@ -99,14 +99,19 @@ export function AgentCreateDialog({ open, onOpenChange }: AgentCreateDialogProps
     setStep('template');
   }
 
-  function onSubmit(data: AgentCreateInput) {
-    const created = createAgent(data);
+  async function onSubmit(data: AgentCreateInput) {
+    const result = await createAgentAction(data);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
     toast.success(
-      `${created.name} criado em modo de teste — revise o prompt e ative quando estiver pronto.`,
+      `${data.name} criado em modo de teste — revise o prompt e ative quando estiver pronto.`,
       { duration: 5000 },
     );
     onOpenChange(false);
-    router.push(`/agents/${created.id}`);
+    router.push(`/agents/${result.id}`);
+    router.refresh();
   }
 
   return (
