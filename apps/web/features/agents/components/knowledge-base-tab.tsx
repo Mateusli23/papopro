@@ -147,12 +147,12 @@ export function KnowledgeBaseTab({ initialKb, callerRole }: KnowledgeBaseTabProp
           <div className="flex flex-col gap-1">
             <h3 className="text-body font-semibold">Arquivos</h3>
             <p className="text-caption text-muted-foreground/80">
-              Upload + extração + chunking + embedding em pgvector entra em M11#4. No momento esta
-              seção fica pra preview do estado vazio.
+              Documentos do workspace — extração + chunking + embedding em pgvector. Todos os
+              agentes consultam via RAG no chat de simulação e (em M11#5) no atendimento real.
             </p>
           </div>
 
-          <KnowledgeUploadZone />
+          {canEdit && <KnowledgeUploadZone />}
           <KnowledgeFileList files={kb.files} />
         </Card>
       </div>

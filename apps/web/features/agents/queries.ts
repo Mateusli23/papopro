@@ -252,14 +252,44 @@ export async function getAgentDetailById(
  * `knowledge_base_fields` não existe). UI seeda valores vazios na primeira
  * edição via `updateKnowledgeBaseFieldAction` (upsert).
  */
+/** Mapeia kind do DB (5 valores) pro `KnowledgeFile.kind` da UI (3 valores M5). */
+function serializeDocKind(kind: 'pdf' | 'doc' | 'docx' | 'txt' | 'md'): KnowledgeFile['kind'] {
+  if (kind === 'pdf') return 'pdf';
+  if (kind === 'doc' || kind === 'docx') return 'doc';
+  return 'txt';
+}
+
+/** Mapeia status DB (4 valores M11#4) pro `KnowledgeFile.status` UI (2 valores M5).
+ *  `uploading`/`failed` viram `processing` — UI M11#4 já lê `errorDetail`
+ *  diretamente do shape estendido se quiser distinguir. */
+function serializeDocStatus(
+  status: 'uploading' | 'processing' | 'processed' | 'failed',
+): KnowledgeFile['status'] {
+  return status === 'processed' ? 'processed' : 'processing';
+}
+
 export async function getKnowledgeBaseFields(workspaceId: string): Promise<KnowledgeBase | null> {
   return withWorkspace(workspaceId, async (tx) => {
-    const row = await tx.knowledgeBaseField.findUnique({
-      where: { workspaceId },
-    });
+    const [row, docs] = await Promise.all([
+      tx.knowledgeBaseField.findUnique({ where: { workspaceId } }),
+      tx.knowledgeDocument.findMany({
+        where: { workspaceId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const files: KnowledgeFile[] = docs.map((d) => ({
+      id: d.id,
+      name: d.name,
+      sizeBytes: d.sizeBytes,
+      kind: serializeDocKind(d.kind as 'pdf' | 'doc' | 'docx' | 'txt' | 'md'),
+      status: serializeDocStatus(d.status as 'uploading' | 'processing' | 'processed' | 'failed'),
+      uploadedAt: d.createdAt.toISOString(),
+    }));
+
     if (!row) {
-      // Workspace ainda sem KB — UI trata como vazio. Retornamos shape válido
-      // pra evitar guards everywhere no client.
+      // Workspace ainda sem campos estruturados — UI trata como vazio. Files
+      // já vem populado (pode ter docs sem campos, ou vice-versa).
       return {
         workspaceId,
         about: '',
@@ -267,7 +297,7 @@ export async function getKnowledgeBaseFields(workspaceId: string): Promise<Knowl
         faq: '',
         scripts: '',
         policy: '',
-        files: [],
+        files,
         updatedAt: new Date().toISOString(),
       };
     }
@@ -278,7 +308,7 @@ export async function getKnowledgeBaseFields(workspaceId: string): Promise<Knowl
       faq: row.faq,
       scripts: row.scripts,
       policy: row.policy,
-      files: [] as KnowledgeFile[], // M11#4 popula
+      files,
       updatedAt: row.updatedAt.toISOString(),
     };
   });

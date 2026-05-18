@@ -38,6 +38,7 @@ import { countAgents, getNextRouteMatch } from '@/features/agents/transforms';
 import type { Agent } from '@/features/agents/types';
 import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
 import { AGENT_TEMPLATES, getAgentTemplate } from '@/lib/fixtures/agent-templates';
+import { chunkText, estimateTokens } from '@/lib/knowledge/chunking';
 
 interface CheckResult {
   group: string;
@@ -373,6 +374,83 @@ export function GET() {
       if (typeof s !== 'string' || s.length < 50) return `tone=${tone} produced bad output`;
     }
     return true;
+  });
+
+  // ── M11#4: chunking helper ──────────────────────────────────────────────
+  t = run('chunking-m11-4', results);
+
+  t('chunkText vazio retorna []', () => chunkText('').length === 0);
+  t('chunkText apenas whitespace retorna []', () => chunkText('   \n\n\t  ').length === 0);
+
+  t('chunkText texto pequeno retorna 1 chunk', () => {
+    const chunks = chunkText('Texto curto que cabe num chunk só.');
+    return chunks.length === 1 && chunks[0]?.content.includes('Texto curto') === true;
+  });
+
+  t('chunkText respeita target chars com texto grande', () => {
+    // Texto de 10k chars com parágrafos. Target=2800 → 3-4 chunks esperados.
+    const para = 'a'.repeat(500);
+    const text = Array(20).fill(para).join('\n\n');
+    const chunks = chunkText(text);
+    return (
+      chunks.length >= 3 && chunks.length <= 6 && chunks.every((c) => c.content.length <= 8000)
+    );
+  });
+
+  t('chunkText preserva ordem (chunkIndex sequencial)', () => {
+    const text = Array(10).fill('Parágrafo de teste com algum conteúdo.'.repeat(50)).join('\n\n');
+    const chunks = chunkText(text);
+    for (let i = 0; i < chunks.length; i++) {
+      if (chunks[i]?.chunkIndex !== i) return `chunkIndex[${i}] = ${chunks[i]?.chunkIndex}`;
+    }
+    return true;
+  });
+
+  t('chunkText respeita maxChars hard cap (8000)', () => {
+    // Texto monolítico sem parágrafos nem sentenças → cai em char split.
+    const text = 'x'.repeat(20000);
+    const chunks = chunkText(text);
+    return chunks.every((c) => c.content.length <= 8000);
+  });
+
+  t('chunkText adiciona overlap entre chunks consecutivos (default)', () => {
+    const para1 = 'AAAA'.repeat(750); // ~3000 chars
+    const para2 = 'BBBB'.repeat(750);
+    const chunks = chunkText(`${para1}\n\n${para2}`);
+    if (chunks.length < 2) return `só ${chunks.length} chunks — não dá pra testar overlap`;
+    // Segundo chunk deve começar com tail do primeiro (AAAA...) antes do BBBB.
+    const second = chunks[1]?.content ?? '';
+    return second.startsWith('AAAA') || `second starts with "${second.slice(0, 8)}"`;
+  });
+
+  t('chunkText overlapChars=0 desliga overlap', () => {
+    const para1 = 'A'.repeat(3000);
+    const para2 = 'B'.repeat(3000);
+    const chunks = chunkText(`${para1}\n\n${para2}`, { overlapChars: 0 });
+    if (chunks.length < 2) return 'esperado 2+ chunks';
+    return chunks[1]?.content.startsWith('B') === true;
+  });
+
+  t('chunkText preenche tokens estimados', () => {
+    const chunks = chunkText('Texto pra estimar tokens. '.repeat(50));
+    return chunks.every((c) => c.tokens > 0 && c.tokens < c.content.length);
+  });
+
+  t('estimateTokens retorna ~chars/4', () => {
+    // 100 chars → ~25 tokens.
+    const tokens = estimateTokens('a'.repeat(100));
+    return tokens === 25;
+  });
+
+  t('chunkText texto com parágrafos curtos consolida no mesmo chunk', () => {
+    const text = 'Curto 1.\n\nCurto 2.\n\nCurto 3.\n\nCurto 4.\n\nCurto 5.';
+    const chunks = chunkText(text);
+    // Todos os parágrafos curtos cabem num chunk só (target=2800).
+    return (
+      chunks.length === 1 &&
+      chunks[0]?.content.includes('Curto 1') === true &&
+      chunks[0]?.content.includes('Curto 5') === true
+    );
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────
