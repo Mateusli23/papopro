@@ -8,7 +8,7 @@ import { Switch } from '@papopro/ui';
 
 import { showUndoableToast } from '@/lib/utils/show-undoable-toast';
 
-import { setAgentStatus, toggleAgentStatus } from '../store';
+import { setAgentStatusAction, toggleAgentStatusAction } from '../actions';
 import type { Agent } from '../types';
 
 /**
@@ -32,27 +32,24 @@ interface AgentStatusToggleProps {
 export function AgentStatusToggle({ agent }: AgentStatusToggleProps) {
   const checked = agent.status === 'active';
 
-  function handleChange() {
-    const result = toggleAgentStatus(agent.id);
-    if (result.limitReached) {
-      toast.error(
-        'Limite do plano Pro IA: até 3 agentes ativos ao mesmo tempo. Pause um dos ativos pra liberar espaço.',
-        { duration: 5000 },
-      );
+  async function handleChange() {
+    // Snapshot do status atual ANTES de chamar — usamos pra undo restaurar
+    // exatamente o estado anterior (testing/paused/active).
+    const previous = agent.status;
+    const result = await toggleAgentStatusAction(agent.id);
+    if (!result.ok) {
+      toast.error(result.error, { duration: 5000 });
       return;
     }
-    if (!result.agent || !result.previousStatus) return;
-    const previous = result.previousStatus;
-    const next = result.agent.status;
+    // Status alvo após toggle: active → paused | (testing|paused) → active.
+    const next = checked ? 'paused' : 'active';
     if (next === 'active') {
       showUndoableToast(
         <span>
           <strong>{agent.name}</strong> está ativo — leads novos passam a ser atendidos.
         </span>,
         () => {
-          // Restaura status exato anterior (`testing` ou `paused`), não
-          // sempre `paused` — review HIGH M5#5.
-          setAgentStatus(agent.id, previous);
+          void setAgentStatusAction(agent.id, previous);
         },
       );
     } else {
@@ -61,7 +58,7 @@ export function AgentStatusToggle({ agent }: AgentStatusToggleProps) {
           <strong>{agent.name}</strong> pausado — sem novas respostas até reativar.
         </span>,
         () => {
-          setAgentStatus(agent.id, previous);
+          void setAgentStatusAction(agent.id, previous);
         },
       );
     }

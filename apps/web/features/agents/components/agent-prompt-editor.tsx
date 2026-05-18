@@ -4,7 +4,7 @@ import * as React from 'react';
 
 import { Label, Textarea, cn } from '@papopro/ui';
 
-import { updateAgent } from '../store';
+import { updateAgentDraftAction } from '../actions';
 import type { Agent } from '../types';
 
 import { AgentPromptPlaceholders } from './agent-prompt-placeholders';
@@ -22,7 +22,9 @@ import { AgentPromptPlaceholders } from './agent-prompt-placeholders';
  */
 
 const PROMPT_MAX = 4000;
-const SAVE_DEBOUNCE_MS = 250;
+// Debounce maior em M11#3 (Server Action vai pro DB; 250ms causaria N
+// chamadas redundantes). 800ms balanceia UX e custo de roundtrip.
+const SAVE_DEBOUNCE_MS = 800;
 
 interface AgentPromptEditorProps {
   agent: Agent;
@@ -64,7 +66,7 @@ export function AgentPromptEditor({ agent }: AgentPromptEditorProps) {
     // Debounce — store update otimista mas evita re-render por keystroke.
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
-      updateAgent(agent.id, { prompt: next });
+      void updateAgentDraftAction(agent.id, { prompt: next });
     }, SAVE_DEBOUNCE_MS);
   }
 

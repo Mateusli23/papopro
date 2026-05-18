@@ -1751,15 +1751,15 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
 
-| Sub-PR    | Escopo                                                                                                                                                                                                                     | Branch            | Status      |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
-| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                            | `m11-ai-agents`   | ✅ entregue |
-| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background. | `m11-2-ai-lib`    | ✅ entregue |
-| **M11#3** | UI conectada — Server Actions `createAgent`/`saveVersion`/`activate`/`toggleStatus` + roteamento; editor M5 hidrata do servidor. Versionamento + rollback com diff. Chat de simulação chama Claude real.                   | `m11-3-ui-wiring` | ⏳ pendente |
-| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                                  | `m11-4-knowledge` | ⏳ pendente |
-| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                          | `m11-5-router`    | ⏳ pendente |
-| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).          | `m11-6-handoffs`  | ⏳ pendente |
-| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).      | `m11-7-metrics`   | ⏳ pendente |
+| Sub-PR    | Escopo                                                                                                                                                                                                                          | Branch            | Status      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                 | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.      | `m11-2-ai-lib`    | ✅ entregue |
+| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados. | `m11-3-ui-wiring` | ✅ entregue |
+| **M11#4** | Cérebro da Empresa — campos estruturados + upload PDF/DOC/DOCX/TXT/MD com Edge Function de extração + chunking + embedding em background.                                                                                       | `m11-4-knowledge` | ⏳ pendente |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                               | `m11-5-router`    | ⏳ pendente |
+| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).               | `m11-6-handoffs`  | ⏳ pendente |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).           | `m11-7-metrics`   | ⏳ pendente |
 
 **Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
 
@@ -1880,6 +1880,57 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. Validar enum: `SELECT typname FROM pg_type WHERE typname = 'usage_event_kind'`.
 3. Configurar `ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env quando entrar M11#3 (M11#2 sozinho não usa as chaves em runtime — smoke não bate API).
 4. **Custo $0 antes de M11#3** — esta entrega só prepara a biblioteca.
+
+### M11#3 — UI wiring + Server Actions chamando Claude real (entregue 2026-05-17)
+
+**Branch:** `m11-3-ui-wiring`
+
+**Objetivo:** trocar o store in-memory de M5 (que rodava sobre fixtures `FAKE_AGENTS`/`FAKE_KNOWLEDGE_BASE`) por persistência real via Server Actions sobre o schema M11#1, hidratar a UI a partir do servidor (Server Components), e conectar o chat de simulação ao Claude real via `lib/ai/` (M11#2). **Sub-PR onde o custo Anthropic/OpenAI passa de $0 a $X** — cada uso do simulation chat consome tokens.
+
+**Decisões fechadas:**
+
+- **Substituir o store, não coexistir.** `features/agents/store.ts` e fixtures (`FAKE_AGENTS`, `FAKE_KNOWLEDGE_BASE`) deletados — workspaces começam vazios (estado vazio orienta criação). Templates (`AGENT_TEMPLATES`) ficam — usados por `createAgentAction` pra materializar v1.
+- **Server Actions + `revalidatePath`, não TanStack Query.** Padrão M8/M10/M12. Componente Client chama Server Action → action revalidatePath → Server Component refetcha → re-passa via prop.
+- **Sem enforcement 3 agentes ativos no Pro IA.** Fica pra M11#7 (junto com métricas + `lib/limits.ts` billing-aware). Em M11#3 deixa qualquer quantidade.
+- **Métricas zeradas até M11#7.** `Agent.metrics` retorna `{ 0, 0, 0, 0 }` em queries serializer — VIEW Postgres real entra com M11#7 (agregando `agent_sessions` + `agent_messages`).
+- **Simulation = sandbox isolado.** `agent_session kind='simulation'` (CHECK constraint M11#1 garante `conversation_id`+`lead_id` NULL). Mensagens persistem em `agent_messages` pra rastreabilidade + tokens registrados em `usage_events`. "Nova simulação" fecha sessão atual (`ended_at = NOW()`).
+- **Memória 3 camadas em simulation:** session ✅, lead ❌ (sem `leadId`), empresa ✅ (Cérebro). `assembleContext` lida com `leadId=undefined` retornando `leadSummary: null`.
+- **`handoff_config` JSONB serializer:** `queries.ts:serializeHandoffConfig` materializa os 6 triggers (com defaults `enabled:false` quando JSONB não tem entrada). `manual` sempre começa enabled em `createAgentAction`.
+- **Cérebro upload de documentos fica pra M11#4.** M11#3 conecta apenas os 5 campos estruturados (`about`/`products`/`faq`/`scripts`/`policy`) via `updateKnowledgeBaseAction` (Owner/Admin only). Components `KnowledgeFileList`/`KnowledgeUploadZone` viraram stubs "em breve".
+- **Roteador runtime fica pra M11#5.** M11#3 só persiste as regras em `agent_routing_rules`; uazapi inbound → match → cria session production entra em M11#5.
+- **Handoffs em runtime ficam pra M11#6.** M11#3 só persiste o estado dos 6 triggers em `handoff_config`; lógica de "passar pra outro agente/humano" entra em M11#6.
+- **Custo $0.05-$0.30 por turno de simulation** (Sonnet 4.6 default). UI mostra disclaimer no header do chat: "Chamada Claude real — não vai pro WhatsApp. Cada turno consome tokens".
+- **Erro propositivo em falta de API key:** action retorna "IA não configurada — verifique a chave Anthropic em Configurações." em vez de erro técnico.
+
+**Entregas:**
+
+- [x] [`apps/web/features/agents/queries.ts`](../apps/web/features/agents/queries.ts) (novo, ~280 linhas) — `listAgentsForWorkspace`, `getAgentDetailById`, `getKnowledgeBaseFields`, `getActiveSimulationState`. Serializer JSONB→UI (`serializeHandoffConfig`, `serializeAgent`) preserva contrato `features/agents/types.ts`.
+- [x] [`apps/web/features/agents/actions.ts`](../apps/web/features/agents/actions.ts) (novo, ~700 linhas) — **16 Server Actions**: `createAgentAction`, `updateAgentDraftAction`, `toggleAgentStatusAction`, `setAgentStatusAction`, `duplicateAgentAction`, `deleteAgentAction`, `saveAgentVersionAction`, `restoreAgentVersionAction`, `addRouteAction`, `updateRouteAction`, `deleteRouteAction`, `updateHandoffTriggerAction`, `updateKnowledgeBaseAction`, `simulateAgentMessageAction`, `endSimulationSessionAction`. RBAC (`requireRole`), `withWorkspace(tx)`, audit log na mesma tx, `revalidatePath`. Defense-in-depth (`workspaceId` em todo `where`).
+- [x] [`apps/web/lib/ai/build-system-prompt.ts`](../apps/web/lib/ai/build-system-prompt.ts) (novo) — helper puro que monta o 1º system block enviado ao Claude. Anti-overtrigger (sem "CRITICAL: YOU MUST"), 4 tons descritos, guardrails fixos pt-BR.
+- [x] [`apps/web/app/(dashboard)/agents/page.tsx`](<../apps/web/app/(dashboard)/agents/page.tsx>) — vira Server Component async, fetch via `listAgentsForWorkspace` + `getKnowledgeBaseFields`, passa via prop.
+- [x] [`apps/web/app/(dashboard)/agents/[id]/page.tsx`](<../apps/web/app/(dashboard)/agents/[id]/page.tsx>) — Server Component async, fetch via `getAgentDetailById` + `getActiveSimulationState`, 404 via `notFound()` quando id inválido ou agente deletado.
+- [x] [`apps/web/app/(dashboard)/agents/agents-view.tsx`](<../apps/web/app/(dashboard)/agents/agents-view.tsx>) + [`agent-editor-view.tsx`](<../apps/web/app/(dashboard)/agents/[id]/agent-editor-view.tsx>) — recebem dados via prop, removeram `useAgents`/`useAgent`. Editor sobe handlers de save/duplicate/delete + name debounce 600ms.
+- [x] **13 components refatorados** — todos os imports de `../store` trocados por `../actions`. Mutations passam por Server Actions; debounce 800ms no prompt editor, 600ms no persona. `KnowledgeFileList` + `KnowledgeUploadZone` viraram stubs (M11#4 implementa).
+- [x] [`apps/web/features/agents/components/agent-simulation-chat.tsx`](../apps/web/features/agents/components/agent-simulation-chat.tsx) — **substitui canned script** por chamada real `simulateAgentMessageAction`. Optimistic UI (mensagem do user aparece antes do response). Header com disclaimer de custo. "Nova simulação" chama `endSimulationSessionAction`.
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — re-escrito do zero. **52 checks** em 7 grupos (db-enums-m11: 9, audit-actions-m11: 8, db-handoff-config-shape-m11: 2, templates: 6, transforms-pure: 5, schemas: 12, build-system-prompt-m11-3: 10). Sem hit DB/API.
+- [x] **Cleanup:** `apps/web/features/agents/store.ts`, `apps/web/features/agents/hooks/use-simulation-script.ts`, `apps/web/lib/fixtures/agents.ts`, `apps/web/lib/fixtures/knowledge-base.ts` deletados. `agent-templates.ts` mantido (usado por `createAgentAction`).
+- [x] `pnpm db:generate` ✅, `pnpm typecheck` ✅, `pnpm lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` **52/52 verde** ✅, smoke `/api/smoke-test/ai` (M11#2) 31/31 sem regressão ✅.
+
+**Não-objetivos M11#3 (explícitos):**
+
+- Upload de documentos do Cérebro (PDF/DOC/DOCX/TXT/MD) + extração + chunking + embedding → **M11#4** (Edge Function)
+- Roteador runtime real (uazapi inbound → match → cria session production → despacha Claude) → **M11#5**
+- Handoffs agente↔agente + agente→humano em runtime → **M11#6**
+- Métricas reais por agente em `/reports` + enforcement 3 ativos no Pro IA → **M11#7**
+- Diff visual entre versões (era opcional em M11#3) → adiado pra M11#7
+- Real-time updates de simulação via SSE/Supabase Realtime → V2
+- E2E Playwright do flow "criar → conversar → ativar" → M13
+
+**Ops pós-deploy (vai no body do PR):**
+
+1. **`ANTHROPIC_API_KEY` + `OPENAI_API_KEY` no Vercel env — críticas a partir de M11#3.** Sem elas, `simulateAgentMessageAction` retorna erro propositivo e UI bloqueia o envio; outras actions (CRUD, versionamento, roteamento, handoff config, KB campos) funcionam normais.
+2. Migrations M11#1 + M11#2 já aplicadas (M11#3 não cria migration nova).
+3. **Custo $X começa aqui.** Cada simulation chat consome ~$0.05-$0.30/turno (Sonnet 4.6). Monitorar `usage_events` desde primeiro turno.
 
 ---
 

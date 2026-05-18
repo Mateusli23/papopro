@@ -2,34 +2,45 @@
 
 import * as React from 'react';
 
+import { toast } from 'react-hot-toast';
+
 import { AutoResizeTextarea, Button, Card, cn } from '@papopro/ui';
 import { Play, Send } from '@papopro/ui/icons';
 
-import { useSimulationScript } from '../hooks/use-simulation-script';
+import { endSimulationSessionAction, simulateAgentMessageAction } from '../actions';
+import type { SimulationStateUI, SimulationMessageUI } from '../queries';
 import type { Agent } from '../types';
 
 /**
- * Chat de simulação dentro do editor — vendedor testa o agente sem disparar
- * conversa real. Usa script canned do template (3-4 turnos pré-escritos)
- * via `useSimulationScript`.
+ * Chat de simulação dentro do editor — agora chama Claude REAL (M11#3).
  *
- * Layout: header com nome do agente e botão "Limpar"; corpo com bolhas
- * (estilo MessageBubble do Inbox); footer com AutoResizeTextarea +
- * botão enviar (Enter envia, Shift+Enter quebra linha).
+ * Vendedor testa o agente sem disparar conversa real. Persistido em
+ * `agent_sessions kind='simulation'` (CHECK constraint M11#1 garante
+ * isolamento de leads); `agent_messages` registra cada turno + tokens.
  *
- * `data-shortcut-ignore` no container — bloqueia `g + a` e outros atalhos
- * globais quando o vendedor está digitando aqui.
+ * **Custo:** cada mensagem consome Sonnet 4.6 (~3¢-30¢/turno). UI mostra
+ * disclaimer no header. Sem API key, action retorna erro propositivo
+ * "IA não configurada — verifique a chave Anthropic em Configurações."
  *
- * Layout vertical fixo de ~400px com scroll interno — não cresce indefinido.
+ * **Memória 3 camadas:** `assembleContext` é chamado server-side com
+ * `leadId=undefined` (simulation) — então Cérebro + sessão entram, lead
+ * summary fica null. Igual a um lead novo na primeira interação.
+ *
+ * **"Limpar"** chama `endSimulationSessionAction` que fecha a sessão atual;
+ * próxima mensagem cria sessão nova.
  */
 
 interface AgentSimulationChatProps {
   agent: Agent;
+  initialState: SimulationStateUI | null;
 }
 
-export function AgentSimulationChat({ agent }: AgentSimulationChatProps) {
-  const { messages, isTyping, exhausted, send, reset } = useSimulationScript(agent);
+export function AgentSimulationChat({ agent, initialState }: AgentSimulationChatProps) {
+  const [messages, setMessages] = React.useState<SimulationMessageUI[]>(
+    initialState?.messages ?? [],
+  );
   const [draft, setDraft] = React.useState('');
+  const [isTyping, setIsTyping] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll pra última mensagem.
@@ -41,18 +52,52 @@ export function AgentSimulationChat({ agent }: AgentSimulationChatProps) {
   }, [messages.length, isTyping]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // IME-safe: ignorar Enter durante composição de acentos pt-BR.
-    // `nativeEvent.isComposing` é a fonte canônica (compatível com Inbox).
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   }
 
-  function handleSend() {
-    if (!draft.trim()) return;
-    send(draft);
+  async function handleSend() {
+    const text = draft.trim();
+    if (!text || isTyping) return;
+
+    // Optimistic: adiciona msg do usuário imediatamente.
+    const optimisticUser: SimulationMessageUI = {
+      id: `local-${Date.now()}`,
+      direction: 'in',
+      body: text,
+      createdAt: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, optimisticUser]);
     setDraft('');
+    setIsTyping(true);
+
+    const result = await simulateAgentMessageAction(agent.id, { userMessage: text });
+    setIsTyping(false);
+
+    if (!result.ok) {
+      // Remove optimistic + mostra erro.
+      setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
+      toast.error(result.error, { duration: 5000 });
+      return;
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `assistant-${Date.now()}`,
+        direction: 'out',
+        body: result.assistantText,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }
+
+  async function handleReset() {
+    setMessages([]);
+    setDraft('');
+    await endSimulationSessionAction(agent.id);
   }
 
   return (
@@ -65,45 +110,47 @@ export function AgentSimulationChat({ agent }: AgentSimulationChatProps) {
       <header className="border-border flex items-center justify-between gap-3 border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <Play className="text-success size-4" aria-hidden />
-          <h3 className="text-body font-semibold">Testar no chat</h3>
+          <div className="flex flex-col">
+            <h3 className="text-body font-semibold">Testar no chat</h3>
+            <span className="text-caption text-muted-foreground/80">
+              Chamada Claude real — não vai pro WhatsApp. Cada turno consome tokens (Sonnet 4.6).
+            </span>
+          </div>
         </div>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => {
-            reset();
-            setDraft('');
-          }}
+          onClick={handleReset}
           disabled={messages.length === 0}
           className="text-caption"
         >
-          Limpar
+          Nova simulação
         </Button>
       </header>
 
       <div ref={scrollRef} className="bg-muted/30 flex h-80 flex-col gap-2 overflow-y-auto p-4">
         {messages.length === 0 && (
           <div className="text-caption text-muted-foreground/70 m-auto max-w-xs text-center">
-            Digite uma mensagem como se fosse um lead — o agente responde com base no template atual
-            ({agent.templateKey ?? 'em branco'}). Sem efeito real, é mock.
+            Digite uma mensagem como se fosse um lead — o agente responde com Claude real usando o
+            prompt e o Cérebro do workspace.
           </div>
         )}
 
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={cn('flex w-full', msg.direction === 'out' ? 'justify-end' : 'justify-start')}
+            className={cn('flex w-full', msg.direction === 'in' ? 'justify-end' : 'justify-start')}
           >
             <div
               className={cn(
                 'text-body max-w-[80%] whitespace-pre-line break-words rounded-2xl px-3 py-2',
-                msg.direction === 'out'
+                msg.direction === 'in'
                   ? 'bg-primary text-primary-foreground rounded-br-sm'
                   : 'bg-background text-foreground rounded-bl-sm border',
               )}
               role="article"
               aria-label={
-                msg.direction === 'out' ? 'Você (lead simulado)' : `${agent.name} (agente)`
+                msg.direction === 'in' ? 'Você (lead simulado)' : `${agent.name} (agente)`
               }
             >
               {msg.body}
@@ -120,12 +167,6 @@ export function AgentSimulationChat({ agent }: AgentSimulationChatProps) {
                 <span className="animate-pulse [animation-delay:400ms]">●</span>
               </span>
             </div>
-          </div>
-        )}
-
-        {exhausted && (
-          <div className="text-caption text-muted-foreground/70 mt-2 text-center italic">
-            Roteiro de simulação esgotado — clique em Limpar pra recomeçar.
           </div>
         )}
       </div>

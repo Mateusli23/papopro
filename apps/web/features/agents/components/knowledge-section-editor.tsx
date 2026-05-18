@@ -6,7 +6,7 @@ import { toast } from 'react-hot-toast';
 
 import { Label, Textarea, cn } from '@papopro/ui';
 
-import { updateKbSection } from '../store';
+import { updateKnowledgeBaseAction } from '../actions';
 import type { KnowledgeBase } from '../types';
 
 /**
@@ -37,6 +37,8 @@ interface KnowledgeSectionEditorProps {
   description: string;
   placeholder: string;
   value: string;
+  /** `true` quando caller não é Owner/Admin — bloqueia edição. */
+  disabled?: boolean;
 }
 
 export function KnowledgeSectionEditor({
@@ -46,6 +48,7 @@ export function KnowledgeSectionEditor({
   description,
   placeholder,
   value,
+  disabled,
 }: KnowledgeSectionEditorProps) {
   const [draft, setDraft] = React.useState(value);
 
@@ -54,7 +57,7 @@ export function KnowledgeSectionEditor({
     setDraft(value);
   }, [value]);
 
-  function handleBlur() {
+  async function handleBlur() {
     if (draft === value) return;
     // Bloqueia save quando passa do limite — UI já estava pintando vermelho,
     // mas o valor era persistido silenciosamente (review MEDIUM M5#5).
@@ -65,7 +68,10 @@ export function KnowledgeSectionEditor({
       });
       return;
     }
-    updateKbSection({ [sectionKey]: draft });
+    const result = await updateKnowledgeBaseAction({ [sectionKey]: draft });
+    if (!result.ok) {
+      toast.error(result.error, { duration: 4000 });
+    }
   }
 
   const len = draft.length;
@@ -107,6 +113,7 @@ export function KnowledgeSectionEditor({
         rows={8}
         placeholder={placeholder}
         aria-invalid={overLimit ? true : undefined}
+        disabled={disabled}
         className="text-body font-mono"
       />
     </section>
