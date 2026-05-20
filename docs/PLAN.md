@@ -2178,7 +2178,30 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 1. **Nada novo de infra.** Sub-PR é puro código + smoke — não cria migration, Edge Function, cron, env var nem Storage bucket.
 2. **Métricas aparecem conforme o volume chega** — workspace sem sessões `kind='production'` (M11#5) vê tudo zerado / "—" no painel e em `/reports`.
 
-**Próximo passo:** **M11 completo** — 7/7 sub-PRs entregues. Falta o release `PR dev → main` cobrindo M11#6 + M11#7 (M11#1-#5 já em `main`). Depois, retomar **M12** (#2 trial, #3 Pro IA/Enterprise, #5 lockout, #6 métricas).
+**Próximo passo:** **M11 completo** — 7/7 sub-PRs entregues. Release `dev → main` registrado na seção abaixo.
+
+---
+
+## Release: M11 #6–#7 → main — handoffs + métricas (fecha M11, 20-mai-26)
+
+**Release que fecha o milestone M11.** Os dois últimos sub-PRs saem juntos em `PR dev → main`. M11 #1–#5 já estavam em `main` (releases anteriores).
+
+**Conteúdo do release:**
+
+| Sub-PR | Branch (deletada) | PR                                                   | Resumo                                                                                                                                                                                           |
+| ------ | ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| M11#6  | `m11-6-handoffs`  | [#89](https://github.com/Mateusli23/papopro/pull/89) | Handoffs agente↔agente (cap 1 hop) + agente→humano (6 gatilhos) + classificador de intenção Haiku + job de `lead_summaries` inline throttled. `conversations.ai_enabled`.                        |
+| M11#7  | `m11-7-metrics`   | [#90](https://github.com/Mateusli23/papopro/pull/90) | Métricas reais por agente (`$queryRaw` sobre `agent_sessions` + `agent_messages`) no painel do editor + seção "Agentes IA" em `/reports`. Enforcement do cap de agentes ativos (Free 1 / Pro 3). |
+
+**Milestone M11 completo** — Agentes IA + Cérebro da Empresa entregues ponta-a-ponta: configuração no editor, runtime (uazapi inbound → roteador → Claude → WhatsApp), handoffs agente↔agente/humano, e métricas/limites por plano.
+
+**Configuração pendente do operador pós-release:**
+
+1. **Migrations M11 pendentes de aplicação** — `m11_1_ai_agents_schema`, `m11_2_usage_events_schema`, `m11_4_knowledge_storage_setup`, `m11_6_handoffs` (ver ops das releases anteriores + M11#6). **M11#7 não adiciona migration.**
+2. **Sem env var, Edge Function ou cron novos em M11#7** — puro código + smoke.
+3. **Validação de integração das métricas** — o `$queryRaw` de `metrics.ts` não é exercido contra banco no CI (smoke é pure-function). Conferir `/reports` → seção "Agentes IA" depois do schema M11 aplicado e com sessões `kind='production'` reais.
+
+**Próximo passo:** retomar **M12** — #2 (trial 7d), #3 (Pro IA/Enterprise), #5 (lockout), #6 (métricas MRR/churn).
 
 ---
 
