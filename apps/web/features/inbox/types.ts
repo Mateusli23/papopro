@@ -97,6 +97,11 @@ export interface Conversation {
   lastMessageDirection: MessageDirection;
   /** Quantas mensagens inbound não lidas. UI mostra como badge na lista. */
   unreadCount: number;
+  /**
+   * M11#6 — `false` = handoff agente→humano disparado; a IA não atende mais
+   * esta conversa até "Devolver pra IA". `true` (default) = IA pode atender.
+   */
+  aiEnabled: boolean;
   /** Se arquivada, ISO datetime da ação. Filtro default exclui arquivadas. */
   archivedAt?: string;
   createdAt: string;

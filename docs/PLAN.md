@@ -1795,15 +1795,15 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Estratégia:** sub-PRs sequenciais sobre `dev` (mesmo padrão de M8/M9/M10/M12). M11#1 entrega o foundation de persistência (schema + RLS + Prisma + smoke contratos). Sub-PRs subsequentes (#2–#7) constroem lib/ai, UI, KB, runtime, handoffs e métricas.
 
-| Sub-PR    | Escopo                                                                                                                                                                                                                                           | Branch            | Status      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ----------- |
-| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                                  | `m11-ai-agents`   | ✅ entregue |
-| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.                       | `m11-2-ai-lib`    | ✅ entregue |
-| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados.                  | `m11-3-ui-wiring` | ✅ entregue |
-| **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up. | `m11-4-knowledge` | ✅ entregue |
-| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                | `m11-5-router`    | ✅ entregue |
-| **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).                                | `m11-6-handoffs`  | ⏳ pendente |
-| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                            | `m11-7-metrics`   | ⏳ pendente |
+| Sub-PR    | Escopo                                                                                                                                                                                                                                              | Branch            | Status      |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------- |
+| **M11#1** | Schema (10 tabelas + 7 enums + 8 audit_action) + RLS + Prisma sync + smoke contratos (18 checks novos). pgvector já habilitado.                                                                                                                     | `m11-ai-agents`   | ✅ entregue |
+| **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.                          | `m11-2-ai-lib`    | ✅ entregue |
+| **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados.                     | `m11-3-ui-wiring` | ✅ entregue |
+| **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up.    | `m11-4-knowledge` | ✅ entregue |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                   | `m11-5-router`    | ✅ entregue |
+| **M11#6** | Handoffs — agente→agente (keyword + agente-alvo, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, etapa Negociação, fora do horário) + job de `lead_summaries` em background. | `m11-6-handoffs`  | ✅ entregue |
+| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                               | `m11-7-metrics`   | ⏳ pendente |
 
 **Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
 
@@ -2077,6 +2077,60 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. **Reusa foundation já documentado:** M9 (uazapi adapter + anti-ban + webhook signature), M11#2 (lib/ai + ANTHROPIC_API_KEY/OPENAI_API_KEY já configuradas em M11#3), M11#3 (Server Actions de agente + `buildSystemPrompt`), M11#4 (KB indexada).
 3. **Custo Anthropic + OpenAI muda perfil.** A partir do merge, **toda inbound matched** consome tokens. Estimar ~\$0.05–\$0.30/turno (Sonnet 4.6). Monitorar `usage_events feature='agent_chat'` desde o primeiro deploy. Distinguir simulation vs production via `agent_session.kind` no JOIN.
 4. **Validação manual recomendada antes do merge dev → main:** com `.env.local` populado (`ANTHROPIC_API_KEY` + `OPENAI_API_KEY` + uazapi conectada), criar agente com regra `kind=keyword value="oi"` ativo, mandar "oi" pelo WhatsApp do dev, conferir: (a) `agent_session kind='production'` criada, (b) `agent_message in` + `out` persistidas, (c) `Message` out com `authorId=null` na inbox, (d) `usage_events` registrado, (e) WhatsApp recebeu a resposta.
+
+### M11#6 — handoffs agente↔agente/humano + job de lead_summaries (entregue 2026-05-20)
+
+**Branch:** `m11-6-handoffs`
+
+**Objetivo:** transformar `ai_agents.handoff_config` (JSONB parado desde M11#3) em runtime e plugar o background de resumo do lead. M11#5 sempre dispara o agente em qualquer match e nunca consulta os 6 gatilhos; `lead_summaries` fica vazio em produção. M11#6 fecha as duas pontas.
+
+**Decisões fechadas:**
+
+- **Dispatch com sessão "sticky".** O webhook passa a resolver o agente em 3 passos: (1) `conversation.ai_enabled=false` → não despacha; (2) sessão production aberta → continua com o agente dono dela (pula o roteador); (3) sem sessão → roteador M11#5. Além de habilitar handoff, corrige um efeito colateral de M11#5 — conversa roteada por `keyword` deixava de ser respondida na 2ª mensagem (a regra não casava mais). Agora a sessão aberta é a fonte de verdade do "dono".
+- **`conversation.ai_enabled` (boolean, default true)** — única coluna nova. `false` = handoff agente→humano ativo. Conversa que nunca teve IA também fica `true` — `false` significa, sem ambiguidade, "humano assumiu". `handoff_triggered` (audit) já existe desde M11#1; M11#6 adiciona só `handoff_reverted` ("Devolver pra IA").
+- **`lib/ai/handoff.ts` puro** (padrão `router.ts`) — `parseHandoffConfig` + `evaluateInboundHandoff` testáveis no smoke sem DB. Avalia só os 3 gatilhos dirigidos pela mensagem inbound (`keyword`/`commercial_intent`/`agent_to_agent`). Os outros 3 disparam fora: `manual` (Server Action), `stage_negotiation` (hook na mudança de etapa), `outside_business_hours` (piggyback no bloqueio anti-ban).
+- **`commercial_intent` via classificador Haiku** (`lib/ai/intent.ts`) — Haiku 4.5 (~4× mais barato que Sonnet) classifica "sim/nao" se a mensagem indica intenção de fechar. Roda só quando o gatilho está ligado no agente. Falha do detector é fail-safe: trata como "sem intenção" (não escala por engano).
+- **`outside_business_hours` = handoff completo** (decisão do usuário). Quando o anti-ban bloqueia por horário e o gatilho está ligado, executa o handoff humano completo (`ai_enabled=false`) — a IA só volta quando um humano clicar "Devolver pra IA". Gatilho desligado → comportamento M11#5 (só `blocked`).
+- **`stage_negotiation` com etapa configurável** (decisão do usuário). O gatilho carrega `config.stageId` no JSONB; o painel de handoff ganhou um `<Select>` de etapa. Robusto a pipeline customizado — sem heurística de slug. Hook em `moveLeadToStageAction` + `updateLeadAction` (tx separada — bug no handoff não reverte o move do lead).
+- **Handoff agente→agente com cap de 1 hop.** `agent_to_agent` (keyword + `targetAgentId`) encerra a sessão de A, força o resumo do lead (pra B ter contexto via camada LEAD) e re-despacha o runtime pro agente B. `MAX_HANDOFF_DEPTH=1` impede loop A→B→C. Destino inválido (pausado/deletado) → não faz handoff, A responde normal.
+- **Job de `lead_summaries` inline pós-envio, throttled** (decisão do usuário — sem Edge Function/cron). Step 10 do runtime, depois da resposta já ter saído (latência não afeta o lead). Regenera o resumo quando a sessão acumula ≥ 6 `agent_messages` novos desde o último (ou quando não há resumo). Forçado (sem throttle) em todo handoff.
+- **Resumo ao vivo só nos handoffs do runtime.** keyword/commercial_intent/outside_hours/agent_to_agent chamam `refreshLeadSummary` (Claude). `manual` e `stage_negotiation` (Server Actions voltadas ao usuário) NÃO chamam Claude — usam o `lead_summaries` que o job de background já mantém (sem latência no clique/drag).
+- **Notificação ao vendedor via Activity + estado da conversa.** Não existe módulo `lib/notifications/` ainda — o handoff sinaliza via Activity `note` na timeline do lead + `ai_enabled=false` (badge na inbox) + audit. Push/email reais ficam pro milestone de notificações.
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260529120000_m11_6_handoffs.sql`](../supabase/migrations/20260529120000_m11_6_handoffs.sql) — `conversations.ai_enabled boolean DEFAULT true` + `audit_action` ganha `handoff_reverted`. Sem RLS nova (`conversations` já tem políticas M9#1).
+- [x] [`packages/db/prisma/schema.prisma`](../packages/db/prisma/schema.prisma) — `Conversation.aiEnabled` + `AuditAction.handoff_reverted`.
+- [x] [`apps/web/lib/ai/handoff.ts`](../apps/web/lib/ai/handoff.ts) (novo, puro) — `parseHandoffConfig`, `evaluateInboundHandoff`, `matchesAnyKeyword`, `findHandoffTrigger`, `isHandoffTriggerEnabled`, `endedReasonForHandoff`, `handoffReasonLabel`, `HANDOFF_KINDS`.
+- [x] [`apps/web/lib/ai/intent.ts`](../apps/web/lib/ai/intent.ts) (novo) — `detectCommercialIntent` (Haiku) + `buildIntentPrompt`/`parseIntentAnswer` puros.
+- [x] [`apps/web/features/agents/handoff-runtime.ts`](../apps/web/features/agents/handoff-runtime.ts) (novo, server-only, sem Claude) — `applyHumanHandoffTx`, `applyAgentHandoffTx`, `maybeHandoffOnStageChange`. Separado de `runtime.ts` pra não arrastar o SDK Anthropic pro bundle de `leads/actions.ts`.
+- [x] [`apps/web/features/agents/runtime.ts`](../apps/web/features/agents/runtime.ts) — Step 1.5 (handoff eval), Step 2 (handoff por `outside_business_hours`), Step 10 (job de resumo). `performHandoffToHuman`/`performHandoffToAgent`/`refreshLeadSummary`/`maybeRefreshLeadSummary` + `loadConversationDispatchState` (sticky). `runAgentForInboundMessage` ganha `handoffDepth`.
+- [x] [`apps/web/features/agents/handoff-actions.ts`](../apps/web/features/agents/handoff-actions.ts) (novo) — `assumeConversationAction` (handoff manual + vendedor vira dono) + `resumeAiOnConversationAction` ("Devolver pra IA").
+- [x] [`apps/web/app/api/webhooks/whatsapp/route.ts`](../apps/web/app/api/webhooks/whatsapp/route.ts) — `dispatchAgentForInbound` reescrito com o fluxo sticky (`loadConversationDispatchState` → sessão aberta ou roteador).
+- [x] [`apps/web/features/leads/actions.ts`](../apps/web/features/leads/actions.ts) — `moveLeadToStageAction` + `updateLeadAction` chamam `maybeHandoffOnStageChange` (tx separada, best-effort).
+- [x] [`apps/web/features/agents/components/agent-handoff-panel.tsx`](../apps/web/features/agents/components/agent-handoff-panel.tsx) — `<Select>` de agente-alvo (`agent_to_agent`) + de etapa (`stage_negotiation`), com aviso quando o gatilho está ligado mas incompleto. `[id]/page.tsx` + `agent-editor-view.tsx` passam `agentOptions` + `stageOptions`.
+- [x] [`apps/web/features/inbox/components/lead-ficha-quick-actions.tsx`](../apps/web/features/inbox/components/lead-ficha-quick-actions.tsx) — botão "Assumir conversa" / "Devolver pra IA" + aviso "IA desligada". `Conversation.aiEnabled` adicionado ao contrato + `listConversations`.
+- [x] **Contrato handoff config:** `HandoffTrigger.config` + `handoffTriggerUpdateSchema` + `serializeHandoffConfig` + `updateHandoffTriggerAction` ganham `stageId`. `listAgentOptions` (query leve) novo.
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+22 checks** no grupo `handoff-m11-6` (parse config, evaluateInboundHandoff por gatilho, precedência, matchesAnyKeyword, intent prompt/parse, schema stageId). Total: 81 → **103 (103/103 verde)**.
+- [x] `pnpm --filter @papopro/db db:generate` ✅, `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` 103/103 ✅, smoke `/api/smoke-test/ai` 31/31 sem regressão ✅.
+
+**Não-objetivos M11#6 (explícitos):**
+
+- Push/email de notificação no handoff — módulo `lib/notifications/` não existe; sinalização via Activity + `ai_enabled` + audit. → milestone de notificações.
+- Métricas de handoff em `/reports` (taxa de resolução sem handoff, etc.) → M11#7 (lê `agent_sessions.ended_reason`).
+- Enforcement de 3 agentes ativos no Pro IA → M11#7.
+- Job de `lead_summaries` como Edge Function + `pg_cron` — decisão foi inline throttled. Migração pra cron fica pra V2 se o volume pedir.
+- Handoff chains profundas (A→B→C) — cap em 1 hop.
+- Retry inteligente em falha de adapter → V2.
+
+**Ops pós-deploy:**
+
+1. `supabase apply_migration name=m11_6_handoffs` — adiciona `conversations.ai_enabled` + `audit_action.handoff_reverted` (depende de M11#1 já aplicada).
+2. **Sem Edge Function, sem cron, sem Storage, sem env var nova** — o classificador de intenção e o job de resumo reusam `ANTHROPIC_API_KEY` já configurada (M11#3). Override opcional `ANTHROPIC_INTENT_MODEL` (default `claude-haiku-4-5`).
+3. **Custo:** `commercial_intent` ligado adiciona 1 chamada Haiku (~\$0.0003) por inbound do agente; o job de resumo adiciona ~1 chamada Sonnet a cada ~3 turnos. Monitorar `usage_events feature IN ('intent_detection','lead_summary')`.
+4. **Validação manual:** criar 2 agentes, configurar em A o gatilho `agent_to_agent` (keyword + agente-alvo B) e `keyword` (humano); mandar a keyword de humano → conferir `ai_enabled=false` + Activity; mandar a keyword de B → conferir sessão de A encerrada + sessão de B respondendo; mover lead pra etapa de `stage_negotiation` → conferir handoff; clicar "Assumir"/"Devolver pra IA" na inbox.
+
+**Próximo passo:** **M11#7** (métricas por agente em `/reports` + enforcement de 3 agentes ativos no Pro IA) — fecha o milestone M11.
 
 ---
 

@@ -112,6 +112,7 @@ enum AuditAction {
   agent_paused
   agent_deleted
   handoff_triggered
+  handoff_reverted
   knowledge_doc_uploaded
   knowledge_doc_processed
 
@@ -1188,6 +1189,9 @@ model Conversation {
   lastMessagePreview   String?             @map("last_message_preview") @db.VarChar(280)
   lastMessageDirection MessageDirection?   @map("last_message_direction")
   unreadCount          Int                 @default(0) @map("unread_count")
+  /// M11#6 — false = handoff agente→humano disparado; roteador pula a conversa
+  /// até "Devolver pra IA". true (default) = IA pode atender.
+  aiEnabled            Boolean             @default(true) @map("ai_enabled")
   archivedAt           DateTime?           @map("archived_at") @db.Timestamptz(6)
   createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)

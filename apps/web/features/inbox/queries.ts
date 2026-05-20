@@ -61,6 +61,7 @@ export async function listConversations(workspaceId: string): Promise<Conversati
         lastMessagePreview: true,
         lastMessageDirection: true,
         unreadCount: true,
+        aiEnabled: true,
         archivedAt: true,
         createdAt: true,
         whatsappAccount: { select: { phoneNumber: true } },
@@ -81,6 +82,7 @@ export async function listConversations(workspaceId: string): Promise<Conversati
         lastMessagePreview: row.lastMessagePreview ?? '',
         lastMessageDirection: lastDirection,
         unreadCount: row.unreadCount,
+        aiEnabled: row.aiEnabled,
         archivedAt: row.archivedAt?.toISOString(),
         createdAt: row.createdAt.toISOString(),
       };
