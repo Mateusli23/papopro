@@ -24,6 +24,15 @@ import {
 } from '@papopro/db';
 
 import {
+  type AgentMetricsRow,
+  type AgentReportRow,
+  computeAgentMetrics,
+  formatMetricRate,
+  formatResponseTime,
+  sortAgentReportRows,
+  summarizeAgentReports,
+} from '@/features/agents/metrics.helpers';
+import {
   AGENT_STATUSES,
   HANDOFF_TRIGGER_KINDS,
   ROUTE_KINDS,
@@ -837,6 +846,147 @@ export function GET() {
       parseIntentAnswer('nao') === false &&
       parseIntentAnswer('') === false &&
       parseIntentAnswer('talvez') === false
+    );
+  });
+
+  // ── Métricas de agente (M11#7) ──────────────────────────────────────────
+  t = run('metrics-m11-7', results);
+
+  const mkMetricsRow = (over: Partial<AgentMetricsRow> = {}): AgentMetricsRow => ({
+    id: 'agt_1',
+    name: 'Agente Teste',
+    status: 'active',
+    totalConversations: 0,
+    humanHandoffConversations: 0,
+    responseTurnCount: 0,
+    totalResponseSeconds: 0,
+    ...over,
+  });
+
+  t('computeAgentMetrics: sem conversas → tudo zerado', () => {
+    const m = computeAgentMetrics(mkMetricsRow());
+    return (
+      m.totalConversations === 0 &&
+      m.resolutionRate === 0 &&
+      m.avgResponseTimeSec === 0 &&
+      m.inferredSatisfaction === 0
+    );
+  });
+
+  t('computeAgentMetrics: resolutionRate = 1 − handoffs/total', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 10, humanHandoffConversations: 2 }),
+    );
+    return m.resolutionRate === 0.8 || `recebi ${m.resolutionRate}`;
+  });
+
+  t('computeAgentMetrics: resolutionRate clampa em 0 (handoffs > total)', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 10, humanHandoffConversations: 12 }),
+    );
+    return m.resolutionRate === 0;
+  });
+
+  t('computeAgentMetrics: 100% resolução quando zero handoffs', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 5, humanHandoffConversations: 0 }),
+    );
+    return m.resolutionRate === 1;
+  });
+
+  t('computeAgentMetrics: avgResponseTimeSec = totalSeconds/turns arredondado', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ responseTurnCount: 8, totalResponseSeconds: 100 }),
+    );
+    return m.avgResponseTimeSec === 13 || `recebi ${m.avgResponseTimeSec}`; // round(12.5)
+  });
+
+  t('computeAgentMetrics: avgResponseTimeSec = 0 sem turnos medidos', () => {
+    const m = computeAgentMetrics(mkMetricsRow({ totalResponseSeconds: 50, responseTurnCount: 0 }));
+    return m.avgResponseTimeSec === 0;
+  });
+
+  t('computeAgentMetrics: inferredSatisfaction sempre 0 (adiado V2)', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({
+        totalConversations: 50,
+        humanHandoffConversations: 1,
+        responseTurnCount: 40,
+        totalResponseSeconds: 400,
+      }),
+    );
+    return m.inferredSatisfaction === 0;
+  });
+
+  t('summarizeAgentReports: array vazio → tudo zerado', () => {
+    const s = summarizeAgentReports([]);
+    return (
+      s.activeAgentsCount === 0 &&
+      s.totalAgentsCount === 0 &&
+      s.totalConversations === 0 &&
+      s.overallResolutionRate === 0 &&
+      s.avgResponseTimeSec === 0
+    );
+  });
+
+  t('summarizeAgentReports: activeAgentsCount conta só status=active', () => {
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', status: 'active' }),
+      mkMetricsRow({ id: 'b', status: 'paused' }),
+      mkMetricsRow({ id: 'c', status: 'testing' }),
+      mkMetricsRow({ id: 'd', status: 'active' }),
+    ]);
+    return s.activeAgentsCount === 2 && s.totalAgentsCount === 4;
+  });
+
+  t('summarizeAgentReports: overallResolutionRate ponderado por volume', () => {
+    // Agente A: 100% (90 conversas, 0 handoff). Agente B: 0% (10, 10).
+    // Média das médias = 50%. Ponderado (correto) = 1 − 10/100 = 90%.
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', totalConversations: 90, humanHandoffConversations: 0 }),
+      mkMetricsRow({ id: 'b', totalConversations: 10, humanHandoffConversations: 10 }),
+    ]);
+    return (
+      (s.totalConversations === 100 && s.overallResolutionRate === 0.9) ||
+      `conv=${s.totalConversations} rate=${s.overallResolutionRate}`
+    );
+  });
+
+  t('summarizeAgentReports: avgResponseTimeSec ponderado por turnos', () => {
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', responseTurnCount: 10, totalResponseSeconds: 100 }),
+      mkMetricsRow({ id: 'b', responseTurnCount: 30, totalResponseSeconds: 600 }),
+    ]);
+    // (100+600)/(10+30) = 17.5 → 18
+    return s.avgResponseTimeSec === 18 || `recebi ${s.avgResponseTimeSec}`;
+  });
+
+  t('sortAgentReportRows: conversas desc, name asc no empate', () => {
+    const mk = (id: string, name: string, conv: number): AgentReportRow => ({
+      id,
+      name,
+      status: 'active',
+      metrics: computeAgentMetrics(mkMetricsRow({ totalConversations: conv })),
+    });
+    const sorted = sortAgentReportRows([
+      mk('1', 'Bravo', 5),
+      mk('2', 'Alfa', 20),
+      mk('3', 'Charlie', 5),
+    ]);
+    return (
+      sorted[0]?.name === 'Alfa' && sorted[1]?.name === 'Bravo' && sorted[2]?.name === 'Charlie'
+    );
+  });
+
+  t('formatMetricRate: 0.856 → "86%"', () => {
+    return formatMetricRate(0.856) === '86%' || `recebi ${formatMetricRate(0.856)}`;
+  });
+
+  t('formatResponseTime: "45s" / "2min" / "1m 30s"', () => {
+    return (
+      formatResponseTime(45) === '45s' &&
+      formatResponseTime(120) === '2min' &&
+      formatResponseTime(90) === '1m 30s'
     );
   });
 

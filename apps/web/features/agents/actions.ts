@@ -23,8 +23,10 @@
  * `usage_events` (M11#2). Workspaces sem `ANTHROPIC_API_KEY` vão receber
  * erro propositivo no simulation; outras actions funcionam normais.
  *
- * **Enforcement 3 agentes ativos no Pro IA**: NÃO está aqui — fica pra M11#7
- * (junto com métricas + `lib/limits.ts` billing-aware).
+ * **Enforcement de agentes ativos** (M11#7): `toggleAgentStatusAction`,
+ * `setAgentStatusAction` e `updateAgentDraftAction` chamam `canActivateAgent`
+ * (`lib/limits.ts`) antes de ligar um agente — cap Free 1 / Pro 3, validado
+ * dentro da tx pra ser atômico com o UPDATE.
  *
  * **Cérebro upload de documentos** (PDF/DOC/etc): NÃO está aqui — fica pra
  * M11#4 (Edge Function de extração + chunking + embedding). M11#3 só conecta
@@ -47,6 +49,7 @@ import { recordUsage } from '@/lib/ai/usage';
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { requireRole } from '@/lib/auth/require-role';
 import { getAgentTemplate } from '@/lib/fixtures/agent-templates';
+import { canActivateAgent, limitReachedMessage } from '@/lib/limits';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isUuid } from '@/lib/utils/uuid';
@@ -241,13 +244,23 @@ export async function updateAgentDraftAction(
   const { workspaceId, userId } = auth.ctx;
 
   try {
-    const ok = await withWorkspace(workspaceId, async (tx) => {
+    const result = await withWorkspace(workspaceId, async (tx) => {
       const agent = await loadAgent(tx, workspaceId, agentId);
-      if (!agent) return false;
+      if (!agent) return { ok: false as const, reason: 'not_found' as const };
 
       // Filtra só campos do draft que de fato chegaram. `status` separado
       // — setAgentStatusAction lida com audit `agent_activated`/`paused`.
       const { status, ...draft } = parsed.data;
+
+      // M11#7: se o draft está LIGANDO o agente (e ele ainda não estava
+      // ativo), valida o cap de agentes ativos do plano.
+      if (status === 'active' && agent.status !== DbAgentStatus.active) {
+        const gate = await canActivateAgent(workspaceId, { tx });
+        if (!gate.ok) {
+          return { ok: false as const, reason: 'limit' as const, state: gate.state };
+        }
+      }
+
       const updateData: Prisma.AiAgentUpdateInput = { ...draft };
       if (status !== undefined) {
         updateData.status = status as DbAgentStatus;
@@ -257,10 +270,18 @@ export async function updateAgentDraftAction(
         where: { id: agentId },
         data: updateData,
       });
-      return true;
+      return { ok: true as const };
     });
 
-    if (!ok) return { ok: false, error: 'Agente não encontrado.' };
+    if (result.ok === false) {
+      return {
+        ok: false,
+        error:
+          result.reason === 'limit'
+            ? limitReachedMessage('agents', result.state)
+            : 'Agente não encontrado.',
+      };
+    }
     revalidatePath('/agents');
     revalidatePath(`/agents/${agentId}`);
     return { ok: true };
@@ -274,8 +295,9 @@ export async function updateAgentDraftAction(
  * Toggle simples ativo↔pausado. `testing → active` também passa por aqui
  * (transição implícita "soltar o agente em produção").
  *
- * **Sem enforcement de 3 ativos no Pro IA** — M11#7 vai injetar isso via
- * `lib/limits.ts:canActivateAgent({ tx })` aqui.
+ * **M11#7**: ao ligar (`→ active`), `canActivateAgent({ tx })` valida o cap
+ * de agentes ativos do plano (Free 1 / Pro 3) — bloqueio retorna mensagem
+ * propositiva. Desligar (`active → paused`) nunca é bloqueado.
  */
 export async function toggleAgentStatusAction(agentId: string): Promise<VoidActionResult> {
   if (!isUuid(agentId)) return { ok: false, error: 'ID de agente inválido.' };
@@ -294,6 +316,15 @@ export async function toggleAgentStatusAction(agentId: string): Promise<VoidActi
       const nextStatus: DbAgentStatus =
         agent.status === DbAgentStatus.active ? DbAgentStatus.paused : DbAgentStatus.active;
 
+      // M11#7: ao LIGAR, valida o cap de agentes ativos do plano. Dentro da
+      // tx → atômico com o UPDATE (bloqueia 2 cliques no último slot).
+      if (nextStatus === DbAgentStatus.active) {
+        const gate = await canActivateAgent(workspaceId, { tx });
+        if (!gate.ok) {
+          return { ok: false as const, reason: 'limit' as const, state: gate.state };
+        }
+      }
+
       await tx.aiAgent.update({ where: { id: agentId }, data: { status: nextStatus } });
       await tx.auditLog.create({
         data: {
@@ -311,7 +342,13 @@ export async function toggleAgentStatusAction(agentId: string): Promise<VoidActi
     });
 
     if (result.ok === false) {
-      return { ok: false, error: 'Agente não encontrado.' };
+      return {
+        ok: false,
+        error:
+          result.reason === 'limit'
+            ? limitReachedMessage('agents', result.state)
+            : 'Agente não encontrado.',
+      };
     }
     revalidatePath('/agents');
     revalidatePath(`/agents/${agentId}`);
@@ -326,6 +363,10 @@ export async function toggleAgentStatusAction(agentId: string): Promise<VoidActi
  * Set explícito de status (testing/active/paused) — usado pelo undo do toggle
  * e por contextos onde a UI sabe o status alvo (ex: pause antes de editar
  * roteamento). Distinto de `toggle` pra rastrear no audit.
+ *
+ * **M11#7**: `→ active` valida o cap (Free 1 / Pro 3) — mas só quando o
+ * agente NÃO estava ativo; re-set idempotente `active → active` não
+ * consome slot, então pula o gate.
  */
 export async function setAgentStatusAction(
   agentId: string,
@@ -342,9 +383,19 @@ export async function setAgentStatusAction(
 
   try {
     const ctx = getRequestAuditContext();
-    const ok = await withWorkspace(workspaceId, async (tx) => {
+    const result = await withWorkspace(workspaceId, async (tx) => {
       const agent = await loadAgent(tx, workspaceId, agentId);
-      if (!agent) return false;
+      if (!agent) return { ok: false as const, reason: 'not_found' as const };
+
+      // M11#7: gate só quando LIGA um agente que ainda não estava ativo —
+      // re-set idempotente (`active → active`) não consome slot.
+      if (status === 'active' && agent.status !== DbAgentStatus.active) {
+        const gate = await canActivateAgent(workspaceId, { tx });
+        if (!gate.ok) {
+          return { ok: false as const, reason: 'limit' as const, state: gate.state };
+        }
+      }
+
       await tx.aiAgent.update({
         where: { id: agentId },
         data: { status: status as DbAgentStatus },
@@ -364,10 +415,18 @@ export async function setAgentStatusAction(
           },
         });
       }
-      return true;
+      return { ok: true as const };
     });
 
-    if (!ok) return { ok: false, error: 'Agente não encontrado.' };
+    if (result.ok === false) {
+      return {
+        ok: false,
+        error:
+          result.reason === 'limit'
+            ? limitReachedMessage('agents', result.state)
+            : 'Agente não encontrado.',
+      };
+    }
     revalidatePath('/agents');
     revalidatePath(`/agents/${agentId}`);
     return { ok: true };

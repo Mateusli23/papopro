@@ -1803,7 +1803,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up.    | `m11-4-knowledge` | ✅ entregue |
 | **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                   | `m11-5-router`    | ✅ entregue |
 | **M11#6** | Handoffs — agente→agente (keyword + agente-alvo, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, etapa Negociação, fora do horário) + job de `lead_summaries` em background. | `m11-6-handoffs`  | ✅ entregue |
-| **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                               | `m11-7-metrics`   | ⏳ pendente |
+| **M11#7** | Métricas reais por agente (conversas, resolução sem handoff, tempo médio) no painel do editor + seção "Agentes IA" em `/reports`. Enforcement do cap de agentes ativos (Free 1 / Pro 3) via `lib/limits.ts`. Satisfação inferida adiada pra V2.     | `m11-7-metrics`   | ✅ entregue |
 
 **Commit final do milestone:** `feat(ai): claude agents with 3-layer memory, pgvector knowledge base and handoffs`
 
@@ -2130,7 +2130,55 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 3. **Custo:** `commercial_intent` ligado adiciona 1 chamada Haiku (~\$0.0003) por inbound do agente; o job de resumo adiciona ~1 chamada Sonnet a cada ~3 turnos. Monitorar `usage_events feature IN ('intent_detection','lead_summary')`.
 4. **Validação manual:** criar 2 agentes, configurar em A o gatilho `agent_to_agent` (keyword + agente-alvo B) e `keyword` (humano); mandar a keyword de humano → conferir `ai_enabled=false` + Activity; mandar a keyword de B → conferir sessão de A encerrada + sessão de B respondendo; mover lead pra etapa de `stage_negotiation` → conferir handoff; clicar "Assumir"/"Devolver pra IA" na inbox.
 
-**Próximo passo:** **M11#7** (métricas por agente em `/reports` + enforcement de 3 agentes ativos no Pro IA) — fecha o milestone M11.
+### M11#7 — métricas reais por agente + enforcement de agentes ativos (entregue 2026-05-20)
+
+**Branch:** `m11-7-metrics`
+
+**Objetivo:** fechar o milestone M11. Duas frentes: (1) trocar o `emptyMetrics()` placeholder de M11#3 (`{0,0,0,0}`) por métricas reais agregadas de `agent_sessions` + `agent_messages`, exibidas no painel do editor e numa seção nova "Agentes IA" em `/reports`; (2) enforcement do cap de agentes ativos por plano (Free 1 / Pro 3), reusando o pattern `lib/limits.ts` de M12#4.
+
+**Decisões fechadas:**
+
+- **Cap Free 1 / Pro 3** (decisão do usuário). O PRD trata agente IA como recurso de Pro IA, mas o tier Pro IA não existe no billing — `SubscriptionPlan` só tem `pro` (M12#3, que adiciona Pro IA/Enterprise, está pendente). Em vez de bloquear agentes fora do pago (breaking pro fluxo de demo M11#1-#6), Free ganha 1 agente ativo como gostinho do recurso e Pro 3. `PLAN_LIMITS` fica plan-aware-ready: quando M12#3 criar `pro_ia`/`enterprise`, só adiciona as linhas. O gate "agente exige plano pago" é explicitamente escopo de M12#3.
+- **`activeAgents` é o primeiro limite finito no Pro.** `leads`/`members` são `Number.POSITIVE_INFINITY` no Pro; `activeAgents` é 3. `computeLimitState` já trata limite finito sem caso especial.
+- **`inferredSatisfaction` adiada pra V2** (decisão do usuário). M11#7 entrega 3 métricas reais (`totalConversations`, `resolutionRate`, `avgResponseTimeSec`); o 4º campo continua `0` (painel/relatório renderizam "—"). Satisfação via sentimento precisa de classificador dedicado (`lib/ai/sentiment.ts` + job) — fora do sub-PR que fecha o milestone, mesmo padrão de DOC/DOCX e OCR adiados em M11#4.
+- **Query `$queryRaw`, não VIEW Postgres.** O contrato M5 (`types.ts`) falava em "VIEW Postgres", mas M10#5 (reports de cadência) já estabeleceu o padrão de agregação via `$queryRaw` dentro de `withWorkspace` — sem migration, sem `security_invoker` na view pra respeitar RLS. M11#7 segue o precedente: zero migration no sub-PR.
+- **Uma "conversa" = uma `agent_session kind='production'`.** Simulações ficam de fora. Handoff agente→agente infla `totalConversations` (A fecha a sessão, B abre outra pra mesma conversa do lead) — aproximação aceitável documentada ("sessão ≈ atendimento-por-um-agente").
+- **`resolutionRate` = `1 − (sessões com handoff p/ humano / total)`.** Handoff p/ humano = `ended_reason` começa com `handoff_` EXCETO `handoff_agent_to_agent` (esse continua atendido por IA). Sessão aberta conta como resolvida-até-agora. `starts_with()` no SQL — `LIKE 'handoff_%'` trataria o `_` como curinga.
+- **`avgResponseTimeSec` via window function.** Dentro de cada sessão, gap `in→out` entre mensagens consecutivas (`LAG` sobre `created_at`). Mede o processamento do Claude — o `agent_message out` é persistido ANTES do jitter anti-ban (M11#5), então não inclui a fila de envio.
+- **Rollup do workspace ponderado por volume.** `summarizeAgentReports` agrega pelos contadores crus (não média das médias) — `overallResolutionRate`/`avgResponseTimeSec` ficam corretamente ponderados.
+- **Gate de ativação dentro da tx.** `canActivateAgent({ tx })` roda atômico com o `UPDATE status='active'` — bloqueia a race de 2 cliques no último slot. Hook nas 3 actions que ligam agente (`toggle`/`set`/`updateDraft`); re-set idempotente (`active → active`) pula o gate (não consome slot — mesma lógica do convite pending re-enviado de M12#4).
+- **Banner de agentes só em `atLimit`.** Diferente do `<PlanLimitBanner>` de leads/membros (faixa amarela em 90%): com cap 1 no Free, 90% de 1 seria sempre verdade. O `<AgentLimitBanner>` (componente próprio da feature) só renderiza no teto atingido, com copy plan-aware (Free → assinar Pro; Pro → pausar um agente).
+
+**Entregas:**
+
+- [x] [`apps/web/lib/limits.ts`](../apps/web/lib/limits.ts) — `activeAgents` no `PLAN_LIMITS` (Free 1 / Pro 3) + `canActivateAgent(workspaceId, opts?)` (gate com `tx` opcional, espelha `canAddLead`) + `countActiveAgents` + `activeAgents` em `WorkspaceUsage`/`WorkspaceUsageUI`/`getWorkspaceUsage`/`toWorkspaceUsageUI` + `limitReachedMessage` aceita `kind='agents'` (copy plan-aware).
+- [x] [`apps/web/features/agents/metrics.helpers.ts`](../apps/web/features/agents/metrics.helpers.ts) (novo, puro) — `computeAgentMetrics` (linha crua → `AgentMetrics`), `summarizeAgentReports` (rollup ponderado), `sortAgentReportRows`, `formatMetricRate`/`formatResponseTime`; tipos `AgentMetricsRow`/`AgentReportRow`/`AgentReportsSummary`/`AgentReports`.
+- [x] [`apps/web/features/agents/metrics.ts`](../apps/web/features/agents/metrics.ts) (novo, server-only) — `$queryRaw` agregando `agent_sessions` + `agent_messages` (CTEs `prod_sessions`/`session_agg`/`turn_gaps`/`response_agg`, window function pro tempo de resposta). `getAgentMetricsMap(tx, workspaceId)` (hidrata o serializer) + `getAgentReports(workspaceId)` (payload do `/reports`).
+- [x] [`apps/web/features/agents/queries.ts`](../apps/web/features/agents/queries.ts) — `serializeAgent` recebe `metrics?` do mapa batcheado; `listAgentsForWorkspace`/`getAgentDetailById` chamam `getAgentMetricsMap` na mesma tx. `emptyMetrics()` vira fallback defensivo.
+- [x] [`apps/web/features/agents/actions.ts`](../apps/web/features/agents/actions.ts) — `canActivateAgent` gate em `toggleAgentStatusAction`/`setAgentStatusAction`/`updateAgentDraftAction` (só na transição `→ active`, dentro da tx). Bloqueio retorna `limitReachedMessage('agents', ...)`.
+- [x] [`apps/web/app/(dashboard)/reports/agents-reports-section.tsx`](<../apps/web/app/(dashboard)/reports/agents-reports-section.tsx>) (novo, Server Component) — KPI strip (4 tiles) + tabela "Performance por agente". Espelha `<CadencesReportsSection>` (M10#5).
+- [x] [`apps/web/app/(dashboard)/reports/page.tsx`](<../apps/web/app/(dashboard)/reports/page.tsx>) — `getAgentReports` no `Promise.allSettled` (degradação graciosa) + render do `<AgentsReportsSection>`.
+- [x] [`apps/web/features/agents/components/agent-limit-banner.tsx`](../apps/web/features/agents/components/agent-limit-banner.tsx) (novo, Server Component) — banner inline do cap, copy plan-aware, só em `atLimit`.
+- [x] [`apps/web/app/(dashboard)/agents/page.tsx`](<../apps/web/app/(dashboard)/agents/page.tsx>) — `getWorkspaceUsage` no `Promise.all` + `<AgentLimitBanner>` acima do `<AgentsView>` (espelha `/leads`).
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+14 checks** no grupo `metrics-m11-7` (computeAgentMetrics, resolutionRate clamp, avgResponseTime, summarize ponderado, sort, formatters). Total: 103 → **117 (117/117 verde)**.
+- [x] [`apps/web/app/api/smoke-test/billing/route.ts`](../apps/web/app/api/smoke-test/billing/route.ts) — **+10 checks** no grupo `agent-limits-m11-7` (PLAN_LIMITS, computeLimitState finito no Pro, limitReachedMessage plan-aware). Total: 44 → **54 (54/54 verde)**.
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` 117/117 ✅, `/api/smoke-test/billing` 54/54 ✅, `/api/smoke-test/ai` 31/31 sem regressão ✅.
+
+**Não-objetivos M11#7 (explícitos):**
+
+- **`inferredSatisfaction` real** (sentimento) — adiada pra V2; precisa de classificador dedicado + job.
+- **Tier Pro IA / Enterprise no billing** + gate "agente exige plano pago" → M12#3.
+- **`activeAgents` na comparação Free×Pro de `/settings/billing`** — `getWorkspaceUsage` já devolve o campo, mas a tabela comparativa só ganha a linha em M12#3 (quando o limite vira diferenciador de tier real).
+- **Filtro de período em `/reports`** — métricas são acumuladas (all-time), sem janela; mesmo escopo do resto de `/reports`.
+- **VIEW Postgres materializada** — agregação é `$queryRaw` ao vivo. Materialização só se volume pedir (V2).
+- **E2E Playwright "ativar 4º agente falha"** → M13.
+
+**Ops pós-deploy:**
+
+1. **Nada novo de infra.** Sub-PR é puro código + smoke — não cria migration, Edge Function, cron, env var nem Storage bucket.
+2. **Métricas aparecem conforme o volume chega** — workspace sem sessões `kind='production'` (M11#5) vê tudo zerado / "—" no painel e em `/reports`.
+
+**Próximo passo:** **M11 completo** — 7/7 sub-PRs entregues. Falta o release `PR dev → main` cobrindo M11#6 + M11#7 (M11#1-#5 já em `main`). Depois, retomar **M12** (#2 trial, #3 Pro IA/Enterprise, #5 lockout, #6 métricas).
 
 ---
 
