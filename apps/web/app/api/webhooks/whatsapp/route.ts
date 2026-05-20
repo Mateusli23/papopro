@@ -26,10 +26,16 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { prisma, type Prisma } from '@papopro/db';
 
 import {
+  loadActiveRoutingRules,
+  loadLeadContextForRouter,
+  runAgentForInboundMessage,
+} from '@/features/agents/runtime';
+import {
   handleInstanceStatus,
   handleMessageReceived,
   handleMessageStatus,
 } from '@/features/inbox/handlers';
+import { pickAgentForInbound } from '@/lib/ai/router';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { checkRateLimit } from '@/lib/webhooks/rate-limit';
@@ -38,7 +44,10 @@ import { verifyUazapiSignature } from '@/lib/whatsapp/webhook-verify';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+// M11#5: bump 30→90s pra cobrir jitter anti-ban 30-50s + Claude ~5s +
+// adapter ~3s + margem quando o agente IA é despachado. Idempotência via
+// WebhookEvent (sha256 do raw body) absorve retry de uazapi se ocorrer.
+export const maxDuration = 90;
 
 interface ErrorBody {
   ok: false;
@@ -143,10 +152,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         eventId = created.id;
       }
 
-      // Dispatch
+      // Dispatch. `messageReceived` é capturado pra dispatch do agente IA
+      // (M11#5) FORA da tx — chamada Claude + jitter 30-50s + adapter não
+      // podem segurar uma transação aberta.
+      let messageReceived: Awaited<ReturnType<typeof handleMessageReceived>> | undefined;
+
       switch (event.event) {
         case 'message.received':
-          await handleMessageReceived(
+          messageReceived = await handleMessageReceived(
             tx,
             {
               workspaceId: instance.workspaceId,
@@ -181,8 +194,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         data: { processedAt: new Date() },
       });
 
-      return { idempotent: false };
+      return { idempotent: false, messageReceived };
     });
+
+    // ── Agente IA dispatch (M11#5) ──────────────────────────────────────
+    // Roda DEPOIS da tx do webhook. Idempotência: se uazapi retry e o
+    // event id (sha256 raw body) já foi marcado `processedAt`, o caminho
+    // tx acima cai em `idempotent:true` e nem chega aqui — agente não
+    // dispara duas vezes pro mesmo inbound.
+    if (
+      event.event === 'message.received' &&
+      !result.idempotent &&
+      result.messageReceived &&
+      !result.messageReceived.skipped &&
+      !result.messageReceived.optOut &&
+      result.messageReceived.leadId
+    ) {
+      const messageBody = event.message.text?.body ?? null;
+      // Mídia sem caption (body null) só pode disparar `kind=keyword` (que
+      // exige texto) — pulamos o roteador inteiro pra evitar falso match.
+      if (messageBody && messageBody.trim()) {
+        await dispatchAgentForInbound({
+          workspaceId: instance.workspaceId,
+          leadId: result.messageReceived.leadId,
+          leadPhone: event.message.from.trim(),
+          conversationId: result.messageReceived.conversationId ?? '',
+          instanceId: instance.id,
+          whatsappAccountId: instance.accountId,
+          messageBody,
+        });
+      }
+    }
 
     return ok({ ok: true, idempotent: result.idempotent });
   } catch (e) {
@@ -203,6 +245,66 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       event: event.event,
     });
     return err('internal', 'Não foi possível processar agora. Tente em instantes.', 500);
+  }
+}
+
+interface DispatchAgentInput {
+  workspaceId: string;
+  leadId: string;
+  leadPhone: string;
+  conversationId: string;
+  instanceId: string;
+  whatsappAccountId: string;
+  messageBody: string;
+}
+
+/**
+ * Roteia + despacha agente IA pra mensagem inbound. Fora da tx do webhook —
+ * pode rodar até ~80s (jitter 30-50s + Claude + adapter). Falhas são logadas
+ * sem propagar pro webhook (provedor já recebeu 200 da persistência inbound;
+ * agente é "best-effort").
+ *
+ * **Não bloqueia o webhook em caminhos sem agente:** se nenhum agente ativo
+ * casa, retorna imediatamente.
+ */
+async function dispatchAgentForInbound(input: DispatchAgentInput): Promise<void> {
+  // Sem conversationId resolvido (raro — só se handleMessageReceived mudar
+  // contrato), não dispara agente. Defense-in-depth.
+  if (!input.conversationId) return;
+
+  try {
+    const [rules, leadCtx] = await Promise.all([
+      loadActiveRoutingRules(input.workspaceId),
+      loadLeadContextForRouter(input.workspaceId, input.leadId),
+    ]);
+
+    if (rules.length === 0) return;
+
+    const match = pickAgentForInbound(rules, {
+      leadStageId: leadCtx?.leadStageId,
+      leadTags: leadCtx?.leadTags ?? [],
+      whatsappAccountId: input.whatsappAccountId,
+      messageBody: input.messageBody,
+    });
+
+    if (!match) return;
+
+    await runAgentForInboundMessage({
+      workspaceId: input.workspaceId,
+      agentId: match.agentId,
+      leadId: input.leadId,
+      leadPhone: input.leadPhone,
+      conversationId: input.conversationId,
+      instanceId: input.instanceId,
+      whatsappAccountId: input.whatsappAccountId,
+      latestUserMessage: input.messageBody,
+    });
+  } catch (err) {
+    reportNonFatal('whatsapp.webhook.agent_dispatch', err, {
+      workspaceId: input.workspaceId,
+      leadId: input.leadId,
+      conversationId: input.conversationId,
+    });
   }
 }
 
