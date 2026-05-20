@@ -2212,7 +2212,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | Sub-PR    | Escopo                                                                                                                                                                                         | Branch          | Status      |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------- |
 | **M12#1** | Schema (`stripe_customers` + `subscriptions`) + lib/stripe + Server Actions Checkout/Portal + webhook 5 eventos (signature + idempotência) + UI `/settings/billing` Free↔Pro + smoke contratos | `feat/billing`  | ✅ entregue |
-| **M12#2** | Trial 7d sem cartão no signup + avisos D-2/D-1 (push + email Resend)                                                                                                                           | `m12-2-trial`   | ⏳ pendente |
+| **M12#2** | Trial 7d sem cartão (estado em `workspaces.trial_ends_at`, expiração lazy) + avisos D-2/D-1 por email Resend + banner no dashboard. Push adiado pra M13.                                       | `m12-2-trial`   | ✅ entregue |
 | **M12#3** | Stripe Pro IA (R$ 497/mês) + Enterprise (price flexível) + upgrade/downgrade no Customer Portal                                                                                                | `m12-3-pro-ia`  | ⏳ pendente |
 | **M12#4** | Enforcement de limites por plano (Free: 50 leads / 2 membros) + página de cobrança com comparação Free×Pro + Customer Portal + banners de aviso em /leads e /settings/team                     | `m12-4-limits`  | ✅ entregue |
 | **M12#5** | Bloqueio progressivo (read-only 30d após cancel + scheduled deletion com email) + notificações pagamento falhado (in-app + email)                                                              | `m12-5-lockout` | ⏳ pendente |
@@ -2298,6 +2298,51 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. Stripe Dashboard **live mode**: criar product "Pro" R$ 197/mês + endpoint webhook `https://app.pipeflow.com.br/api/webhooks/stripe`.
 3. `supabase secrets set` (Vercel env): `STRIPE_SECRET_KEY=sk_live_...`, `STRIPE_WEBHOOK_SECRET=whsec_...`, `STRIPE_PRICE_PRO_MONTHLY=price_live_...`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_...`.
 4. Validar webhook: criar uma test subscription → conferir row em `subscriptions` + audit log `subscription_activated`.
+
+### M12#2 — trial 7d sem cartão + avisos D-2/D-1 (entregue 2026-05-20)
+
+**Branch:** `m12-2-trial`
+
+**Objetivo:** dar ao workspace recém-criado 7 dias de acesso Pro completo sem pedir cartão, e avisar o Owner por email 2 e 1 dia antes do trial acabar. Sem trial, todo workspace novo cairia direto nos limites Free (50 leads / 2 membros / 1 agente) — o trial é o que deixa o usuário experimentar o produto inteiro antes de decidir assinar.
+
+**Decisões fechadas:**
+
+- **Trial é local, não Stripe.** Não há subscription durante o trial (sem cartão) — o estado vive em `workspaces.trial_ends_at`. O enum `subscription_status` NÃO ganha `trialing`; o trial é puramente local.
+- **Trial começa na criação do workspace** (`createWorkspaceAction`), que já é pós-verificação de email — são 7 dias de acesso real. `trial_ends_at = createdAt + 7d` via `trialEndsAtFrom` (date-fns `addDays`).
+- **Expiração lazy, sem job de downgrade.** `getActivePlan` (`lib/limits.ts`) compara `now < trial_ends_at` ao vivo: trial ativo → resolve `pro`. No instante em que expira, os limites Free voltam sozinhos — um job de "expirar trial" seria ponto de falha desnecessário.
+- **Trial mapeia pra `pro` em `getActivePlan`** — assim toda a lógica de limites/banners de M11#7/M12#4 fica idêntica entre trial e Pro pago (limites Pro). O trial NÃO é um valor novo do tipo `Plan`; é "acesso Pro que expira". A distinção trial-vs-pago é do billing (`getBillingState.trial`), não dos limites.
+- **Avisos D-2/D-1 por email + banner in-app; push adiado pra M13** (decisão do usuário). A linha original do plano dizia "push + email", mas a infra de push (VAPID + service worker + `push_subscriptions`) é o milestone M13. A matriz do PRD §3.2 já lista "trial expirando" como evento de email Resend.
+- **Job via Next route + GitHub Actions cron**, não Edge Function — mesmo motivo do `cron/cleanup-attachments` (Edge Functions bloqueadas no dev local; o route reusa `lib/email/` direto). `pickTrialWarning` + colunas `trial_warn_d2/d1_sent_at` garantem 1 email por janela, idempotente. **D-1 tem precedência sobre D-2** — job atrasado que pega o workspace já a ≤1 dia manda direto o D-1.
+- **Sem backfill.** Workspaces existentes ficam `trial_ends_at` NULL (sem trial — resolvidos pela subscription ou Free).
+
+**Entregas:**
+
+- [x] [`supabase/migrations/20260530120000_m12_2_trial.sql`](supabase/migrations/20260530120000_m12_2_trial.sql) — `trial_ends_at` + `trial_warn_d2_sent_at` + `trial_warn_d1_sent_at` em `workspaces` + índice parcial pro job. Prisma schema sincronizado.
+- [x] [`apps/web/features/billing/trial.ts`](apps/web/features/billing/trial.ts) (novo, puro) — `computeTrialState` (none/active/expired + daysLeft), `pickTrialWarning` (qual aviso enviar, D-1 com precedência), `trialEndsAtFrom`.
+- [x] [`apps/web/lib/limits.ts`](apps/web/lib/limits.ts) — `getActivePlan` trial-aware (subscription ativa → pro; trial em andamento → pro; senão free).
+- [x] [`apps/web/features/workspace/actions.ts`](apps/web/features/workspace/actions.ts) — `createWorkspaceAction` seta `trialEndsAt` na criação do workspace.
+- [x] [`apps/web/features/billing/queries.ts`](apps/web/features/billing/queries.ts) + [`types.ts`](apps/web/features/billing/types.ts) — `getBillingState` carrega `BillingStateUI.trial`; `getTrialState` novo (query leve pro banner).
+- [x] [`apps/web/lib/email/templates/trial-expiring.ts`](apps/web/lib/email/templates/trial-expiring.ts) (novo) — template Resend D-2/D-1 (subject/html/text), HTML inline table-based como `invite.ts`.
+- [x] [`apps/web/app/api/cron/trial-warnings/route.ts`](apps/web/app/api/cron/trial-warnings/route.ts) (novo) + [`.github/workflows/cron-trial-warnings.yml`](.github/workflows/cron-trial-warnings.yml) (novo) — job diário (12:00 UTC) que varre trials a ≤2d/≤1d, manda email pro Owner, marca `trial_warn_*_sent_at`.
+- [x] [`billing-view.tsx`](<apps/web/app/(dashboard)/settings/billing/billing-view.tsx>) — `<TrialActiveCard>` (dias restantes + CTA Assinar Pro); `<FreeUpgradeCard>` mostra aviso de trial expirado.
+- [x] [`apps/web/features/billing/components/trial-banner.tsx`](apps/web/features/billing/components/trial-banner.tsx) (novo) + [`(dashboard)/layout.tsx`](<apps/web/app/(dashboard)/layout.tsx>) — banner de trial no topo do dashboard, tom escalando em ≤2d.
+- [x] [`apps/web/app/api/smoke-test/billing/route.ts`](apps/web/app/api/smoke-test/billing/route.ts) — **+15 checks** no grupo `trial-m12-2` (computeTrialState, pickTrialWarning, template). Total: 54 → **69**.
+- [x] `pnpm typecheck` ✅, `lint` ✅ (zero warnings), smoke `/api/smoke-test/billing` 69/69 ✅.
+
+**Não-objetivos M12#2 (explícitos):**
+
+- **Push notifications** dos avisos D-2/D-1 → M13 (precisa da infra de PWA/push).
+- **Notificação in-app no sino/drawer** — o centro de notificações ainda não existe; o banner cobre a superfície in-app. → milestone de notificações.
+- **Trial via Stripe (`trialing` com cartão)** — o trial é cardless por decisão de produto (CLAUDE.md §7.7).
+- **Bloqueio progressivo pós-trial** (read-only 30d) → M12#5. M12#2 só faz o downgrade pra limites Free.
+- **Tiers Pro IA / Enterprise** → M12#3. O trial dá acesso Pro.
+
+**Ops pós-deploy:**
+
+1. Aplicar migration `m12_2_trial` (`apply_migration name=m12_2_trial`).
+2. Registrar o workflow `cron-trial-warnings` no GitHub — secrets `CRON_SECRET` + `APP_HOST` já existem (`cron-cleanup-attachments` usa os mesmos).
+3. `RESEND_API_KEY` + `RESEND_FROM_EMAIL` já configurados (emails de convite M7) — sem env var nova.
+4. **Sem backfill** — pra dar trial a workspaces de teste existentes: `UPDATE workspaces SET trial_ends_at = now() + interval '7 days' WHERE trial_ends_at IS NULL`.
 
 ### M12#4 — limit enforcement + comparação Free×Pro + banners (entregue 2026-05-17)
 

@@ -13,7 +13,18 @@ import 'server-only';
 
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
-import type { BillingStateUI, SubscriptionUI } from './types';
+import { computeTrialState, type TrialState } from './trial';
+import type { BillingStateUI, SubscriptionUI, TrialStateUI } from './types';
+
+/** Converte `TrialState` (Date) → `TrialStateUI` (ISO). `none` → `null`. */
+function toTrialStateUI(state: TrialState): TrialStateUI | null {
+  if (state.status === 'none' || !state.endsAt) return null;
+  return {
+    status: state.status,
+    endsAt: state.endsAt.toISOString(),
+    daysLeft: state.daysLeft,
+  };
+}
 
 /**
  * Estado completo de billing do workspace pra render do `/settings/billing`.
@@ -25,7 +36,7 @@ import type { BillingStateUI, SubscriptionUI } from './types';
  */
 export async function getBillingState(workspaceId: string): Promise<BillingStateUI> {
   return withWorkspace(workspaceId, async (tx) => {
-    const [subscription, customer] = await Promise.all([
+    const [subscription, customer, workspace] = await Promise.all([
       tx.subscription.findFirst({
         where: { workspaceId, status: { in: ['active', 'past_due'] } },
         orderBy: { createdAt: 'desc' },
@@ -34,15 +45,21 @@ export async function getBillingState(workspaceId: string): Promise<BillingState
         where: { workspaceId },
         select: { workspaceId: true },
       }),
+      tx.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { trialEndsAt: true },
+      }),
     ]);
 
     const hasStripeCustomer = customer !== null;
+    const trial = toTrialStateUI(computeTrialState(workspace?.trialEndsAt ?? null, new Date()));
 
     if (!subscription) {
       return {
         plan: 'free',
         subscription: null,
         hasStripeCustomer,
+        trial,
       };
     }
 
@@ -60,6 +77,22 @@ export async function getBillingState(workspaceId: string): Promise<BillingState
       plan: subscription.plan,
       subscription: subUI,
       hasStripeCustomer,
+      trial,
     };
+  });
+}
+
+/**
+ * `getTrialState` — só o estado do trial do workspace (M12#2). Query leve
+ * (1 SELECT) pro `<TrialBanner>` do layout do dashboard, que renderiza em
+ * toda página e não precisa do resto do `BillingStateUI`.
+ */
+export async function getTrialState(workspaceId: string): Promise<TrialState> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const workspace = await tx.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { trialEndsAt: true },
+    });
+    return computeTrialState(workspace?.trialEndsAt ?? null, new Date());
   });
 }

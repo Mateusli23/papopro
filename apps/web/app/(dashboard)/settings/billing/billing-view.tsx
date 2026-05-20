@@ -19,6 +19,7 @@ import {
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock,
   ExternalLink,
   ShieldCheck,
   Sparkles,
@@ -28,7 +29,7 @@ import {
 } from '@papopro/ui/icons';
 
 import { createCheckoutSessionAction, createPortalSessionAction } from '@/features/billing/actions';
-import type { BillingStateUI } from '@/features/billing/types';
+import type { BillingStateUI, TrialStateUI } from '@/features/billing/types';
 import type { LimitStateUI, WorkspaceUsageUI } from '@/lib/limits';
 
 interface Props {
@@ -93,6 +94,7 @@ export function BillingView({ initialState, initialUsage }: Props) {
   }
 
   const isPro = initialState.plan === 'pro' && initialState.subscription !== null;
+  const trial = initialState.trial;
 
   return (
     <div className="flex flex-col gap-6">
@@ -106,7 +108,14 @@ export function BillingView({ initialState, initialUsage }: Props) {
         <span className="text-body">Apenas o Owner pode contratar ou cancelar a assinatura.</span>
       </div>
 
-      {isPro ? (
+      {trial && trial.status === 'active' ? (
+        <TrialActiveCard
+          trial={trial}
+          usage={initialUsage}
+          onSubscribe={handleSubscribePro}
+          pending={pending}
+        />
+      ) : isPro ? (
         <ProActiveCard
           state={initialState}
           usage={initialUsage}
@@ -114,7 +123,12 @@ export function BillingView({ initialState, initialUsage }: Props) {
           pending={pending}
         />
       ) : (
-        <FreeUpgradeCard usage={initialUsage} onSubscribe={handleSubscribePro} pending={pending} />
+        <FreeUpgradeCard
+          usage={initialUsage}
+          expiredTrial={trial && trial.status === 'expired' ? trial : null}
+          onSubscribe={handleSubscribePro}
+          pending={pending}
+        />
       )}
 
       <PlanComparisonTable
@@ -127,14 +141,78 @@ export function BillingView({ initialState, initialUsage }: Props) {
   );
 }
 
-// ─── Free state ────────────────────────────────────────────────────────────
+// ─── Trial state ───────────────────────────────────────────────────────────
 
-function FreeUpgradeCard({
+function TrialActiveCard({
+  trial,
   usage,
   onSubscribe,
   pending,
 }: {
+  trial: TrialStateUI;
   usage: WorkspaceUsageUI;
+  onSubscribe: () => void;
+  pending: boolean;
+}) {
+  const endDate = format(new Date(trial.endsAt), "dd 'de' MMMM", { locale: ptBR });
+  const urgent = trial.daysLeft <= 2;
+  const daysLabel = trial.daysLeft === 1 ? 'Falta 1 dia' : `Faltam ${trial.daysLeft} dias`;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-title flex items-center gap-2">
+            <Sparkles className="text-primary size-5" />
+            Teste grátis do Pro
+          </CardTitle>
+          <Badge variant={urgent ? 'warning' : 'info'}>{daysLabel}</Badge>
+        </div>
+        <CardDescription>
+          Você está testando o PapoPro com todos os recursos do Pro liberados. O teste termina em{' '}
+          {endDate} — assine pra não perder o acesso.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <UsageStat label="Leads ativos" state={usage.leads} />
+          <UsageStat label="Membros do time" state={usage.members} />
+        </div>
+
+        <div className="border-border bg-muted/30 flex flex-col gap-3 rounded-lg border p-4">
+          <div className="flex items-baseline gap-2">
+            <span className="text-foreground text-3xl font-semibold">R$ 197</span>
+            <span className="text-muted-foreground text-body">/mês</span>
+          </div>
+          <p className="text-body text-muted-foreground">
+            Quando o teste acabar, o workspace volta pro plano Free: leads e membros ficam limitados
+            e o motor de cadência, o Inbox WhatsApp e os agentes IA param de rodar.
+          </p>
+        </div>
+
+        <Button onClick={onSubscribe} disabled={pending} className="gap-2">
+          <Sparkles className="size-4" />
+          {pending ? 'Abrindo checkout...' : 'Assinar Pro'}
+        </Button>
+        <p className="text-caption text-muted-foreground">
+          Sem cobrança até você assinar. Pagamento via Stripe, cancele quando quiser.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Free state ────────────────────────────────────────────────────────────
+
+function FreeUpgradeCard({
+  usage,
+  expiredTrial,
+  onSubscribe,
+  pending,
+}: {
+  usage: WorkspaceUsageUI;
+  /** Trial expirado — renderiza um aviso no topo do card. `null` se nunca houve trial. */
+  expiredTrial: TrialStateUI | null;
   onSubscribe: () => void;
   pending: boolean;
 }) {
@@ -151,6 +229,16 @@ function FreeUpgradeCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
+        {expiredTrial && (
+          <div className="bg-warning/10 border-warning/40 text-warning flex items-start gap-2 rounded-md border px-3 py-2">
+            <Clock className="mt-0.5 size-4 shrink-0" />
+            <span className="text-body">
+              Seu teste grátis terminou em{' '}
+              {format(new Date(expiredTrial.endsAt), "dd 'de' MMMM", { locale: ptBR })}. Assine o
+              Pro pra reativar os recursos.
+            </span>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <UsageStat label="Leads ativos" state={usage.leads} />
           <UsageStat label="Membros do time" state={usage.members} />
