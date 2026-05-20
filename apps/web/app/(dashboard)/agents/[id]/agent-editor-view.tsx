@@ -52,12 +52,18 @@ interface AgentEditorViewProps {
   agent: Agent;
   initialSimulationState: SimulationStateUI | null;
   callerRole: string;
+  /** Outros agentes do workspace — opções do gatilho `agent_to_agent` (M11#6). */
+  agentOptions: Array<{ id: string; name: string }>;
+  /** Etapas do pipeline default — opções do gatilho `stage_negotiation` (M11#6). */
+  stageOptions: Array<{ id: string; name: string }>;
 }
 
 export function AgentEditorView({
   agent,
   initialSimulationState,
   callerRole,
+  agentOptions,
+  stageOptions,
 }: AgentEditorViewProps) {
   const router = useRouter();
   const [historyOpen, setHistoryOpen] = React.useState(false);
@@ -200,7 +206,11 @@ export function AgentEditorView({
           <AgentPromptEditor agent={agent} />
           <AgentPersonaFields agent={agent} />
           <AgentRoutingPanel agent={agent} />
-          <AgentHandoffPanel agent={agent} />
+          <AgentHandoffPanel
+            agent={agent}
+            agentOptions={agentOptions}
+            stageOptions={stageOptions}
+          />
           <AgentSimulationChat agent={agent} initialState={initialSimulationState} />
         </div>
 

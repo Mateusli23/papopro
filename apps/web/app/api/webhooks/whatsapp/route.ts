@@ -27,6 +27,7 @@ import { prisma, type Prisma } from '@papopro/db';
 
 import {
   loadActiveRoutingRules,
+  loadConversationDispatchState,
   loadLeadContextForRouter,
   runAgentForInboundMessage,
 } from '@/features/agents/runtime';
@@ -264,6 +265,13 @@ interface DispatchAgentInput {
  * sem propagar pro webhook (provedor já recebeu 200 da persistência inbound;
  * agente é "best-effort").
  *
+ * **Fluxo de resolução do agente (M11#6 — sessão sticky):**
+ *   1. `ai_enabled=false` → handoff agente→humano ativo; não despacha.
+ *   2. Sessão production aberta → continua com o agente dono dela (pula o
+ *      roteador — garante que a conversa não troca de agente entre turnos e
+ *      que regras `keyword` sigam respondendo após a 1ª mensagem).
+ *   3. Sem sessão aberta → roda o roteador (M11#5) pra escolher o agente.
+ *
  * **Não bloqueia o webhook em caminhos sem agente:** se nenhum agente ativo
  * casa, retorna imediatamente.
  */
@@ -273,25 +281,35 @@ async function dispatchAgentForInbound(input: DispatchAgentInput): Promise<void>
   if (!input.conversationId) return;
 
   try {
-    const [rules, leadCtx] = await Promise.all([
-      loadActiveRoutingRules(input.workspaceId),
-      loadLeadContextForRouter(input.workspaceId, input.leadId),
-    ]);
+    const dispatch = await loadConversationDispatchState(input.workspaceId, input.conversationId);
+    // Conversa em mãos humanas (handoff agente→humano) — roteador pula.
+    if (!dispatch.aiEnabled) return;
 
-    if (rules.length === 0) return;
+    let agentId: string;
+    if (dispatch.stickyAgentId) {
+      // Conversa já tem agente dono — continua com ele entre turnos.
+      agentId = dispatch.stickyAgentId;
+    } else {
+      // Primeiro contato (sem sessão aberta) — roteador decide.
+      const [rules, leadCtx] = await Promise.all([
+        loadActiveRoutingRules(input.workspaceId),
+        loadLeadContextForRouter(input.workspaceId, input.leadId),
+      ]);
+      if (rules.length === 0) return;
 
-    const match = pickAgentForInbound(rules, {
-      leadStageId: leadCtx?.leadStageId,
-      leadTags: leadCtx?.leadTags ?? [],
-      whatsappAccountId: input.whatsappAccountId,
-      messageBody: input.messageBody,
-    });
-
-    if (!match) return;
+      const match = pickAgentForInbound(rules, {
+        leadStageId: leadCtx?.leadStageId,
+        leadTags: leadCtx?.leadTags ?? [],
+        whatsappAccountId: input.whatsappAccountId,
+        messageBody: input.messageBody,
+      });
+      if (!match) return;
+      agentId = match.agentId;
+    }
 
     await runAgentForInboundMessage({
       workspaceId: input.workspaceId,
-      agentId: match.agentId,
+      agentId,
       leadId: input.leadId,
       leadPhone: input.leadPhone,
       conversationId: input.conversationId,

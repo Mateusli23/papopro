@@ -46,7 +46,9 @@ import type {
 /** Shape do JSONB `ai_agents.handoff_config`. Validado por Zod no Server Action
  *  de update; aqui assumimos shape correto (DB-managed). */
 interface HandoffConfigJson {
-  [kind: string]: { enabled?: boolean; keywords?: string[]; targetAgentId?: string } | undefined;
+  [kind: string]:
+    | { enabled?: boolean; keywords?: string[]; targetAgentId?: string; stageId?: string }
+    | undefined;
 }
 
 /** Resultado de uma chamada de simulation chat (M11#3). */
@@ -80,10 +82,11 @@ function serializeHandoffConfig(agentId: string, handoffConfig: unknown): Handof
       kind: kind as HandoffTriggerKind,
       enabled: entry.enabled ?? false,
       config:
-        entry.keywords || entry.targetAgentId
+        entry.keywords || entry.targetAgentId || entry.stageId
           ? {
               keywords: entry.keywords,
               targetAgentId: entry.targetAgentId,
+              stageId: entry.stageId,
             }
           : undefined,
     };
@@ -323,6 +326,23 @@ export async function getKnowledgeBaseFields(workspaceId: string): Promise<Knowl
  * pra começar uma simulação". Server Action `simulateAgentMessageAction`
  * cria a sessão na primeira mensagem.
  */
+/**
+ * Opções leves (`id` + `name`) de todos os agentes não-deletados do workspace.
+ * Alimenta o `<Select>` de agente-alvo do gatilho de handoff `agent_to_agent`
+ * (M11#6). O caller filtra o próprio agente fora da lista.
+ */
+export async function listAgentOptions(
+  workspaceId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  return withWorkspace(workspaceId, async (tx) => {
+    return tx.aiAgent.findMany({
+      where: { workspaceId, deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+  });
+}
+
 export async function getActiveSimulationState(
   workspaceId: string,
   agentId: string,

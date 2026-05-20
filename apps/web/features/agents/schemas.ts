@@ -83,7 +83,10 @@ export const handoffTriggerUpdateSchema = z.object({
   config: z
     .object({
       keywords: z.array(z.string().trim().min(1)).max(20, 'No máximo 20 palavras-chave').optional(),
-      targetAgentId: z.string().optional(),
+      /** Agente de destino do gatilho `agent_to_agent`. */
+      targetAgentId: z.string().uuid('Agente de destino inválido').optional(),
+      /** Etapa que dispara o gatilho `stage_negotiation` (M11#6). */
+      stageId: z.string().uuid('Etapa inválida').optional(),
     })
     .optional(),
 });

@@ -38,6 +38,17 @@ import { countAgents, getNextRouteMatch } from '@/features/agents/transforms';
 import type { Agent } from '@/features/agents/types';
 import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
 import {
+  endedReasonForHandoff,
+  evaluateInboundHandoff,
+  findHandoffTrigger,
+  HANDOFF_KINDS,
+  handoffReasonLabel,
+  isHandoffTriggerEnabled,
+  matchesAnyKeyword,
+  parseHandoffConfig,
+} from '@/lib/ai/handoff';
+import { buildIntentPrompt, parseIntentAnswer } from '@/lib/ai/intent';
+import {
   compareRulesForRouting,
   matchesKeyword,
   pickAgentForInbound,
@@ -650,6 +661,183 @@ export function GET() {
   t('matchesKeyword escapa caracteres especiais do value', () => {
     // value com "?" não deve virar quantifier regex.
     return matchesKeyword('Você está aí?', 'aí?') === true;
+  });
+
+  // ── M11#6: handoffs (pure) ──────────────────────────────────────────────
+  t = run('handoff-m11-6', results);
+
+  t('HANDOFF_KINDS tem os 6 gatilhos', () => {
+    const expected = [
+      'agent_to_agent',
+      'commercial_intent',
+      'keyword',
+      'manual',
+      'outside_business_hours',
+      'stage_negotiation',
+    ];
+    return JSON.stringify([...HANDOFF_KINDS].sort()) === JSON.stringify(expected);
+  });
+
+  t('parseHandoffConfig({}) materializa 6 triggers todos desligados', () => {
+    const triggers = parseHandoffConfig({});
+    return triggers.length === 6 && triggers.every((tr) => tr.enabled === false);
+  });
+
+  t('parseHandoffConfig lê enabled de um kind', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true } });
+    return isHandoffTriggerEnabled(triggers, 'keyword') === true;
+  });
+
+  t('parseHandoffConfig lê keywords / targetAgentId / stageId', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['humano'] },
+      agent_to_agent: { enabled: true, targetAgentId: 'agt_99' },
+      stage_negotiation: { enabled: true, stageId: 'stg_42' },
+    });
+    return (
+      findHandoffTrigger(triggers, 'keyword')?.config?.keywords?.[0] === 'humano' &&
+      findHandoffTrigger(triggers, 'agent_to_agent')?.config?.targetAgentId === 'agt_99' &&
+      findHandoffTrigger(triggers, 'stage_negotiation')?.config?.stageId === 'stg_42'
+    );
+  });
+
+  t('parseHandoffConfig descarta keywords vazias / não-string', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['ok', '', '  ', 42 as unknown as string] },
+    });
+    return (
+      JSON.stringify(findHandoffTrigger(triggers, 'keyword')?.config?.keywords) ===
+      JSON.stringify(['ok'])
+    );
+  });
+
+  t('matchesAnyKeyword casa palavra inteira case-insensitive', () => {
+    return matchesAnyKeyword('Quero falar com um HUMANO agora', ['atendente', 'humano']) === true;
+  });
+
+  t('matchesAnyKeyword lista vazia/undefined → false', () => {
+    return (
+      matchesAnyKeyword('quero humano', []) === false &&
+      matchesAnyKeyword('quero humano', undefined) === false
+    );
+  });
+
+  t('matchesAnyKeyword não casa substring', () => {
+    // "manual" não deve casar via "humano" nem vice-versa.
+    return matchesAnyKeyword('o processo é manual', ['humano']) === false;
+  });
+
+  t('evaluateInboundHandoff → null sem gatilho ligado', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: false, keywords: ['humano'] } });
+    return evaluateInboundHandoff(triggers, { messageBody: 'quero humano' }) === null;
+  });
+
+  t('evaluateInboundHandoff keyword ligado → handoff humano', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true, keywords: ['humano'] } });
+    const d = evaluateInboundHandoff(triggers, { messageBody: 'Posso falar com um humano?' });
+    return d?.target === 'human' && d.reason === 'keyword';
+  });
+
+  t('evaluateInboundHandoff keyword sem match → null', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true, keywords: ['humano'] } });
+    return evaluateInboundHandoff(triggers, { messageBody: 'qual o preço?' }) === null;
+  });
+
+  t('evaluateInboundHandoff commercial_intent detectado → handoff humano', () => {
+    const triggers = parseHandoffConfig({ commercial_intent: { enabled: true } });
+    const d = evaluateInboundHandoff(triggers, {
+      messageBody: 'quero fechar',
+      commercialIntentDetected: true,
+    });
+    return d?.target === 'human' && d.reason === 'commercial_intent';
+  });
+
+  t('evaluateInboundHandoff commercial_intent não-detectado → null', () => {
+    const triggers = parseHandoffConfig({ commercial_intent: { enabled: true } });
+    return (
+      evaluateInboundHandoff(triggers, {
+        messageBody: 'só pesquisando',
+        commercialIntentDetected: false,
+      }) === null
+    );
+  });
+
+  t('evaluateInboundHandoff agent_to_agent → handoff agente com targetAgentId', () => {
+    const triggers = parseHandoffConfig({
+      agent_to_agent: { enabled: true, keywords: ['proposta'], targetAgentId: 'agt_x' },
+    });
+    const d = evaluateInboundHandoff(triggers, { messageBody: 'me manda a proposta' });
+    return d?.target === 'agent' && d.targetAgentId === 'agt_x';
+  });
+
+  t('evaluateInboundHandoff agent_to_agent sem targetAgentId → null', () => {
+    const triggers = parseHandoffConfig({
+      agent_to_agent: { enabled: true, keywords: ['proposta'] },
+    });
+    return evaluateInboundHandoff(triggers, { messageBody: 'me manda a proposta' }) === null;
+  });
+
+  t('evaluateInboundHandoff precedência: keyword (humano) ganha de agent_to_agent', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['humano'] },
+      agent_to_agent: { enabled: true, keywords: ['proposta'], targetAgentId: 'agt_x' },
+    });
+    const d = evaluateInboundHandoff(triggers, {
+      messageBody: 'quero humano e a proposta',
+    });
+    return d?.target === 'human' && d.reason === 'keyword';
+  });
+
+  t('endedReasonForHandoff prefixa handoff_', () => {
+    return (
+      endedReasonForHandoff('keyword') === 'handoff_keyword' &&
+      endedReasonForHandoff('agent_to_agent') === 'handoff_agent_to_agent'
+    );
+  });
+
+  t('handoffReasonLabel cobre os 6 kinds com texto pt-BR', () => {
+    const offender = HANDOFF_KINDS.find((k) => {
+      const label = handoffReasonLabel(k);
+      return typeof label !== 'string' || label.length < 10;
+    });
+    return !offender || `kind ${offender} sem label`;
+  });
+
+  t('handoffTriggerUpdateSchema aceita stageId/targetAgentId UUID', () => {
+    const stageOk = handoffTriggerUpdateSchema.safeParse({
+      kind: 'stage_negotiation',
+      enabled: true,
+      config: { stageId: 'a1b2c3d4-e5f6-4789-8abc-def012345678' },
+    }).success;
+    const agentOk = handoffTriggerUpdateSchema.safeParse({
+      kind: 'agent_to_agent',
+      enabled: true,
+      config: { targetAgentId: 'a1b2c3d4-e5f6-4789-8abc-def012345678', keywords: ['proposta'] },
+    }).success;
+    return stageOk && agentOk;
+  });
+
+  t('handoffTriggerUpdateSchema rejeita stageId não-UUID', () => {
+    return !handoffTriggerUpdateSchema.safeParse({
+      kind: 'stage_negotiation',
+      enabled: true,
+      config: { stageId: 'stage-1' },
+    }).success;
+  });
+
+  t('buildIntentPrompt inclui a mensagem a classificar', () => {
+    const p = buildIntentPrompt('Quero contratar agora', []);
+    return p.includes('Quero contratar agora') && p.includes('classificar');
+  });
+
+  t('parseIntentAnswer: "sim" → true, "nao"/vazio → false', () => {
+    return (
+      parseIntentAnswer('sim') === true &&
+      parseIntentAnswer('  Sim.') === true &&
+      parseIntentAnswer('nao') === false &&
+      parseIntentAnswer('') === false &&
+      parseIntentAnswer('talvez') === false
+    );
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────

@@ -970,6 +970,8 @@ function buildConversation(seed: ConversationSeed): BuiltConversation {
     lastMessagePreview: formatMessagePreview(last),
     lastMessageDirection: last.direction,
     unreadCount: seed.unreadCount,
+    // Mock: toda conversa começa com IA habilitada (M11#6). Handoff é runtime.
+    aiEnabled: true,
     archivedAt,
     createdAt,
   };

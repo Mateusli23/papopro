@@ -806,7 +806,7 @@ export async function updateHandoffTriggerAction(
 
       const current = (agent.handoffConfig ?? {}) as Record<
         string,
-        { enabled?: boolean; keywords?: string[]; targetAgentId?: string }
+        { enabled?: boolean; keywords?: string[]; targetAgentId?: string; stageId?: string }
       >;
       const next = {
         ...current,
@@ -814,6 +814,7 @@ export async function updateHandoffTriggerAction(
           enabled,
           ...(config?.keywords ? { keywords: config.keywords } : {}),
           ...(config?.targetAgentId ? { targetAgentId: config.targetAgentId } : {}),
+          ...(config?.stageId ? { stageId: config.stageId } : {}),
         },
       };
 
