@@ -12,6 +12,7 @@ import {
   Bell,
   Building2,
   CreditCard,
+  Download,
   Lock,
   type LucideIcon,
   Plug,
@@ -71,6 +72,12 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     href: '/settings/integrations',
     icon: Plug,
     description: 'Calendar, webhooks, ads e CRMs externos',
+  },
+  {
+    label: 'Instalar app',
+    href: '/settings/app',
+    icon: Download,
+    description: 'Instale o PapoPro como aplicativo no celular ou desktop',
   },
   {
     label: 'Lead frio',

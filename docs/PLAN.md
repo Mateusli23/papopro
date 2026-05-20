@@ -2399,16 +2399,24 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 ## M13 — PWA + Push + Polimento + Deploy de Produção
 
-**Branch:** `m13-pwa-deploy`
+**Estratégia:** fatiado em sub-PRs sequenciais sobre `dev` (mesmo gitflow de M8–M12). O "Deploy" propriamente dito (DNS, SSL, env de produção, Stripe live, chip uazapi) é a cauda final, fora dos sub-PRs de código.
 
 **Objetivo:** Tornar o produto instalável como PWA, ativar push notifications ponta-a-ponta, polimento final (LGPD, auditoria, observabilidade), deploy em produção.
 
-**Entregas — PWA:**
+| Sub-PR    | Escopo                                                                             | Branch                | Status      |
+| --------- | ---------------------------------------------------------------------------------- | --------------------- | ----------- |
+| **M13#1** | PWA — manifest, service worker, ícones, tela "Instalar app"                        | `m13-1-pwa`           | ✅ entregue |
+| **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ⏳ pendente |
+| **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ⏳ pendente |
+| **M13#4** | Observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y              | `m13-4-observability` | ⏳ pendente |
+| **M13#5** | E2E Playwright (signup → … → upgrade)                                              | `m13-5-e2e`           | ⏳ pendente |
 
-- [ ] `public/manifest.json` com nome, ícones (192/512/maskable), theme color, display standalone
-- [ ] `public/sw.js` com Workbox: cache de shell offline-first, network-first para data
-- [ ] Suporte iOS Safari 16.4+ (notificações depois de "Adicionar à Tela Inicial")
-- [ ] Tela "Instalar app" com instruções por plataforma
+**Entregas — PWA (M13#1):**
+
+- [x] `public/manifest.json` — nome, ícone SVG maskable, theme color, display standalone
+- [x] `public/sw.js` — service worker hand-rolled: cache-first em assets imutáveis, network-first com fallback `offline.html` em navegações, `/api` nunca cacheado
+- [x] Suporte iOS Safari 16.4+ (`appleWebApp` metadata + instruções manuais — iOS não dispara `beforeinstallprompt`)
+- [x] Tela "Instalar app" (`/settings/app`) com instruções por plataforma
 
 **Entregas — Push Notifications:**
 
@@ -2452,6 +2460,47 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 **Commit final:** `feat(release): pwa, push notifications, lgpd compliance and production deploy`
 
 **Tag:** `v1.0.0` no merge final.
+
+---
+
+### M13#1 — PWA instalável (entregue 2026-05-20)
+
+**Branch:** `m13-1-pwa`
+
+**Objetivo:** transformar o `apps/web` num PWA instalável — manifest, service worker com cache offline-first do shell, ícones, e uma tela "Instalar app" com instruções por plataforma. Primeiro sub-PR do M13; o service worker registrado aqui é pré-requisito do push (M13#2).
+
+**Decisões fechadas:**
+
+- **Service worker hand-rolled** (`public/sw.js`), não `next-pwa`/`serwist`/Workbox. Zero dependência nova (instalar pacote nesta máquina tem fricção de antivírus/TLS — ver [[dev-local-windows-antivirus-tls]]), zero wrapper no `next.config`. ~100 linhas auditáveis.
+- **Estratégia de cache conservadora** — o produto é todo dado vivo + auth + RLS: `/_next/static/*` + `icon.svg` + `manifest.json` → cache-first (imutáveis); navegações → network-first com fallback `offline.html`; `/api/*` e o resto → não interceptado (nunca cacheia dado/auth).
+- **SW registrado só em produção** — em dev cacheia assets e atrapalha o hot-reload.
+- **Ícone do manifest é SVG** (`public/icon.svg`, `purpose: "any maskable"`), não PNG raster — não há pipeline pra gerar binários no repo, e SVG no manifest é aceito por Chrome/Android modernos. Raster 192/512 fica como polimento se algum instalador reclamar (precisa de asset de design). O ícone da home screen no iOS vem do `apple-icon.tsx` (PNG via `next/og`).
+- **`beforeinstallprompt` capturado no root layout** — o evento dispara cedo e some se ninguém o segura. `<PwaProvider>` (React Context, sem Zustand — estado estreito) guarda o evento; `/settings/app` dispara o prompt on-demand. iOS nunca dispara o evento → a tela mostra instruções manuais.
+- **Tela em `/settings/app`** — integrada ao hub de Configurações (não modal nem passo de onboarding).
+
+**Entregas:**
+
+- [x] `apps/web/public/manifest.json` — `display: standalone`, theme/background color, ícone SVG (`any` + `maskable`).
+- [x] `apps/web/public/sw.js` — service worker hand-rolled (cache-first imutáveis / network-first navegações / `offline.html`).
+- [x] `apps/web/public/icon.svg` + `apps/web/public/offline.html` — marca + página de fallback offline.
+- [x] `apps/web/app/icon.tsx` + `apple-icon.tsx` — favicon + apple-touch-icon dinâmicos via `next/og` (espelham a `apps/landing`).
+- [x] `apps/web/app/layout.tsx` — `metadata.manifest` + `appleWebApp` + `<PwaProvider>` montado no root.
+- [x] `apps/web/lib/pwa/platform.ts` (puro) — `detectPlatform`, `getInstallInstructions`, `isStandalone`.
+- [x] `apps/web/components/pwa/pwa-provider.tsx` — registra o SW + captura `beforeinstallprompt` num Context; hook `useInstallPrompt`.
+- [x] `apps/web/app/(dashboard)/settings/app/` — tela "Instalar app" (`page.tsx` + `install-view.tsx`) + entrada no `settings-nav-config`.
+- [x] `apps/web/app/api/smoke-test/pwa/route.ts` (novo) — grupos `platform-m13-1` / `install-instructions-m13-1` / `manifest-m13-1` (14 checks).
+- [x] `pnpm typecheck` ✅, `lint` ✅, `build` ✅, smoke `/api/smoke-test/pwa` 14/14 ✅.
+
+**Não-objetivos M13#1 (explícitos):**
+
+- **Push notifications** (VAPID, `push_subscriptions`, envio) → M13#2 — o SW deste sub-PR é o pré-requisito.
+- **Ícones PNG raster 192/512** — SVG cobre o MVP; raster é polimento com asset de design.
+- **Splash screens iOS dedicadas** — iOS gera a partir do `apple-touch-icon` + `background_color`.
+- **Cache de dados offline** (ler leads/conversas sem rede) — fora de escopo; o produto é dado vivo. O SW garante só shell + fallback offline.
+
+**Ops pós-deploy:** nenhuma — puro código estático + client. Validação real é Lighthouse PWA + instalar num device (iOS/Android/desktop).
+
+**Próximo passo:** **M13#2** (push notifications) — reusa o service worker registrado aqui.
 
 ---
 
