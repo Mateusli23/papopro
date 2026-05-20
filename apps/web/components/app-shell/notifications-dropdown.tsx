@@ -4,7 +4,6 @@ import * as React from 'react';
 
 import Link from 'next/link';
 
-import { differenceInDays, parseISO } from 'date-fns';
 import { toast } from 'react-hot-toast';
 
 import {
@@ -22,7 +21,6 @@ import {
   AlertCircle,
   Bell,
   Clock,
-  Flame,
   type LucideIcon,
   MessageCircle,
   Repeat,
@@ -31,22 +29,41 @@ import {
   Zap,
 } from '@papopro/ui/icons';
 
-import { acknowledgeColdAlertAction } from '@/features/cadences/actions';
-import type { ColdAlertUI } from '@/features/cadences/queries';
 import {
-  FAKE_NOTIFICATIONS,
-  type FakeNotification,
-  type NotificationKind,
-} from '@/lib/fixtures/notifications';
+  markAllNotificationsReadAction,
+  markNotificationReadAction,
+} from '@/features/notifications/actions';
+import type { NotificationItem } from '@/features/notifications/types';
 
-const ICON_BY_KIND: Record<NotificationKind, { Icon: LucideIcon; tone: string }> = {
-  whatsapp_down: { Icon: WifiOff, tone: 'bg-destructive/15 text-destructive' },
-  lead_cold: { Icon: Flame, tone: 'bg-warning/20 text-warning' },
-  cadence_paused: { Icon: Repeat, tone: 'bg-info/15 text-info' },
-  new_message: { Icon: MessageCircle, tone: 'bg-primary/15 text-primary' },
+/**
+ * Sino de notificações no topbar (Client child do Server wrapper
+ * `NotificationsButton`). Drawer com até 30 dias (PRD §3.2).
+ *
+ * **M13#2:** lê 100% da tabela `notifications` real. Clicar numa linha marca
+ * como lida (UI otimista) e segue o deep-link; "Marcar todas" zera o badge.
+ * O badge conta as não-lidas.
+ */
+
+interface EventVisual {
+  Icon: LucideIcon;
+  tone: string;
+}
+
+/** Ícone + tom por evento da matriz PRD §3.2. Evento novo cai no default. */
+const EVENT_VISUALS: Record<string, EventVisual> = {
+  new_lead_assigned: { Icon: Zap, tone: 'bg-primary/15 text-primary' },
+  whatsapp_message_received: { Icon: MessageCircle, tone: 'bg-primary/15 text-primary' },
+  lead_cooling: { Icon: Snowflake, tone: 'bg-warning/20 text-warning' },
   task_due: { Icon: Clock, tone: 'bg-muted text-muted-foreground' },
-  trial_ending: { Icon: AlertCircle, tone: 'bg-warning/20 text-warning' },
+  whatsapp_connection_down: { Icon: WifiOff, tone: 'bg-destructive/15 text-destructive' },
+  workspace_invite_received: { Icon: Bell, tone: 'bg-info/15 text-info' },
+  trial_expiring: { Icon: AlertCircle, tone: 'bg-warning/20 text-warning' },
+  payment_failed: { Icon: AlertCircle, tone: 'bg-destructive/15 text-destructive' },
+  agent_handoff_to_human: { Icon: Repeat, tone: 'bg-info/15 text-info' },
+  bulk_send_finished: { Icon: Zap, tone: 'bg-success/15 text-success' },
 };
+
+const DEFAULT_VISUAL: EventVisual = { Icon: Bell, tone: 'bg-muted text-muted-foreground' };
 
 function formatRelative(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -58,15 +75,17 @@ function formatRelative(iso: string): string {
   return `há ${Math.round(hours / 24)}d`;
 }
 
-function FakeNotificationRow({ n }: { n: FakeNotification }) {
-  const { Icon, tone } = ICON_BY_KIND[n.kind];
-  return (
-    <div
-      className={cn(
-        'hover:bg-muted/50 flex items-start gap-3 rounded-md px-3 py-2.5 transition-colors',
-        !n.read && 'bg-primary/[0.04]',
-      )}
-    >
+interface NotificationRowProps {
+  notification: NotificationItem;
+  read: boolean;
+  onRead: (id: string) => void;
+}
+
+function NotificationRow({ notification, read, onRead }: NotificationRowProps) {
+  const { Icon, tone } = EVENT_VISUALS[notification.event] ?? DEFAULT_VISUAL;
+
+  const inner = (
+    <>
       <span
         className={cn('mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full', tone)}
       >
@@ -74,135 +93,77 @@ function FakeNotificationRow({ n }: { n: FakeNotification }) {
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-body text-foreground truncate font-medium">{n.title}</span>
+          <span className="text-body text-foreground truncate font-medium">
+            {notification.title}
+          </span>
           <span className="text-caption text-muted-foreground shrink-0">
-            {formatRelative(n.createdAt)}
+            {formatRelative(notification.createdAt)}
           </span>
         </div>
-        <p className="text-caption text-muted-foreground line-clamp-2">{n.description}</p>
+        <p className="text-caption text-muted-foreground line-clamp-2">{notification.body}</p>
       </div>
-      {!n.read && (
+      {!read && (
         <span className="bg-primary mt-1 size-1.5 shrink-0 rounded-full" aria-label="Não lida" />
       )}
-    </div>
+    </>
   );
-}
 
-/**
- * Calcula dias de inatividade reais a partir de `lastInteractionAt`. Se
- * for `null` (lead pré-M9 sem registro), usa o `daysInactive` do threshold
- * como aproximação — pior caso é mostrar o mínimo configurado.
- */
-function realDaysIdle(alert: ColdAlertUI): number {
-  if (!alert.lastInteractionAt) return alert.daysInactive;
-  return Math.max(0, differenceInDays(new Date(), parseISO(alert.lastInteractionAt)));
-}
+  const className = cn(
+    'hover:bg-muted/50 flex items-start gap-3 rounded-md px-3 py-2.5 text-left transition-colors',
+    !read && 'bg-primary/[0.04]',
+  );
 
-/**
- * Row de cold alert real (M10#4). Clicar leva pro lead onde tem o banner com
- * botão de ack explícito; "Visto" inline aqui dispara o ack direto sem sair
- * do drawer.
- *
- * Optimistic UI: marca como acked localmente antes da Server Action voltar.
- * Se falhar, restaura + mostra toast (raro — workspace/role já validado no
- * server quando o alert chegou).
- */
-function ColdAlertRow({
-  alert,
-  onAcked,
-}: {
-  alert: ColdAlertUI;
-  onAcked: (alertId: string) => void;
-}) {
-  const [pending, setPending] = React.useState(false);
-  const daysIdle = realDaysIdle(alert);
-
-  async function handleAck(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setPending(true);
-    const result = await acknowledgeColdAlertAction(alert.id);
-    if (!result.ok) {
-      setPending(false);
-      toast.error(result.error);
-      return;
-    }
-    onAcked(alert.id);
+  if (notification.url) {
+    return (
+      <Link href={notification.url} className={className} onClick={() => onRead(notification.id)}>
+        {inner}
+      </Link>
+    );
   }
 
   return (
-    <Link
-      href={`/leads/${alert.leadId}`}
-      className="hover:bg-muted/50 bg-warning/[0.06] flex items-start gap-3 rounded-md px-3 py-2.5 transition-colors"
-    >
-      <span className="bg-warning/20 text-warning mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full">
-        <Snowflake className="size-4" aria-hidden />
-      </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-body text-foreground truncate font-medium">
-            Lead frio: {alert.leadName}
-          </span>
-          <span className="text-caption text-muted-foreground shrink-0">
-            {formatRelative(alert.triggeredAt)}
-          </span>
-        </div>
-        <p className="text-caption text-muted-foreground line-clamp-2">
-          {alert.stageName} · sem interação há {daysIdle} {daysIdle === 1 ? 'dia' : 'dias'}
-        </p>
-        <button
-          type="button"
-          onClick={handleAck}
-          disabled={pending}
-          className="text-caption text-primary hover:text-primary/80 mt-1 self-start font-medium underline-offset-2 hover:underline disabled:opacity-50"
-        >
-          {pending ? 'Marcando…' : 'Marcar como visto'}
-        </button>
-      </div>
-    </Link>
+    <button type="button" className={className} onClick={() => onRead(notification.id)}>
+      {inner}
+    </button>
   );
 }
 
 interface NotificationsDropdownProps {
-  initialColdAlerts: ColdAlertUI[];
+  initialNotifications: NotificationItem[];
 }
 
-/**
- * Sino de notificações no topbar (Client child do Server wrapper
- * `NotificationsButton`). Drawer com até 30 dias (PRD §3.2).
- *
- * **M10#4:** cold alerts reais no topo (vindos via prop do Server) + fixtures
- * existentes embaixo. Badge do sino conta SÓ cold alerts reais — fixtures
- * ficam visíveis no drawer mas não inflam o badge (evita prometer "5 não
- * lidas" e nada mais zerar quando o usuário clica). Full migração in-app
- * pra `notifications` table fica pra M13 (comentário em
- * `notifications-button.tsx` antecipa).
- */
-export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdownProps) {
-  // Mantém Set persistente de alerts já acked nesta sessão. Quando server
-  // revalidatePath traz a lista de novo (pode incluir um alert que o user
-  // acabou de ack via banner em outra aba), filtramos por ackedIds pra não
-  // "ressuscitar" o alert no sino.
-  const [ackedIds, setAckedIds] = React.useState<Set<string>>(() => new Set());
+export function NotificationsDropdown({ initialNotifications }: NotificationsDropdownProps) {
+  // Conjunto de ids marcados como lidos nesta sessão (UI otimista). Combinado
+  // com `readAt` do servidor pra decidir o estado de cada linha.
+  const [readIds, setReadIds] = React.useState<Set<string>>(() => new Set());
 
-  // Filtra cold alerts efetivamente visíveis: server snapshot menos os que
-  // já marcamos como acked otimisticamente nesta sessão. Memoiza pra evitar
-  // recomputar a cada render.
-  const coldAlerts = React.useMemo(
-    () => initialColdAlerts.filter((a) => !ackedIds.has(a.id)),
-    [initialColdAlerts, ackedIds],
+  const isRead = React.useCallback(
+    (n: NotificationItem) => n.readAt !== null || readIds.has(n.id),
+    [readIds],
   );
 
-  function handleAcked(alertId: string) {
-    setAckedIds((prev) => {
+  const unreadCount = React.useMemo(
+    () => initialNotifications.filter((n) => !isRead(n)).length,
+    [initialNotifications, isRead],
+  );
+
+  function handleRead(id: string) {
+    setReadIds((prev) => {
+      if (prev.has(id)) return prev;
       const next = new Set(prev);
-      next.add(alertId);
+      next.add(id);
       return next;
     });
+    void markNotificationReadAction(id);
   }
 
-  const unreadCold = coldAlerts.length;
-  const fakeUnread = FAKE_NOTIFICATIONS.filter((n) => !n.read).length;
+  async function handleReadAll() {
+    const unreadIds = initialNotifications.filter((n) => !isRead(n)).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+    setReadIds((prev) => new Set([...prev, ...unreadIds]));
+    const result = await markAllNotificationsReadAction();
+    if (!result.ok) toast.error(result.error);
+  }
 
   return (
     <DropdownMenu>
@@ -211,15 +172,15 @@ export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdo
           variant="ghost"
           size="icon"
           className="relative"
-          aria-label={`Notificações: ${unreadCold} leads frios sem resposta`}
+          aria-label={`Notificações: ${unreadCount} não lidas`}
         >
           <Bell className="size-4" />
-          {unreadCold > 0 && (
+          {unreadCount > 0 && (
             <span
               aria-hidden
               className="bg-destructive text-destructive-foreground absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full text-[10px] font-bold"
             >
-              {unreadCold}
+              {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           )}
         </Button>
@@ -227,27 +188,40 @@ export function NotificationsDropdown({ initialColdAlerts }: NotificationsDropdo
       <DropdownMenuContent align="end" className="w-96 p-0">
         <DropdownMenuLabel className="flex items-center justify-between px-3 py-3 normal-case tracking-normal">
           <span className="text-title text-foreground">Notificações</span>
-          {unreadCold + fakeUnread > 0 && (
+          {unreadCount > 0 && (
             <Badge variant="secondary">
               <Zap className="size-3" />
-              {unreadCold > 0 ? `${unreadCold} frios` : `${fakeUnread} novas`}
+              {unreadCount > 9 ? '9+' : unreadCount} novas
             </Badge>
           )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="m-0" />
         <ScrollArea className="max-h-96">
-          <div className="flex flex-col p-2">
-            {coldAlerts.map((a) => (
-              <ColdAlertRow key={a.id} alert={a} onAcked={handleAcked} />
-            ))}
-            {FAKE_NOTIFICATIONS.map((n) => (
-              <FakeNotificationRow key={n.id} n={n} />
-            ))}
-          </div>
+          {initialNotifications.length > 0 ? (
+            <div className="flex flex-col p-2">
+              {initialNotifications.map((n) => (
+                <NotificationRow key={n.id} notification={n} read={isRead(n)} onRead={handleRead} />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1 px-3 py-10 text-center">
+              <Bell className="text-muted-foreground/50 size-6" aria-hidden />
+              <span className="text-body text-foreground font-medium">Tudo em dia</span>
+              <span className="text-caption text-muted-foreground">
+                Suas notificações dos últimos 30 dias aparecem aqui.
+              </span>
+            </div>
+          )}
         </ScrollArea>
         <DropdownMenuSeparator className="m-0" />
         <div className="flex items-center justify-between p-2">
-          <Button variant="ghost" size="sm" className="text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={handleReadAll}
+            disabled={unreadCount === 0}
+          >
             Marcar todas como lidas
           </Button>
           <Button variant="link" size="sm" asChild>

@@ -7,10 +7,10 @@ import { toast } from 'react-hot-toast';
 import { Badge, Switch, Tooltip, TooltipContent, TooltipTrigger } from '@papopro/ui';
 import { Lock } from '@papopro/ui/icons';
 
+import { updateNotificationPrefAction } from '@/features/notifications/actions';
 import { NOTIFICATION_EVENTS } from '@/lib/fixtures/notification-prefs';
 
-import { togglePref, useNotificationPrefs } from '../store';
-import type { NotificationChannel, NotificationEventDef } from '../types';
+import type { NotificationChannel, NotificationEventDef, NotificationPrefs } from '../types';
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   inapp: 'In-app',
@@ -21,25 +21,70 @@ const CHANNEL_LABELS: Record<NotificationChannel, string> = {
 const ALL_CHANNELS: NotificationChannel[] = ['inapp', 'push', 'email'];
 
 /**
- * Matriz de preferências (PRD §3.2). Em desktop renderiza como tabela
- * 10×3; em mobile vira lista de cards (cada evento é um card com 3 switches).
+ * Matriz de preferências (PRD §3.2) — real desde M13#2.
  *
- * Eventos administrativos (`isAdministrative: true`) ficam com switch
- * `disabled` + ícone de cadeado + tooltip explicativo. Tentativa de toggle
- * via teclado é capturada no transform e retorna `ok: false`.
+ * Em desktop é uma tabela 10×3; em mobile vira lista de cards. Cada toggle
+ * persiste em `notification_preferences` via `updateNotificationPrefAction`,
+ * com UI otimista: muda o switch na hora e reverte se a Server Action falhar.
  *
- * Toast com debounce 400ms — toggles rápidos não viram spam.
+ * `initialPrefs` vem do servidor (`loadNotificationPrefs`); o que não estiver
+ * salvo cai no default ligado (espelha `FAKE_NOTIFICATION_PREFS`).
+ *
+ * Eventos administrativos (`isAdministrative`) ficam com switch `disabled` +
+ * cadeado + tooltip — e a Server Action rejeita por garantia.
  */
-export function NotificationMatrix() {
-  const prefs = useNotificationPrefs();
+
+/**
+ * Resolve as preferências efetivas: para cada evento × canal permitido pela
+ * matriz, usa o valor salvo ou o default ligado.
+ */
+function buildEffectivePrefs(initial: NotificationPrefs | null): NotificationPrefs {
+  return NOTIFICATION_EVENTS.reduce((acc, event) => {
+    acc[event.key] = event.channels.reduce<Partial<Record<NotificationChannel, boolean>>>(
+      (channelAcc, channel) => {
+        channelAcc[channel] = initial?.[event.key]?.[channel] ?? true;
+        return channelAcc;
+      },
+      {},
+    );
+    return acc;
+  }, {} as NotificationPrefs);
+}
+
+export function NotificationMatrix({ initialPrefs }: { initialPrefs: NotificationPrefs | null }) {
+  const [prefs, setPrefs] = React.useState<NotificationPrefs>(() =>
+    buildEffectivePrefs(initialPrefs),
+  );
   const lastToastAt = React.useRef(0);
 
-  function handleToggle(event: NotificationEventDef, channel: NotificationChannel, next: boolean) {
-    const r = togglePref({ event: event.key, channel, enabled: next });
-    if (!r.ok) {
-      toast.error(r.reason ?? 'Não foi possível atualizar agora');
+  function setChannel(
+    eventKey: NotificationEventDef['key'],
+    channel: NotificationChannel,
+    value: boolean,
+  ) {
+    setPrefs((prev) => ({
+      ...prev,
+      [eventKey]: { ...prev[eventKey], [channel]: value },
+    }));
+  }
+
+  async function handleToggle(
+    event: NotificationEventDef,
+    channel: NotificationChannel,
+    next: boolean,
+  ) {
+    // UI otimista — aplica antes da Server Action voltar.
+    setChannel(event.key, channel, next);
+
+    const result = await updateNotificationPrefAction({ event: event.key, channel, enabled: next });
+    if (!result.ok) {
+      // Reverte e avisa.
+      setChannel(event.key, channel, !next);
+      toast.error(result.error);
       return;
     }
+
+    // Toast com debounce 400ms — toggles rápidos não viram spam.
     const now = Date.now();
     if (now - lastToastAt.current > 400) {
       toast.success('Preferências salvas');

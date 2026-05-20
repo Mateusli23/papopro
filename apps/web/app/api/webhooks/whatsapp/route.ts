@@ -37,6 +37,7 @@ import {
   handleMessageStatus,
 } from '@/features/inbox/handlers';
 import { pickAgentForInbound } from '@/lib/ai/router';
+import { dispatchNotification } from '@/lib/notifications/dispatch';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { checkRateLimit } from '@/lib/webhooks/rate-limit';
@@ -211,6 +212,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       !result.messageReceived.optOut &&
       result.messageReceived.leadId
     ) {
+      // Notifica o vendedor responsável que o cliente respondeu (M13#2 —
+      // evento `whatsapp_message_received`). Independe de o conteúdo ser
+      // texto: mídia sem caption também conta como resposta do cliente.
+      await notifyInboundMessage(
+        instance.workspaceId,
+        result.messageReceived.leadId,
+        request.nextUrl.origin,
+      );
+
       const messageBody = event.message.text?.body ?? null;
       // Mídia sem caption (body null) só pode disparar `kind=keyword` (que
       // exige texto) — pulamos o roteador inteiro pra evitar falso match.
@@ -323,6 +333,37 @@ async function dispatchAgentForInbound(input: DispatchAgentInput): Promise<void>
       leadId: input.leadId,
       conversationId: input.conversationId,
     });
+  }
+}
+
+/**
+ * Dispara a notificação `whatsapp_message_received` pro vendedor responsável
+ * pelo lead. O assignee é obrigatório no schema (`LeadAssignee` onDelete:
+ * Restrict), então sempre há um destinatário. Best-effort — `dispatchNotification`
+ * nunca lança, e a query é embrulhada pra não tocar o 200 do webhook.
+ */
+async function notifyInboundMessage(
+  workspaceId: string,
+  leadId: string,
+  appBaseUrl: string,
+): Promise<void> {
+  try {
+    const lead = await prisma.lead.findFirst({
+      where: { id: leadId, workspaceId },
+      select: { name: true, assignedTo: { select: { userId: true } } },
+    });
+    if (!lead) return;
+    await dispatchNotification({
+      workspaceId,
+      event: 'whatsapp_message_received',
+      recipientUserIds: [lead.assignedTo.userId],
+      title: 'Nova mensagem no WhatsApp',
+      body: `${lead.name} respondeu — veja na caixa de entrada.`,
+      url: '/inbox',
+      appBaseUrl,
+    });
+  } catch (err) {
+    reportNonFatal('whatsapp.webhook.notify_inbound', err, { workspaceId, leadId });
   }
 }
 

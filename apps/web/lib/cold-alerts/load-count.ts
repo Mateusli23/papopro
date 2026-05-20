@@ -2,11 +2,7 @@ import 'server-only';
 
 import { cache } from 'react';
 
-import {
-  type ColdAlertUI,
-  countActiveColdAlerts,
-  listActiveColdAlerts,
-} from '@/features/cadences/queries';
+import { countActiveColdAlerts } from '@/features/cadences/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import type { Role } from '@/lib/auth/require-role';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
@@ -41,33 +37,5 @@ export const loadColdAlertsCount = cache(async (): Promise<number> => {
   } catch (err) {
     reportNonFatal('coldAlerts.loadCount', err);
     return 0;
-  }
-});
-
-/**
- * Lista cold alerts ativos pro caller (M10#4). Cached por request — mesmo
- * round-trip do NotificationsButton (Server wrapper).
- *
- * Retorna `[]` em qualquer falha — UI degrada graciosamente sem cold alerts
- * no drawer em vez de quebrar o sino inteiro.
- */
-export const loadActiveColdAlerts = cache(async (): Promise<ColdAlertUI[]> => {
-  try {
-    const ctx = await getCurrentUserContext();
-    if (!ctx) return [];
-
-    const workspaceId = readWorkspaceCookie();
-    if (!workspaceId) return [];
-
-    const membership = ctx.memberships.find((m) => m.workspaceId === workspaceId);
-    if (!membership) return [];
-
-    const role = membership.role as Role;
-    if (role === 'Viewer') return [];
-
-    return await listActiveColdAlerts(workspaceId, ctx.user.id, role);
-  } catch (err) {
-    reportNonFatal('coldAlerts.loadList', err);
-    return [];
   }
 });

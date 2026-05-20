@@ -534,6 +534,8 @@ model Workspace {
   invitations             Invitation[]
   auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
+  pushSubscriptions       PushSubscription[]
+  notifications           Notification[]
   webhookEvents           WebhookEvent[]
   stripeCustomer          StripeCustomer?
   subscriptions           Subscription[]
@@ -594,6 +596,8 @@ model User {
   memberships             WorkspaceMember[]
   auditLogs               AuditLog[]
   notificationPreferences NotificationPreference[]
+  pushSubscriptions       PushSubscription[]
+  notifications           Notification[]
   invitationsCreated      Invitation[]             @relation("InvitationCreatedBy")
   attachmentsUploaded     Attachment[]             @relation("AttachmentUploadedBy")
   cadencesCreated         Cadence[]                @relation("CadenceCreatedBy")
@@ -698,6 +702,50 @@ model NotificationPreference {
   @@unique([workspaceId, userId])
   @@index([userId])
   @@map("notification_preferences")
+}
+
+/// Assinatura de Web Push por dispositivo/browser (M13#2). Guarda o
+/// `PushSubscription` (endpoint + chaves p256dh/auth) que o web-push usa pra
+/// entregar a notificação criptografada (RFC 8291). `endpoint` é UNIQUE
+/// global — re-assinar o mesmo browser cai em UPSERT (re-atribui userId).
+model PushSubscription {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  endpoint    String   @unique
+  p256dh      String
+  auth        String
+  userAgent   String?  @map("user_agent")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId])
+  @@map("push_subscriptions")
+}
+
+/// Feed de notificações in-app (M13#2 — PRD §3.2 sino com histórico de 30d).
+/// Escrito pelo dispatcher (canal `inapp`), lido pelo sino do topbar.
+/// `readAt` é o único campo mutável. `event` é a chave da matriz (texto livre
+/// — não enum, pra não exigir migration por evento novo).
+model Notification {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  event       String    @db.VarChar(48)
+  title       String
+  body        String
+  url         String?
+  readAt      DateTime? @map("read_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, userId, createdAt(sort: Desc)])
+  @@map("notifications")
 }
 
 /// Idempotência de webhooks externos. (source, externalId) único.

@@ -2406,7 +2406,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | Sub-PR    | Escopo                                                                             | Branch                | Status      |
 | --------- | ---------------------------------------------------------------------------------- | --------------------- | ----------- |
 | **M13#1** | PWA — manifest, service worker, ícones, tela "Instalar app"                        | `m13-1-pwa`           | ✅ entregue |
-| **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ⏳ pendente |
+| **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ✅ entregue |
 | **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ⏳ pendente |
 | **M13#4** | Observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y              | `m13-4-observability` | ⏳ pendente |
 | **M13#5** | E2E Playwright (signup → … → upgrade)                                              | `m13-5-e2e`           | ⏳ pendente |
@@ -2420,10 +2420,11 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Entregas — Push Notifications:**
 
-- [ ] Subscribe via VAPID + persistir `push_subscriptions` por usuário/dispositivo
-- [ ] Edge Function `send-push` chamada nos eventos da matriz PRD §3.2
-- [ ] Tela `/settings/notifications` totalmente funcional (preferências por evento × canal; eventos administrativos não desligáveis)
-- [ ] Testes manuais nos 3 ambientes: iOS Safari 16.4+ instalado como PWA, Android Chrome, Desktop Chrome/Edge
+- [x] Subscribe via VAPID + persistir `push_subscriptions` por usuário/dispositivo
+- [x] Entrega de Web Push criptografada (VAPID RFC 8292 + payload `aes128gcm` RFC 8291) hand-rolled com `node:crypto` + dispatcher central. **Decisão:** Next route, não Edge Function `send-push` — ver M13#2 abaixo
+- [x] Tela `/settings/notifications` totalmente funcional (preferências por evento × canal persistidas; eventos administrativos não desligáveis)
+- [x] 4 eventos da matriz PRD §3.2 conectados ao dispatcher (`lead_cooling`, `whatsapp_connection_down`, `trial_expiring`, `whatsapp_message_received`)
+- [ ] Testes manuais nos 3 ambientes: iOS Safari 16.4+ instalado como PWA, Android Chrome, Desktop Chrome/Edge — **pós-deploy** (precisa de chaves VAPID + HTTPS)
 
 **Entregas — LGPD e Auditoria:**
 
@@ -2501,6 +2502,54 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 **Ops pós-deploy:** nenhuma — puro código estático + client. Validação real é Lighthouse PWA + instalar num device (iOS/Android/desktop).
 
 **Próximo passo:** **M13#2** (push notifications) — reusa o service worker registrado aqui.
+
+---
+
+### M13#2 — Push Notifications (entregue 2026-05-20)
+
+**Branch:** `m13-2-push`
+
+**Objetivo:** Web Push ponta-a-ponta — assinar um dispositivo, persistir, e nos eventos da matriz PRD §3.2 entregar push (+ in-app + email conforme preferência). `/settings/notifications` deixa de ser mock; o sino do topbar passa a ler a tabela `notifications` real.
+
+**Decisões fechadas:**
+
+- **`send-push` é módulo Next (`lib/notifications/web-push.ts`), não Edge Function.** O PLAN original previa uma Edge Function `send-push`, mas o M12#2 já firmou o precedente de **evitar Edge Functions novas** nessa máquina (antivírus + TLS — ver comentário de [`cron/trial-warnings/route.ts`](apps/web/app/api/cron/trial-warnings/route.ts)). O `node:crypto` cobre tudo (ECDH P-256, HKDF-SHA256, AES-128-GCM, assinatura ES256) — VAPID (RFC 8292) + payload `aes128gcm` (RFC 8291/8188) hand-rolled, **zero dependência nova**, mesma linha do service worker do M13#1. Roda no Node runtime da Vercel, testável localmente.
+- **Eventos de origem Edge entram por trigger Postgres, não por código Deno.** `lead_cooling` (cold-lead-detector) e `whatsapp_connection_down` (heartbeat) são detectados por Edge Functions já existentes. Em vez de editar/redesployar os arquivos Deno, a migration adiciona 2 triggers (`notify_on_cold_lead_alert` em `cold_lead_alerts AFTER INSERT`; `notify_on_whatsapp_unhealthy` em `whatsapp_instances` quando `health_score` vira `unhealthy`) que fazem `pg_net.http_post` pra `/api/internal/notify`. Zero Edge Function tocada — mesmo padrão dos triggers de auto-ack do M10#4.
+- **Dispatcher central** (`lib/notifications/dispatch.ts`) é a fonte única do fanout. Resolve `notification_preferences`, escreve `notifications` (in-app), envia Web Push e email (Resend) — respeitando a matriz PRD §3.2 (eventos administrativos não desligáveis). Contexto admin/sistema → `prisma` direto, sempre filtrando `workspaceId`/`userId` (igual ao `cron/trial-warnings`).
+- **Sino in-app migrado pra tabela `notifications`.** Sai a mistura M10#4 (cold alerts + fixture); o sino lê 100% de `notifications` via `loadRecentNotifications`. O badge "leads frios" da sidebar segue separado (`loadColdAlertsCount`, lifecycle de ack do M10#4).
+- **RLS workspace-scoped** nas 2 tabelas novas (`current_workspace_id()`), padrão de `notification_preferences`/`usage_events` — compatível com Prisma. Escopo por usuário aplicado no `where` do app (defense-in-depth).
+
+**Entregas:**
+
+- [x] Migration [`20260531120000_m13_2_push.sql`](supabase/migrations/20260531120000_m13_2_push.sql) — tabelas `push_subscriptions` + `notifications` (RLS), helper `notify_dispatch` + 2 triggers de fanout via `pg_net`.
+- [x] Modelos Prisma `PushSubscription` + `Notification` ([`schema.prisma`](packages/db/prisma/schema.prisma)).
+- [x] [`lib/notifications/web-push.ts`](apps/web/lib/notifications/web-push.ts) — `sendWebPush` (VAPID ES256 + `aes128gcm`), hand-rolled com `node:crypto`.
+- [x] [`lib/notifications/dispatch.ts`](apps/web/lib/notifications/dispatch.ts) — `dispatchNotification` (fanout in-app / push / email por preferência).
+- [x] [`public/sw.js`](apps/web/public/sw.js) — listeners `push` / `notificationclick` / `pushsubscriptionchange` (`VERSION` bump v1→v2).
+- [x] [`lib/pwa/push.ts`](apps/web/lib/pwa/push.ts) — assinar/cancelar/sincronizar push no browser.
+- [x] `features/notifications/` — Server Actions (assinatura, prefs, mark-read), queries (`loadRecentNotifications`, `loadNotificationPrefs`), schemas Zod, tipos.
+- [x] [`PushPermissionBlock`](apps/web/features/settings/components/push-permission-block.tsx) + [`NotificationMatrix`](apps/web/features/settings/components/notification-matrix.tsx) reais — assinatura + push de teste + matriz persistida.
+- [x] Sino in-app ([`notifications-button.tsx`](apps/web/components/app-shell/notifications-button.tsx) + [`notifications-dropdown.tsx`](apps/web/components/app-shell/notifications-dropdown.tsx)) migrado pra tabela `notifications`.
+- [x] Rota [`/api/internal/notify`](apps/web/app/api/internal/notify/route.ts) — resolve destinatários + copy pros eventos de trigger; 4 eventos conectados (2 via trigger, `trial_expiring` no cron M12#2, `whatsapp_message_received` no webhook uazapi).
+- [x] [`/api/smoke-test/push`](apps/web/app/api/smoke-test/push/route.ts) — round-trip de assinatura VAPID + cifra/decifra `aes128gcm` (10/10 ✅).
+- [x] `pnpm typecheck` ✅, `lint` ✅, `build` ✅, smoke `/api/smoke-test/push` 10/10 ✅.
+
+**Não-objetivos M13#2 (explícitos):**
+
+- **Wiring dos outros 6 eventos da matriz** (`new_lead_assigned`, `task_due`, `agent_handoff_to_human`, `bulk_send_finished`, `workspace_invite_received`, `payment_failed`) — o dispatcher está pronto; conectam quando o gatilho existir/for priorizado.
+- **Ícones PNG raster nas notificações** — `icon.svg` cobre; raster é polimento.
+- **Retenção/purge da tabela `notifications`** — o sino filtra 30d na query; o purge mensal entra no M13#3 (LGPD).
+
+**Ops pós-deploy (operador):**
+
+1. Gerar chaves VAPID: `node scripts/generate-vapid.mjs --env` → preencher `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` (Vercel prod + `.env.local`).
+2. Definir `NOTIFY_DISPATCH_SECRET` (Vercel) e espelhar em Postgres:
+   `ALTER DATABASE postgres SET app.notify_dispatch_secret = '<valor>';`
+   `ALTER DATABASE postgres SET app.app_url = 'https://app.pipeflow.com.br';`
+3. Aplicar a migration `20260531120000_m13_2_push.sql` (via MCP `apply_migration`).
+4. Testes manuais de push: iOS Safari 16.4+ (PWA instalado), Android Chrome, Desktop Chrome/Edge.
+
+**Próximo passo:** **M13#3** (LGPD — exportação/exclusão de dados, auditoria, retenção, cookie banner) — **launch-blocking**.
 
 ---
 
