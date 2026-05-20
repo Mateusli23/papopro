@@ -2,9 +2,11 @@ import { redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
+import { AgentLimitBanner } from '@/features/agents/components/agent-limit-banner';
 import { getKnowledgeBaseFields, listAgentsForWorkspace } from '@/features/agents/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
+import { getWorkspaceUsage, toWorkspaceUsageUI } from '@/lib/limits';
 
 import { AgentsView } from './agents-view';
 
@@ -43,16 +45,23 @@ export default async function AgentsPage() {
     redirect('/onboarding');
   }
 
-  const [initialAgents, initialKb] = await Promise.all([
+  const [initialAgents, initialKb, usage] = await Promise.all([
     listAgentsForWorkspace(workspaceId),
     getKnowledgeBaseFields(workspaceId),
+    getWorkspaceUsage(workspaceId),
   ]);
 
+  const usageUI = toWorkspaceUsageUI(usage);
+  const isOwner = callerMembership.role === 'Owner';
+
   return (
-    <AgentsView
-      initialAgents={initialAgents}
-      initialKb={initialKb}
-      callerRole={callerMembership.role}
-    />
+    <div className="flex flex-col gap-4">
+      <AgentLimitBanner state={usageUI.activeAgents} isOwner={isOwner} />
+      <AgentsView
+        initialAgents={initialAgents}
+        initialKb={initialKb}
+        callerRole={callerMembership.role}
+      />
+    </div>
   );
 }

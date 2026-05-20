@@ -1,16 +1,24 @@
 /**
- * Enforcement de limites por plano (M12#4).
+ * Enforcement de limites por plano (M12#4 + M11#7).
  *
- * Free → 50 leads ativos + 2 membros (incluindo convites pending).
- * Pro  → ilimitado (Number.POSITIVE_INFINITY).
+ * Free → 50 leads ativos + 2 membros (incluindo convites pending) + 1
+ *        agente IA ativo.
+ * Pro  → leads/membros ilimitados (Number.POSITIVE_INFINITY) + 3 agentes IA
+ *        ativos.
+ *
+ * **`activeAgents` é o único limite finito no Pro** (M11#7) — o teto de 3
+ * vem do PRD (glossário "Agente IA"); leads/membros continuam ilimitados.
+ * O gate "agente exige plano pago" (Free=0) fica pra M12#3, quando o tier
+ * Pro IA passar a existir no billing — hoje o enum `SubscriptionPlan` só
+ * tem `pro`, então Free ganha 1 agente como gostinho do recurso.
  *
  * **Fonte de verdade do plano**: ausência de Subscription com status
  * active/past_due = free. Mesma regra do `features/billing/queries.ts`.
  *
  * **API**:
- *  - `canAddLead(workspaceId, opts?)` / `canAddMember(workspaceId, opts?)`
+ *  - `canAddLead` / `canAddMember` / `canActivateAgent` (workspaceId, opts?)
  *    — gate pra Server Actions. Aceita `tx` opcional pra rodar dentro da
- *    mesma transação do caller (atômico com o INSERT subsequente).
+ *    mesma transação do caller (atômico com o INSERT/UPDATE subsequente).
  *  - `getWorkspaceUsage(workspaceId)` — snapshot pra UI (banners + página
  *    /settings/billing).
  *
@@ -32,13 +40,20 @@ import { withWorkspace } from '@/lib/supabase/with-workspace';
 export type Plan = 'free' | 'pro';
 
 /**
- * Limites por plano. `Number.POSITIVE_INFINITY` no Pro deixa
- * `current + increment > limit` sempre `false` (matemática limpa, sem
+ * Limites por plano. `Number.POSITIVE_INFINITY` em leads/members no Pro
+ * deixa `current + increment > limit` sempre `false` (matemática limpa, sem
  * `if (plan === 'pro') skip`).
+ *
+ * `activeAgents` é finito nos dois planos (Free 1, Pro 3) — `computeLimitState`
+ * trata limite finito sem caso especial; só não cai no branch de "ilimitado".
  */
-export const PLAN_LIMITS: Record<Plan, { leads: number; members: number }> = {
-  free: { leads: 50, members: 2 },
-  pro: { leads: Number.POSITIVE_INFINITY, members: Number.POSITIVE_INFINITY },
+export const PLAN_LIMITS: Record<Plan, { leads: number; members: number; activeAgents: number }> = {
+  free: { leads: 50, members: 2, activeAgents: 1 },
+  pro: {
+    leads: Number.POSITIVE_INFINITY,
+    members: Number.POSITIVE_INFINITY,
+    activeAgents: 3,
+  },
 };
 
 export interface LimitState {
@@ -63,6 +78,7 @@ export interface WorkspaceUsage {
   plan: Plan;
   leads: LimitState;
   members: LimitState;
+  activeAgents: LimitState;
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -96,6 +112,20 @@ async function countMembersAndPending(
     tx.invitation.count({ where: { workspaceId, status: 'pending' } }),
   ]);
   return members + pending;
+}
+
+/**
+ * `countActiveAgents` — agentes IA com `status='active'` no workspace
+ * (M11#7). `testing`/`paused` não ocupam slot — o cap é sobre quantos
+ * estão de fato atendendo conversas reais. Soft-deletados fora.
+ */
+async function countActiveAgents(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+): Promise<number> {
+  return tx.aiAgent.count({
+    where: { workspaceId, status: 'active', deletedAt: null },
+  });
 }
 
 /**
@@ -176,23 +206,66 @@ export async function canAddMember(workspaceId: string, opts?: CanAddOpts): Prom
   return withWorkspace(workspaceId, run);
 }
 
+/**
+ * `canActivateAgent` — verifica se workspace pode deixar +1 agente IA
+ * `active` (M11#7). Conta só `status='active'`; chamar ao **ligar** um
+ * agente que ainda não estava ativo.
+ *
+ * Caller passa `tx` pra rodar atômico com o `UPDATE status='active'` —
+ * sem isso, 2 cliques simultâneos no último slot do Free passariam os dois
+ * (mesma race que `canAddLead` evita no INSERT).
+ *
+ * **Idempotência é responsabilidade do caller**: se o agente já está
+ * `active`, NÃO chame o gate (re-save de draft não consome slot). O gate
+ * sempre assume "vai ligar +1".
+ */
+export async function canActivateAgent(
+  workspaceId: string,
+  opts?: CanAddOpts,
+): Promise<CanAddResult> {
+  const increment = opts?.increment ?? 1;
+
+  const run = async (tx: Prisma.TransactionClient): Promise<CanAddResult> => {
+    const [plan, current] = await Promise.all([
+      getActivePlan(tx, workspaceId),
+      countActiveAgents(tx, workspaceId),
+    ]);
+    const limit = PLAN_LIMITS[plan].activeAgents;
+    const state = computeLimitState(plan, current, limit);
+
+    if (current + increment > limit) {
+      return { ok: false, reason: 'plan_limit_reached', state };
+    }
+    return { ok: true, state };
+  };
+
+  if (opts?.tx) return run(opts.tx);
+  return withWorkspace(workspaceId, run);
+}
+
 // ─── UI snapshot ───────────────────────────────────────────────────────────
 
 /**
  * `getWorkspaceUsage` — snapshot pra renderizar banners + /settings/billing.
- * 1 round-trip via `withWorkspace`, 4 counts em paralelo.
+ * 1 round-trip via `withWorkspace`, counts em paralelo.
+ *
+ * `activeAgents` alimenta o banner de `/agents` (M11#7). `/settings/billing`
+ * ainda não renderiza esse campo — integração na comparação Free×Pro fica
+ * pra M12#3 (quando o tier Pro IA existir).
  */
 export async function getWorkspaceUsage(workspaceId: string): Promise<WorkspaceUsage> {
   return withWorkspace(workspaceId, async (tx) => {
-    const [plan, leadsCount, membersCount] = await Promise.all([
+    const [plan, leadsCount, membersCount, agentsCount] = await Promise.all([
       getActivePlan(tx, workspaceId),
       countActiveLeads(tx, workspaceId),
       countMembersAndPending(tx, workspaceId),
+      countActiveAgents(tx, workspaceId),
     ]);
     return {
       plan,
       leads: computeLimitState(plan, leadsCount, PLAN_LIMITS[plan].leads),
       members: computeLimitState(plan, membersCount, PLAN_LIMITS[plan].members),
+      activeAgents: computeLimitState(plan, agentsCount, PLAN_LIMITS[plan].activeAgents),
     };
   });
 }
@@ -226,6 +299,7 @@ export interface WorkspaceUsageUI {
   plan: Plan;
   leads: LimitStateUI;
   members: LimitStateUI;
+  activeAgents: LimitStateUI;
 }
 
 export function toLimitStateUI(state: LimitState): LimitStateUI {
@@ -250,14 +324,27 @@ export function toWorkspaceUsageUI(usage: WorkspaceUsage): WorkspaceUsageUI {
     plan: usage.plan,
     leads: toLimitStateUI(usage.leads),
     members: toLimitStateUI(usage.members),
+    activeAgents: toLimitStateUI(usage.activeAgents),
   };
 }
 
 /**
- * `LIMIT_REACHED_MESSAGE` — copy padronizado pros toast/banner. Inclui
- * CTA de upgrade pra UX consistente entre lead/member.
+ * `limitReachedMessage` — copy padronizado pros toast/banner.
+ *
+ * `leads`/`members`: Pro é a saída (uso ilimitado). `agents`: Pro também
+ * tem teto (3), então a mensagem é plan-aware — no Free o caminho é assinar
+ * o Pro; no Pro, pausar um agente.
  */
-export function limitReachedMessage(kind: 'leads' | 'members', state: LimitState): string {
+export function limitReachedMessage(
+  kind: 'leads' | 'members' | 'agents',
+  state: LimitState,
+): string {
+  if (kind === 'agents') {
+    if (state.plan === 'free') {
+      return `Limite do plano Free atingido (${state.current}/${state.limit} agente ativo). Assine o Pro pra ativar até ${PLAN_LIMITS.pro.activeAgents} agentes ao mesmo tempo.`;
+    }
+    return `Limite de agentes ativos atingido (${state.current}/${state.limit}). Pause um agente antes de ativar outro.`;
+  }
   const label = kind === 'leads' ? 'leads ativos' : 'membros';
   return `Limite do plano Free atingido (${state.current}/${state.limit} ${label}). Assine o Pro pra liberar uso ilimitado.`;
 }
