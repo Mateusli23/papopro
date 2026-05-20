@@ -87,16 +87,16 @@ export interface HandoffTrigger {
   enabled: boolean;
   /**
    * Configuração específica do gatilho:
-   *  - `keyword` → array de palavras separadas por vírgula
-   *  - `agent_to_agent` → array de palavras + targetAgentId opcional
+   *  - `keyword` → array de palavras-chave
+   *  - `agent_to_agent` → array de palavras + `targetAgentId` (agente de destino)
+   *  - `stage_negotiation` → `stageId` da etapa que dispara o handoff (M11#6)
    *  - outros → undefined
-   *
-   * Mantido como string serializada pra simplificar o schema; quando
-   * estruturar mais (M11) vira `config: Record<string, unknown>`.
    */
   config?: {
     keywords?: string[];
     targetAgentId?: string;
+    /** M11#6 — etapa que dispara o gatilho `stage_negotiation`. */
+    stageId?: string;
   };
 }
 

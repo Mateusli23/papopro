@@ -269,6 +269,41 @@ export function GET() {
     return msg.includes('membros') && msg.includes('2/2');
   });
 
+  // ── activeAgents limit (M11#7) ──────────────────────────────────────────
+  t = run('agent-limits-m11-7', results);
+  t('PLAN_LIMITS.free.activeAgents === 1', () => PLAN_LIMITS.free.activeAgents === 1);
+  t('PLAN_LIMITS.pro.activeAgents === 3', () => PLAN_LIMITS.pro.activeAgents === 3);
+  t('PLAN_LIMITS.pro.activeAgents NÃO é Infinity (cap finito no Pro)', () => {
+    return PLAN_LIMITS.pro.activeAgents !== Number.POSITIVE_INFINITY;
+  });
+  t('computeLimitState free 1/1 → atLimit, remaining 0', () => {
+    const s = computeLimitState('free', 1, 1);
+    return s.atLimit === true && s.remaining === 0;
+  });
+  t('computeLimitState free 0/1 → não atLimit, remaining 1', () => {
+    const s = computeLimitState('free', 0, 1);
+    return s.atLimit === false && s.remaining === 1;
+  });
+  t('computeLimitState pro 2/3 → não atLimit, remaining 1', () => {
+    const s = computeLimitState('pro', 2, 3);
+    return s.atLimit === false && s.remaining === 1;
+  });
+  t('computeLimitState pro 3/3 → atLimit (Pro tem teto de agentes)', () => {
+    return computeLimitState('pro', 3, 3).atLimit === true;
+  });
+  t('limitReachedMessage agents/free menciona Pro + contagem', () => {
+    const msg = limitReachedMessage('agents', computeLimitState('free', 1, 1));
+    return (msg.includes('Pro') && msg.includes('1/1')) || msg;
+  });
+  t('limitReachedMessage agents/pro manda pausar (sem upgrade)', () => {
+    const msg = limitReachedMessage('agents', computeLimitState('pro', 3, 3));
+    return (msg.includes('Pause') && msg.includes('3/3')) || msg;
+  });
+  t('toLimitStateUI agents pro 3/3 → limit finito, isUnlimited false, percent 100', () => {
+    const ui = toLimitStateUI(computeLimitState('pro', 3, 3));
+    return ui.limit === 3 && ui.isUnlimited === false && ui.percent === 100;
+  });
+
   const passed = results.filter((r) => r.ok).length;
   const failed = results.length - passed;
   const allOk = failed === 0;

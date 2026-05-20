@@ -36,6 +36,7 @@ import { revalidatePath } from 'next/cache';
 
 import { type Prisma } from '@papopro/db';
 
+import { maybeHandoffOnStageChange } from '@/features/agents/handoff-runtime';
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { requireRole } from '@/lib/auth/require-role';
 import { serializeLeadsCsv, type LeadCsvRow } from '@/lib/exports/csv';
@@ -317,6 +318,19 @@ export async function updateLeadAction(input: UpdateLeadInput): Promise<LeadActi
       });
     });
 
+    // M11#6 — se a etapa mudou, avalia o gatilho de handoff `stage_negotiation`.
+    // Tx separada (idempotente — não dispara se o lead não mudou de etapa).
+    if (patch.stageId !== undefined) {
+      const movedStageId = patch.stageId;
+      try {
+        await withWorkspace(workspaceId, (tx) =>
+          maybeHandoffOnStageChange(tx, { workspaceId, leadId, newStageId: movedStageId, userId }),
+        );
+      } catch (err) {
+        reportNonFatal('leads.update.handoff', err, { workspaceId, leadId });
+      }
+    }
+
     revalidatePath('/leads');
     revalidatePath(`/leads/${leadId}`);
     return { ok: true, leadId };
@@ -403,9 +417,20 @@ export async function moveLeadToStageAction(input: MoveStageInput): Promise<Lead
       });
     });
 
+    // M11#6 — gatilho de handoff `stage_negotiation`. Tx separada: um bug no
+    // handoff não pode reverter o move do lead (já commitado).
+    try {
+      await withWorkspace(workspaceId, (tx) =>
+        maybeHandoffOnStageChange(tx, { workspaceId, leadId, newStageId, userId }),
+      );
+    } catch (err) {
+      reportNonFatal('leads.move-stage.handoff', err, { workspaceId, leadId });
+    }
+
     revalidatePath('/leads');
     revalidatePath(`/leads/${leadId}`);
     revalidatePath('/kanban');
+    revalidatePath('/inbox');
     return { ok: true, leadId };
   } catch (err) {
     if (err instanceof Error) {

@@ -1,8 +1,8 @@
 /**
- * Runtime de Agentes IA (M11#5) — produção: lead manda msg no WhatsApp →
- * webhook persiste inbound → este handler decide se algum agente atende →
- * monta contexto (memória 3 camadas) → chama Claude → envia resposta via M9
- * adapter passando por anti-ban.
+ * Runtime de Agentes IA (M11#5 + handoffs M11#6) — produção: lead manda msg
+ * no WhatsApp → webhook persiste inbound → este handler decide se algum
+ * agente atende → avalia handoffs → monta contexto (memória 3 camadas) →
+ * chama Claude → envia resposta via M9 adapter passando por anti-ban.
  *
  * **Chamado depois** que `handleMessageReceived` (M9) terminou a tx do
  * webhook. Reusa: `assembleContext` (M11#2), `complete` (M11#2),
@@ -13,39 +13,39 @@
  * webhook. Sem `'use server'`; é módulo server-only puro.
  *
  * **Order matters:**
- *   1. tx #1 — load agent + instance snapshot + create/find production session
- *      + persist `agent_message direction='in'` (entra na memória sessão).
- *   2. anti-ban check (separate tx pra fechar transação curta).
- *      Bloqueado → audit log + return (sem chamada Claude, sem custo).
- *   3. assembleContext (memória 3 camadas) — fora de tx.
- *   4. complete (Claude API) — fora de tx.
- *   5. tx #2 — persist `agent_message direction='out'` com tokens.
- *   6. recordUsage (best-effort, catch isolado).
- *   7. applyJitter 30-50s (anti-ban CLAUDE.md §6).
- *   8. adapter.sendText — fora de tx (chamada externa).
- *   9. tx #3 — persist Message (whatsapp out) + Activity + recordSent + audit.
- *
- * **Mensagem out tem `authorId=null`**: distingue IA de vendedor humano (que
- * tem `authorId = workspaceMember.id`). Activity `meta.agentId/via='agent'`
- * permite timeline render "Agente Sofia respondeu".
+ *   1.   tx #1 — load agent (+handoffConfig) + instance snapshot + create/find
+ *        production session + persist `agent_message direction='in'`.
+ *   1.5  handoff inbound (M11#6) — keyword/intenção comercial → humano;
+ *        agent_to_agent → re-despacha o agente de destino. Pode encerrar aqui.
+ *   2.   anti-ban check. Bloqueio `outside_business_hours` + gatilho ligado
+ *        vira handoff agente→humano (M11#6). Outros bloqueios → return.
+ *   3.   assembleContext (memória 3 camadas) — fora de tx.
+ *   4.   complete (Claude API) — fora de tx.
+ *   5.   tx #2 — persist `agent_message direction='out'` com tokens.
+ *   6.   recordUsage (best-effort, catch isolado).
+ *   7.   applyJitter 30-50s (anti-ban CLAUDE.md §6).
+ *   8.   adapter.sendText — fora de tx (chamada externa).
+ *   9.   tx #3 — persist Message (whatsapp out) + Activity + recordSent + audit.
+ *   10.  job de lead_summary (M11#6) — throttled, pós-envio, best-effort.
  *
  * **Sessão production por conversation:** `(workspaceId, agentId, conversationId,
- * endedAt IS NULL)`. Mesma conversa + mesmo agente reusa entre turnos. Handoff
- * pra outro agente (M11#6) fecha a sessão atual + abre nova com `agentId` novo.
- *
- * **Falha de envio (adapter ou tx final) NÃO faz rollback da resposta Claude.**
- * `agent_message out` já está persistido; o lead ouvirá "fantasma" — fica
- * registrado em `usage_events` + agent_message mas nunca chegou no WhatsApp.
- * Operador vê pelo audit `whatsapp_message_sent` ausente. M11#6+ adiciona
- * retry inteligente; em M11#5 logamos e seguimos.
+ * endedAt IS NULL)`. Handoff agente→agente (M11#6) encerra a sessão atual e o
+ * agente de destino abre a sua na re-invocação. Handoff agente→humano encerra
+ * a sessão e seta `conversation.ai_enabled=false`.
  */
 import 'server-only';
 
-import { type Prisma, UsageEventKind } from '@papopro/db';
+import { type Prisma, prisma, UsageEventKind } from '@papopro/db';
 
 import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
 import { complete } from '@/lib/ai/claude';
-import { assembleContext } from '@/lib/ai/memory';
+import {
+  evaluateInboundHandoff,
+  isHandoffTriggerEnabled,
+  parseHandoffConfig,
+} from '@/lib/ai/handoff';
+import { detectCommercialIntent } from '@/lib/ai/intent';
+import { assembleContext, updateLeadSummary } from '@/lib/ai/memory';
 import { recordUsage } from '@/lib/ai/usage';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
@@ -58,10 +58,29 @@ import {
 } from '@/lib/whatsapp/anti-ban';
 import { getWhatsAppAdapter } from '@/lib/whatsapp/factory';
 
+import {
+  applyAgentHandoffTx,
+  applyHumanHandoffTx,
+  type HumanHandoffReason,
+} from './handoff-runtime';
 import type { AgentTone } from './types';
 
 const PREVIEW_LIMIT = 280;
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
+
+/** Profundidade máxima de handoff agente→agente por mensagem inbound. Cap em 1
+ *  hop — A pode passar pra B, mas B não re-passa pra C (evita loop A→B→A). */
+const MAX_HANDOFF_DEPTH = 1;
+
+/** Quantos `agent_messages` novos a sessão precisa acumular desde o último
+ *  resumo pra disparar a regeneração do `lead_summary` (job M11#6). */
+const LEAD_SUMMARY_REFRESH_THRESHOLD = 6;
+
+/** Mínimo de mensagens na sessão pra valer a pena resumir. */
+const LEAD_SUMMARY_MIN_MESSAGES = 2;
+
+/** Quantas mensagens recentes da sessão alimentam a consolidação do resumo. */
+const LEAD_SUMMARY_TAKE = 20;
 
 export interface RunAgentInput {
   workspaceId: string;
@@ -82,6 +101,8 @@ export interface RunAgentInput {
 
 export type RunAgentResult =
   | { ok: true; agentMessageId: string; whatsappMessageId: string }
+  | { ok: true; handoff: 'human'; reason: HumanHandoffReason }
+  | { ok: true; handoff: 'agent'; targetAgentId: string }
   | { ok: false; reason: 'agent_not_found' | 'agent_not_active' | 'agent_deleted' }
   | { ok: false; reason: 'blocked'; antiBanReason: AntiBanReason; message: string }
   | { ok: false; reason: 'claude_error' | 'adapter_error' | 'persist_error'; message: string };
@@ -92,9 +113,16 @@ export type RunAgentResult =
  * **Pré-condições (responsabilidade do caller):**
  *   - lead, conversation e Message inbound já persistidos (M9 handleMessageReceived)
  *   - lead NÃO está em opt-out (handler já filtrou)
- *   - agentId resolvido pelo roteador (`pickAgentForInbound`)
+ *   - `conversation.ai_enabled = true` (webhook checa antes — M11#6)
+ *   - agentId resolvido pela sessão sticky OU pelo roteador (`pickAgentForInbound`)
+ *
+ * `handoffDepth` controla a recursão de handoff agente→agente — o caller
+ * externo (webhook) sempre passa 0; só `performHandoffToAgent` incrementa.
  */
-export async function runAgentForInboundMessage(input: RunAgentInput): Promise<RunAgentResult> {
+export async function runAgentForInboundMessage(
+  input: RunAgentInput,
+  handoffDepth = 0,
+): Promise<RunAgentResult> {
   const {
     workspaceId,
     agentId,
@@ -109,7 +137,13 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
   // ─── Step 1: preflight + session + persist user message ──────────────────
   let session: {
     sessionId: string;
-    agent: { name: string; prompt: string; persona: string; tone: AgentTone };
+    agent: {
+      name: string;
+      prompt: string;
+      persona: string;
+      tone: AgentTone;
+      handoffConfig: unknown;
+    };
     instance: InstanceSnapshot;
     workspaceTimezone: string;
   };
@@ -124,6 +158,7 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
           persona: true,
           tone: true,
           activeVersionId: true,
+          handoffConfig: true,
         },
       });
       if (!agent) return { kind: 'agent_not_found' as const };
@@ -192,6 +227,7 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
           prompt: agent.prompt,
           persona: agent.persona,
           tone: agent.tone as AgentTone,
+          handoffConfig: agent.handoffConfig,
         },
         instance: {
           status: instance.status,
@@ -222,6 +258,75 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
     return { ok: false, reason: 'persist_error', message: (err as Error).message };
   }
 
+  // ─── Step 1.5: handoff dirigido pela mensagem inbound (M11#6) ─────────────
+  const triggers = parseHandoffConfig(session.agent.handoffConfig);
+
+  // commercial_intent — roda o classificador Haiku só quando o gatilho está
+  // ligado (custo zero pra workspaces que não usam). Falha do detector é
+  // fail-safe: trata como "sem intenção" (não escala por engano).
+  let commercialIntentDetected: boolean | undefined;
+  if (isHandoffTriggerEnabled(triggers, 'commercial_intent')) {
+    try {
+      const intent = await detectCommercialIntent({
+        workspaceId,
+        sessionId: session.sessionId,
+        latestUserMessage,
+      });
+      commercialIntentDetected = intent.detected;
+      void recordUsage({
+        workspaceId,
+        eventKind: UsageEventKind.agent_call,
+        feature: 'intent_detection',
+        model: intent.model,
+        usage: intent.usage,
+        entityKind: 'agent_session',
+        entityId: session.sessionId,
+      }).catch((err) =>
+        reportNonFatal('agents.runtime.intent_usage', err, { workspaceId, agentId, leadId }),
+      );
+    } catch (err) {
+      reportNonFatal('agents.runtime.intent', err, { workspaceId, agentId, leadId });
+      commercialIntentDetected = false;
+    }
+  }
+
+  const decision = evaluateInboundHandoff(triggers, {
+    messageBody: latestUserMessage,
+    commercialIntentDetected,
+  });
+
+  if (decision?.target === 'human') {
+    try {
+      await performHandoffToHuman({
+        workspaceId,
+        conversationId,
+        leadId,
+        agentId,
+        sessionId: session.sessionId,
+        reason: decision.reason,
+      });
+    } catch (err) {
+      reportNonFatal('agents.runtime.handoff_human', err, { workspaceId, agentId, leadId });
+      return { ok: false, reason: 'persist_error', message: (err as Error).message };
+    }
+    return { ok: true, handoff: 'human', reason: decision.reason };
+  }
+
+  if (decision?.target === 'agent' && handoffDepth < MAX_HANDOFF_DEPTH) {
+    const handoff = await performHandoffToAgent({
+      input,
+      fromAgentId: agentId,
+      fromSessionId: session.sessionId,
+      targetAgentId: decision.targetAgentId,
+      handoffDepth,
+    });
+    if (handoff.handedOff) {
+      return { ok: true, handoff: 'agent', targetAgentId: decision.targetAgentId };
+    }
+    // Agente de destino inválido (pausado/deletado) — segue o fluxo normal:
+    // o agente atual (A) responde a mensagem.
+  }
+
   // ─── Step 2: anti-ban (skip Claude tokens se vai falhar mesmo) ───────────
   let antiBan;
   try {
@@ -234,6 +339,28 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
   }
 
   if (!antiBan.ok) {
+    // Gatilho `outside_business_hours` ligado + bloqueio por horário → handoff
+    // agente→humano (M11#6). Operador assume quando voltar ao expediente.
+    if (
+      antiBan.reason === 'outside_business_hours' &&
+      isHandoffTriggerEnabled(triggers, 'outside_business_hours')
+    ) {
+      try {
+        await performHandoffToHuman({
+          workspaceId,
+          conversationId,
+          leadId,
+          agentId,
+          sessionId: session.sessionId,
+          reason: 'outside_business_hours',
+        });
+      } catch (err) {
+        reportNonFatal('agents.runtime.handoff_hours', err, { workspaceId, agentId, leadId });
+        return { ok: false, reason: 'persist_error', message: (err as Error).message };
+      }
+      return { ok: true, handoff: 'human', reason: 'outside_business_hours' };
+    }
+
     // Audit log + return. Não fecha sessão — próximo turno (anti-ban resolvido)
     // pode reusar.
     try {
@@ -457,7 +584,292 @@ export async function runAgentForInboundMessage(input: RunAgentInput): Promise<R
     return { ok: false, reason: 'persist_error', message: (err as Error).message };
   }
 
+  // ─── Step 10: job de lead_summary (M11#6) ────────────────────────────────
+  // Pós-envio — a resposta ao lead já saiu (Step 8/9), então a latência da
+  // consolidação não afeta a conversa. Throttled + best-effort.
+  try {
+    await maybeRefreshLeadSummary({
+      workspaceId,
+      leadId,
+      agentId,
+      sessionId: session.sessionId,
+    });
+  } catch (err) {
+    reportNonFatal('agents.runtime.lead_summary', err, { workspaceId, agentId, leadId });
+  }
+
   return { ok: true, agentMessageId, whatsappMessageId };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Handoffs (M11#6)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Handoff agente→humano disparado pelo runtime (gatilhos keyword /
+ * commercial_intent / outside_business_hours). Gera um resumo fresco do lead
+ * (pro humano ter contexto) e aplica o handoff transacional.
+ *
+ * O resumo é best-effort — se a chamada Claude falhar, o handoff acontece
+ * mesmo assim (estado correto > resumo perfeito).
+ */
+async function performHandoffToHuman(params: {
+  workspaceId: string;
+  conversationId: string;
+  leadId: string;
+  agentId: string;
+  sessionId: string;
+  reason: HumanHandoffReason;
+}): Promise<void> {
+  try {
+    await refreshLeadSummary({
+      workspaceId: params.workspaceId,
+      leadId: params.leadId,
+      agentId: params.agentId,
+      sessionId: params.sessionId,
+    });
+  } catch (err) {
+    reportNonFatal('agents.runtime.handoff_summary', err, {
+      workspaceId: params.workspaceId,
+      agentId: params.agentId,
+      leadId: params.leadId,
+    });
+  }
+
+  await withWorkspace(params.workspaceId, async (tx) => {
+    await applyHumanHandoffTx(tx, {
+      workspaceId: params.workspaceId,
+      conversationId: params.conversationId,
+      leadId: params.leadId,
+      reason: params.reason,
+      agentId: params.agentId,
+      userId: null,
+    });
+  });
+}
+
+/**
+ * Handoff agente→agente. Valida o agente de destino, gera resumo do lead
+ * (pra que o agente B já tenha contexto via camada LEAD), encerra a sessão
+ * de A e re-despacha o runtime pro agente B responder a mesma mensagem.
+ *
+ * Retorna `{ handedOff: false }` quando o destino é inválido (pausado /
+ * deletado) — nesse caso o caller deixa o agente A responder normalmente.
+ */
+async function performHandoffToAgent(params: {
+  input: RunAgentInput;
+  fromAgentId: string;
+  fromSessionId: string;
+  targetAgentId: string;
+  handoffDepth: number;
+}): Promise<{ handedOff: true } | { handedOff: false }> {
+  const { input, fromAgentId, fromSessionId, targetAgentId, handoffDepth } = params;
+
+  // Valida o agente de destino ANTES de encerrar a sessão de A — destino
+  // inválido não pode deixar a conversa órfã.
+  const target = await withWorkspace(input.workspaceId, async (tx) =>
+    tx.aiAgent.findFirst({
+      where: { id: targetAgentId, workspaceId: input.workspaceId, deletedAt: null },
+      select: { id: true, status: true },
+    }),
+  );
+  if (!target || target.status !== 'active') {
+    reportNonFatal('agents.runtime.handoff_agent_invalid', new Error('TARGET_AGENT_NOT_ACTIVE'), {
+      workspaceId: input.workspaceId,
+      fromAgentId,
+      targetAgentId,
+    });
+    return { handedOff: false };
+  }
+
+  // Resumo do lead pela sessão de A — alimenta a camada LEAD que o agente B
+  // lê no `assembleContext`. Best-effort.
+  try {
+    await refreshLeadSummary({
+      workspaceId: input.workspaceId,
+      leadId: input.leadId,
+      agentId: fromAgentId,
+      sessionId: fromSessionId,
+    });
+  } catch (err) {
+    reportNonFatal('agents.runtime.handoff_agent_summary', err, {
+      workspaceId: input.workspaceId,
+      fromAgentId,
+      targetAgentId,
+    });
+  }
+
+  await withWorkspace(input.workspaceId, async (tx) => {
+    await applyAgentHandoffTx(tx, {
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      leadId: input.leadId,
+      fromAgentId,
+      toAgentId: targetAgentId,
+    });
+  });
+
+  // Re-despacha o agente de destino pra responder a MESMA mensagem inbound.
+  // handoffDepth+1 — o cap MAX_HANDOFF_DEPTH impede B re-passar pra C.
+  const nested = await runAgentForInboundMessage(
+    { ...input, agentId: targetAgentId },
+    handoffDepth + 1,
+  );
+  if (!nested.ok) {
+    reportNonFatal('agents.runtime.handoff_agent_nested_failed', new Error(nested.reason), {
+      workspaceId: input.workspaceId,
+      targetAgentId,
+    });
+  }
+
+  return { handedOff: true };
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Job de lead_summary (M11#6)
+// ════════════════════════════════════════════════════════════════════════════
+
+interface RefreshLeadSummaryInput {
+  workspaceId: string;
+  leadId: string;
+  agentId: string;
+  /** Sessão de onde puxar as mensagens recentes pra consolidar. */
+  sessionId: string;
+}
+
+/**
+ * Regenera `lead_summaries.summary` (sem throttle — chamada forçada). Puxa as
+ * mensagens recentes da sessão, consolida via Claude (`updateLeadSummary`) e
+ * faz upsert. Registra o uso em `usage_events feature='lead_summary'`.
+ */
+export async function refreshLeadSummary(input: RefreshLeadSummaryInput): Promise<void> {
+  const messages = await prisma.agentMessage.findMany({
+    where: { sessionId: input.sessionId, workspaceId: input.workspaceId },
+    orderBy: { createdAt: 'desc' },
+    take: LEAD_SUMMARY_TAKE,
+    select: { direction: true, body: true },
+  });
+  if (messages.length < LEAD_SUMMARY_MIN_MESSAGES) return;
+
+  const recentMessages = [...messages].reverse().map((m) => ({
+    role: (m.direction === 'in' ? 'user' : 'assistant') as 'user' | 'assistant',
+    content: m.body,
+  }));
+
+  const existing = await prisma.leadSummary.findUnique({
+    where: { leadId: input.leadId },
+    select: { summary: true },
+  });
+
+  const result = await updateLeadSummary({
+    workspaceId: input.workspaceId,
+    leadId: input.leadId,
+    agentId: input.agentId,
+    recentMessages,
+    existingSummary: existing?.summary ?? null,
+  });
+
+  await withWorkspace(input.workspaceId, async (tx) => {
+    await tx.leadSummary.upsert({
+      where: { leadId: input.leadId },
+      create: {
+        workspaceId: input.workspaceId,
+        leadId: input.leadId,
+        summary: result.newSummary,
+        updatedByAgentId: input.agentId,
+      },
+      update: {
+        summary: result.newSummary,
+        updatedByAgentId: input.agentId,
+      },
+    });
+  });
+
+  void recordUsage({
+    workspaceId: input.workspaceId,
+    eventKind: UsageEventKind.agent_call,
+    feature: 'lead_summary',
+    model: result.model,
+    usage: result.usage,
+    entityKind: 'lead',
+    entityId: input.leadId,
+  }).catch((err) =>
+    reportNonFatal('agents.runtime.lead_summary_usage', err, {
+      workspaceId: input.workspaceId,
+      leadId: input.leadId,
+    }),
+  );
+}
+
+/**
+ * Versão throttled de `refreshLeadSummary` — usada no Step 10 de cada turno.
+ * Regenera o resumo só quando a sessão acumulou ≥ `LEAD_SUMMARY_REFRESH_THRESHOLD`
+ * mensagens novas desde a última atualização (ou quando ainda não há resumo).
+ * Evita gastar tokens de consolidação a cada turno.
+ */
+export async function maybeRefreshLeadSummary(input: RefreshLeadSummaryInput): Promise<void> {
+  const existing = await prisma.leadSummary.findUnique({
+    where: { leadId: input.leadId },
+    select: { updatedAt: true },
+  });
+
+  if (existing) {
+    const newSince = await prisma.agentMessage.count({
+      where: {
+        sessionId: input.sessionId,
+        workspaceId: input.workspaceId,
+        createdAt: { gt: existing.updatedAt },
+      },
+    });
+    if (newSince < LEAD_SUMMARY_REFRESH_THRESHOLD) return;
+  }
+
+  await refreshLeadSummary(input);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Helpers de dispatch (chamados pelo webhook)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Estado de dispatch da conversa pro webhook decidir (M11#6):
+ *   - `aiEnabled=false` → handoff agente→humano ativo, NÃO despacha agente.
+ *   - `stickyAgentId` → conversa já tem agente dono (sessão production aberta);
+ *     o webhook pula o roteador e continua com esse agente entre turnos.
+ *
+ * Server-only. Read-only via `withWorkspace` (RLS + defense-in-depth).
+ */
+export async function loadConversationDispatchState(
+  workspaceId: string,
+  conversationId: string,
+): Promise<{ aiEnabled: boolean; stickyAgentId: string | null }> {
+  return withWorkspace(workspaceId, async (tx) => {
+    const conv = await tx.conversation.findFirst({
+      where: { id: conversationId, workspaceId },
+      select: { aiEnabled: true },
+    });
+    if (!conv || !conv.aiEnabled) {
+      return { aiEnabled: false, stickyAgentId: null };
+    }
+
+    // Sessão aberta cujo agente ainda está ativo. Filtra `agent.status` no
+    // `where`: se o agente dono foi pausado/deletado, a sessão sticky é
+    // ignorada e o webhook cai pro roteador (outro agente ativo pode assumir),
+    // em vez de a conversa ficar presa num agente que não responde mais.
+    const openSession = await tx.agentSession.findFirst({
+      where: {
+        workspaceId,
+        conversationId,
+        kind: 'production',
+        endedAt: null,
+        agent: { status: 'active', deletedAt: null },
+      },
+      orderBy: { startedAt: 'desc' },
+      select: { agentId: true },
+    });
+
+    return { aiEnabled: true, stickyAgentId: openSession?.agentId ?? null };
+  });
 }
 
 /**

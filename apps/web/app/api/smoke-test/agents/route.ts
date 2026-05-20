@@ -24,6 +24,15 @@ import {
 } from '@papopro/db';
 
 import {
+  type AgentMetricsRow,
+  type AgentReportRow,
+  computeAgentMetrics,
+  formatMetricRate,
+  formatResponseTime,
+  sortAgentReportRows,
+  summarizeAgentReports,
+} from '@/features/agents/metrics.helpers';
+import {
   AGENT_STATUSES,
   HANDOFF_TRIGGER_KINDS,
   ROUTE_KINDS,
@@ -37,6 +46,17 @@ import {
 import { countAgents, getNextRouteMatch } from '@/features/agents/transforms';
 import type { Agent } from '@/features/agents/types';
 import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
+import {
+  endedReasonForHandoff,
+  evaluateInboundHandoff,
+  findHandoffTrigger,
+  HANDOFF_KINDS,
+  handoffReasonLabel,
+  isHandoffTriggerEnabled,
+  matchesAnyKeyword,
+  parseHandoffConfig,
+} from '@/lib/ai/handoff';
+import { buildIntentPrompt, parseIntentAnswer } from '@/lib/ai/intent';
 import {
   compareRulesForRouting,
   matchesKeyword,
@@ -650,6 +670,324 @@ export function GET() {
   t('matchesKeyword escapa caracteres especiais do value', () => {
     // value com "?" não deve virar quantifier regex.
     return matchesKeyword('Você está aí?', 'aí?') === true;
+  });
+
+  // ── M11#6: handoffs (pure) ──────────────────────────────────────────────
+  t = run('handoff-m11-6', results);
+
+  t('HANDOFF_KINDS tem os 6 gatilhos', () => {
+    const expected = [
+      'agent_to_agent',
+      'commercial_intent',
+      'keyword',
+      'manual',
+      'outside_business_hours',
+      'stage_negotiation',
+    ];
+    return JSON.stringify([...HANDOFF_KINDS].sort()) === JSON.stringify(expected);
+  });
+
+  t('parseHandoffConfig({}) materializa 6 triggers todos desligados', () => {
+    const triggers = parseHandoffConfig({});
+    return triggers.length === 6 && triggers.every((tr) => tr.enabled === false);
+  });
+
+  t('parseHandoffConfig lê enabled de um kind', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true } });
+    return isHandoffTriggerEnabled(triggers, 'keyword') === true;
+  });
+
+  t('parseHandoffConfig lê keywords / targetAgentId / stageId', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['humano'] },
+      agent_to_agent: { enabled: true, targetAgentId: 'agt_99' },
+      stage_negotiation: { enabled: true, stageId: 'stg_42' },
+    });
+    return (
+      findHandoffTrigger(triggers, 'keyword')?.config?.keywords?.[0] === 'humano' &&
+      findHandoffTrigger(triggers, 'agent_to_agent')?.config?.targetAgentId === 'agt_99' &&
+      findHandoffTrigger(triggers, 'stage_negotiation')?.config?.stageId === 'stg_42'
+    );
+  });
+
+  t('parseHandoffConfig descarta keywords vazias / não-string', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['ok', '', '  ', 42 as unknown as string] },
+    });
+    return (
+      JSON.stringify(findHandoffTrigger(triggers, 'keyword')?.config?.keywords) ===
+      JSON.stringify(['ok'])
+    );
+  });
+
+  t('matchesAnyKeyword casa palavra inteira case-insensitive', () => {
+    return matchesAnyKeyword('Quero falar com um HUMANO agora', ['atendente', 'humano']) === true;
+  });
+
+  t('matchesAnyKeyword lista vazia/undefined → false', () => {
+    return (
+      matchesAnyKeyword('quero humano', []) === false &&
+      matchesAnyKeyword('quero humano', undefined) === false
+    );
+  });
+
+  t('matchesAnyKeyword não casa substring', () => {
+    // "manual" não deve casar via "humano" nem vice-versa.
+    return matchesAnyKeyword('o processo é manual', ['humano']) === false;
+  });
+
+  t('evaluateInboundHandoff → null sem gatilho ligado', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: false, keywords: ['humano'] } });
+    return evaluateInboundHandoff(triggers, { messageBody: 'quero humano' }) === null;
+  });
+
+  t('evaluateInboundHandoff keyword ligado → handoff humano', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true, keywords: ['humano'] } });
+    const d = evaluateInboundHandoff(triggers, { messageBody: 'Posso falar com um humano?' });
+    return d?.target === 'human' && d.reason === 'keyword';
+  });
+
+  t('evaluateInboundHandoff keyword sem match → null', () => {
+    const triggers = parseHandoffConfig({ keyword: { enabled: true, keywords: ['humano'] } });
+    return evaluateInboundHandoff(triggers, { messageBody: 'qual o preço?' }) === null;
+  });
+
+  t('evaluateInboundHandoff commercial_intent detectado → handoff humano', () => {
+    const triggers = parseHandoffConfig({ commercial_intent: { enabled: true } });
+    const d = evaluateInboundHandoff(triggers, {
+      messageBody: 'quero fechar',
+      commercialIntentDetected: true,
+    });
+    return d?.target === 'human' && d.reason === 'commercial_intent';
+  });
+
+  t('evaluateInboundHandoff commercial_intent não-detectado → null', () => {
+    const triggers = parseHandoffConfig({ commercial_intent: { enabled: true } });
+    return (
+      evaluateInboundHandoff(triggers, {
+        messageBody: 'só pesquisando',
+        commercialIntentDetected: false,
+      }) === null
+    );
+  });
+
+  t('evaluateInboundHandoff agent_to_agent → handoff agente com targetAgentId', () => {
+    const triggers = parseHandoffConfig({
+      agent_to_agent: { enabled: true, keywords: ['proposta'], targetAgentId: 'agt_x' },
+    });
+    const d = evaluateInboundHandoff(triggers, { messageBody: 'me manda a proposta' });
+    return d?.target === 'agent' && d.targetAgentId === 'agt_x';
+  });
+
+  t('evaluateInboundHandoff agent_to_agent sem targetAgentId → null', () => {
+    const triggers = parseHandoffConfig({
+      agent_to_agent: { enabled: true, keywords: ['proposta'] },
+    });
+    return evaluateInboundHandoff(triggers, { messageBody: 'me manda a proposta' }) === null;
+  });
+
+  t('evaluateInboundHandoff precedência: keyword (humano) ganha de agent_to_agent', () => {
+    const triggers = parseHandoffConfig({
+      keyword: { enabled: true, keywords: ['humano'] },
+      agent_to_agent: { enabled: true, keywords: ['proposta'], targetAgentId: 'agt_x' },
+    });
+    const d = evaluateInboundHandoff(triggers, {
+      messageBody: 'quero humano e a proposta',
+    });
+    return d?.target === 'human' && d.reason === 'keyword';
+  });
+
+  t('endedReasonForHandoff prefixa handoff_', () => {
+    return (
+      endedReasonForHandoff('keyword') === 'handoff_keyword' &&
+      endedReasonForHandoff('agent_to_agent') === 'handoff_agent_to_agent'
+    );
+  });
+
+  t('handoffReasonLabel cobre os 6 kinds com texto pt-BR', () => {
+    const offender = HANDOFF_KINDS.find((k) => {
+      const label = handoffReasonLabel(k);
+      return typeof label !== 'string' || label.length < 10;
+    });
+    return !offender || `kind ${offender} sem label`;
+  });
+
+  t('handoffTriggerUpdateSchema aceita stageId/targetAgentId UUID', () => {
+    const stageOk = handoffTriggerUpdateSchema.safeParse({
+      kind: 'stage_negotiation',
+      enabled: true,
+      config: { stageId: 'a1b2c3d4-e5f6-4789-8abc-def012345678' },
+    }).success;
+    const agentOk = handoffTriggerUpdateSchema.safeParse({
+      kind: 'agent_to_agent',
+      enabled: true,
+      config: { targetAgentId: 'a1b2c3d4-e5f6-4789-8abc-def012345678', keywords: ['proposta'] },
+    }).success;
+    return stageOk && agentOk;
+  });
+
+  t('handoffTriggerUpdateSchema rejeita stageId não-UUID', () => {
+    return !handoffTriggerUpdateSchema.safeParse({
+      kind: 'stage_negotiation',
+      enabled: true,
+      config: { stageId: 'stage-1' },
+    }).success;
+  });
+
+  t('buildIntentPrompt inclui a mensagem a classificar', () => {
+    const p = buildIntentPrompt('Quero contratar agora', []);
+    return p.includes('Quero contratar agora') && p.includes('classificar');
+  });
+
+  t('parseIntentAnswer: "sim" → true, "nao"/vazio → false', () => {
+    return (
+      parseIntentAnswer('sim') === true &&
+      parseIntentAnswer('  Sim.') === true &&
+      parseIntentAnswer('nao') === false &&
+      parseIntentAnswer('') === false &&
+      parseIntentAnswer('talvez') === false
+    );
+  });
+
+  // ── Métricas de agente (M11#7) ──────────────────────────────────────────
+  t = run('metrics-m11-7', results);
+
+  const mkMetricsRow = (over: Partial<AgentMetricsRow> = {}): AgentMetricsRow => ({
+    id: 'agt_1',
+    name: 'Agente Teste',
+    status: 'active',
+    totalConversations: 0,
+    humanHandoffConversations: 0,
+    responseTurnCount: 0,
+    totalResponseSeconds: 0,
+    ...over,
+  });
+
+  t('computeAgentMetrics: sem conversas → tudo zerado', () => {
+    const m = computeAgentMetrics(mkMetricsRow());
+    return (
+      m.totalConversations === 0 &&
+      m.resolutionRate === 0 &&
+      m.avgResponseTimeSec === 0 &&
+      m.inferredSatisfaction === 0
+    );
+  });
+
+  t('computeAgentMetrics: resolutionRate = 1 − handoffs/total', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 10, humanHandoffConversations: 2 }),
+    );
+    return m.resolutionRate === 0.8 || `recebi ${m.resolutionRate}`;
+  });
+
+  t('computeAgentMetrics: resolutionRate clampa em 0 (handoffs > total)', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 10, humanHandoffConversations: 12 }),
+    );
+    return m.resolutionRate === 0;
+  });
+
+  t('computeAgentMetrics: 100% resolução quando zero handoffs', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ totalConversations: 5, humanHandoffConversations: 0 }),
+    );
+    return m.resolutionRate === 1;
+  });
+
+  t('computeAgentMetrics: avgResponseTimeSec = totalSeconds/turns arredondado', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({ responseTurnCount: 8, totalResponseSeconds: 100 }),
+    );
+    return m.avgResponseTimeSec === 13 || `recebi ${m.avgResponseTimeSec}`; // round(12.5)
+  });
+
+  t('computeAgentMetrics: avgResponseTimeSec = 0 sem turnos medidos', () => {
+    const m = computeAgentMetrics(mkMetricsRow({ totalResponseSeconds: 50, responseTurnCount: 0 }));
+    return m.avgResponseTimeSec === 0;
+  });
+
+  t('computeAgentMetrics: inferredSatisfaction sempre 0 (adiado V2)', () => {
+    const m = computeAgentMetrics(
+      mkMetricsRow({
+        totalConversations: 50,
+        humanHandoffConversations: 1,
+        responseTurnCount: 40,
+        totalResponseSeconds: 400,
+      }),
+    );
+    return m.inferredSatisfaction === 0;
+  });
+
+  t('summarizeAgentReports: array vazio → tudo zerado', () => {
+    const s = summarizeAgentReports([]);
+    return (
+      s.activeAgentsCount === 0 &&
+      s.totalAgentsCount === 0 &&
+      s.totalConversations === 0 &&
+      s.overallResolutionRate === 0 &&
+      s.avgResponseTimeSec === 0
+    );
+  });
+
+  t('summarizeAgentReports: activeAgentsCount conta só status=active', () => {
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', status: 'active' }),
+      mkMetricsRow({ id: 'b', status: 'paused' }),
+      mkMetricsRow({ id: 'c', status: 'testing' }),
+      mkMetricsRow({ id: 'd', status: 'active' }),
+    ]);
+    return s.activeAgentsCount === 2 && s.totalAgentsCount === 4;
+  });
+
+  t('summarizeAgentReports: overallResolutionRate ponderado por volume', () => {
+    // Agente A: 100% (90 conversas, 0 handoff). Agente B: 0% (10, 10).
+    // Média das médias = 50%. Ponderado (correto) = 1 − 10/100 = 90%.
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', totalConversations: 90, humanHandoffConversations: 0 }),
+      mkMetricsRow({ id: 'b', totalConversations: 10, humanHandoffConversations: 10 }),
+    ]);
+    return (
+      (s.totalConversations === 100 && s.overallResolutionRate === 0.9) ||
+      `conv=${s.totalConversations} rate=${s.overallResolutionRate}`
+    );
+  });
+
+  t('summarizeAgentReports: avgResponseTimeSec ponderado por turnos', () => {
+    const s = summarizeAgentReports([
+      mkMetricsRow({ id: 'a', responseTurnCount: 10, totalResponseSeconds: 100 }),
+      mkMetricsRow({ id: 'b', responseTurnCount: 30, totalResponseSeconds: 600 }),
+    ]);
+    // (100+600)/(10+30) = 17.5 → 18
+    return s.avgResponseTimeSec === 18 || `recebi ${s.avgResponseTimeSec}`;
+  });
+
+  t('sortAgentReportRows: conversas desc, name asc no empate', () => {
+    const mk = (id: string, name: string, conv: number): AgentReportRow => ({
+      id,
+      name,
+      status: 'active',
+      metrics: computeAgentMetrics(mkMetricsRow({ totalConversations: conv })),
+    });
+    const sorted = sortAgentReportRows([
+      mk('1', 'Bravo', 5),
+      mk('2', 'Alfa', 20),
+      mk('3', 'Charlie', 5),
+    ]);
+    return (
+      sorted[0]?.name === 'Alfa' && sorted[1]?.name === 'Bravo' && sorted[2]?.name === 'Charlie'
+    );
+  });
+
+  t('formatMetricRate: 0.856 → "86%"', () => {
+    return formatMetricRate(0.856) === '86%' || `recebi ${formatMetricRate(0.856)}`;
+  });
+
+  t('formatResponseTime: "45s" / "2min" / "1m 30s"', () => {
+    return (
+      formatResponseTime(45) === '45s' &&
+      formatResponseTime(120) === '2min' &&
+      formatResponseTime(90) === '1m 30s'
+    );
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────

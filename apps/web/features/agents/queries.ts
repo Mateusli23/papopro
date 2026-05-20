@@ -15,8 +15,9 @@
  * dos 6 gatilhos num objeto único; serializamos pra o array de 6 que a UI
  * espera (com defaults `enabled:false` quando o JSONB não tem a entrada).
  *
- * **`metrics`.** Zeros temporariamente — métricas reais entram em M11#7
- * (VIEW Postgres agregada de `agent_sessions` + `agent_messages`).
+ * **`metrics`.** Reais desde M11#7 — `getAgentMetricsMap` (`./metrics`)
+ * agrega `agent_sessions` + `agent_messages`. `emptyMetrics()` continua só
+ * como fallback defensivo se o agente faltar no mapa.
  *
  * **Identidade do criador de versão.** `agent_versions.created_by_id` →
  * `users.name || users.email || '—'`. M5 mock era `'Você'` fixo.
@@ -25,6 +26,7 @@ import 'server-only';
 
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
+import { getAgentMetricsMap } from './metrics';
 import { HANDOFF_TRIGGER_KINDS } from './schemas';
 import type {
   Agent,
@@ -46,7 +48,9 @@ import type {
 /** Shape do JSONB `ai_agents.handoff_config`. Validado por Zod no Server Action
  *  de update; aqui assumimos shape correto (DB-managed). */
 interface HandoffConfigJson {
-  [kind: string]: { enabled?: boolean; keywords?: string[]; targetAgentId?: string } | undefined;
+  [kind: string]:
+    | { enabled?: boolean; keywords?: string[]; targetAgentId?: string; stageId?: string }
+    | undefined;
 }
 
 /** Resultado de uma chamada de simulation chat (M11#3). */
@@ -80,17 +84,22 @@ function serializeHandoffConfig(agentId: string, handoffConfig: unknown): Handof
       kind: kind as HandoffTriggerKind,
       enabled: entry.enabled ?? false,
       config:
-        entry.keywords || entry.targetAgentId
+        entry.keywords || entry.targetAgentId || entry.stageId
           ? {
               keywords: entry.keywords,
               targetAgentId: entry.targetAgentId,
+              stageId: entry.stageId,
             }
           : undefined,
     };
   });
 }
 
-/** Métricas placeholder até M11#7. Zeros pra UI renderizar "0 conversas atendidas". */
+/**
+ * Fallback de métricas zeradas. `getAgentMetricsMap` retorna uma linha por
+ * agente não-deletado, então na prática todo agente está no mapa — isto
+ * cobre só o caso defensivo de `metricsMap.get(id)` vir `undefined`.
+ */
 function emptyMetrics(): AgentMetrics {
   return {
     totalConversations: 0,
@@ -135,8 +144,11 @@ interface AgentRowWithRelations {
   }>;
 }
 
-/** Materializa um row Prisma no shape `Agent` da UI. */
-function serializeAgent(row: AgentRowWithRelations): Agent {
+/**
+ * Materializa um row Prisma no shape `Agent` da UI. `metrics` vem do mapa
+ * agregado (`getAgentMetricsMap`); ausente → `emptyMetrics()` defensivo.
+ */
+function serializeAgent(row: AgentRowWithRelations, metrics?: AgentMetrics): Agent {
   const versions: AgentVersion[] = row.versions
     .slice()
     .sort((a, b) => b.versionNumber - a.versionNumber)
@@ -182,7 +194,7 @@ function serializeAgent(row: AgentRowWithRelations): Agent {
     handoffTriggers: serializeHandoffConfig(row.id, row.handoffConfig),
     versions,
     currentVersionId,
-    metrics: emptyMetrics(),
+    metrics: metrics ?? emptyMetrics(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -196,22 +208,27 @@ function serializeAgent(row: AgentRowWithRelations): Agent {
  * pro editor sem N+1 (versions + routingRules em batch).
  */
 export async function listAgentsForWorkspace(workspaceId: string): Promise<Agent[]> {
-  return withWorkspace(workspaceId, async (tx) => {
-    const rows = await tx.aiAgent.findMany({
-      where: { workspaceId, deletedAt: null },
-      orderBy: { updatedAt: 'desc' },
-      include: {
-        versions: {
-          orderBy: { versionNumber: 'desc' },
-          include: {
-            createdBy: { select: { name: true, email: true } },
+  // Métricas numa tx isolada (`getAgentMetricsMap`) — falha de agregação
+  // não derruba a lista. Paralelo com a query dos agentes.
+  const [rows, metricsMap] = await Promise.all([
+    withWorkspace(workspaceId, (tx) =>
+      tx.aiAgent.findMany({
+        where: { workspaceId, deletedAt: null },
+        orderBy: { updatedAt: 'desc' },
+        include: {
+          versions: {
+            orderBy: { versionNumber: 'desc' },
+            include: {
+              createdBy: { select: { name: true, email: true } },
+            },
           },
+          routingRules: { orderBy: { priority: 'asc' } },
         },
-        routingRules: { orderBy: { priority: 'asc' } },
-      },
-    });
-    return rows.map(serializeAgent);
-  });
+      }),
+    ),
+    getAgentMetricsMap(workspaceId),
+  ]);
+  return rows.map((row) => serializeAgent(row, metricsMap.get(row.id)));
 }
 
 /**
@@ -222,22 +239,27 @@ export async function getAgentDetailById(
   workspaceId: string,
   agentId: string,
 ): Promise<Agent | null> {
-  return withWorkspace(workspaceId, async (tx) => {
-    const row = await tx.aiAgent.findFirst({
-      where: { id: agentId, workspaceId, deletedAt: null },
-      include: {
-        versions: {
-          orderBy: { versionNumber: 'desc' },
-          include: {
-            createdBy: { select: { name: true, email: true } },
+  // Métricas numa tx isolada, paralela à busca do agente — falha de
+  // agregação não derruba a página de detalhe.
+  const [row, metricsMap] = await Promise.all([
+    withWorkspace(workspaceId, (tx) =>
+      tx.aiAgent.findFirst({
+        where: { id: agentId, workspaceId, deletedAt: null },
+        include: {
+          versions: {
+            orderBy: { versionNumber: 'desc' },
+            include: {
+              createdBy: { select: { name: true, email: true } },
+            },
           },
+          routingRules: { orderBy: { priority: 'asc' } },
         },
-        routingRules: { orderBy: { priority: 'asc' } },
-      },
-    });
-    if (!row) return null;
-    return serializeAgent(row);
-  });
+      }),
+    ),
+    getAgentMetricsMap(workspaceId),
+  ]);
+  if (!row) return null;
+  return serializeAgent(row, metricsMap.get(row.id));
 }
 
 /**
@@ -323,6 +345,23 @@ export async function getKnowledgeBaseFields(workspaceId: string): Promise<Knowl
  * pra começar uma simulação". Server Action `simulateAgentMessageAction`
  * cria a sessão na primeira mensagem.
  */
+/**
+ * Opções leves (`id` + `name`) de todos os agentes não-deletados do workspace.
+ * Alimenta o `<Select>` de agente-alvo do gatilho de handoff `agent_to_agent`
+ * (M11#6). O caller filtra o próprio agente fora da lista.
+ */
+export async function listAgentOptions(
+  workspaceId: string,
+): Promise<Array<{ id: string; name: string }>> {
+  return withWorkspace(workspaceId, async (tx) => {
+    return tx.aiAgent.findMany({
+      where: { workspaceId, deletedAt: null },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+  });
+}
+
 export async function getActiveSimulationState(
   workspaceId: string,
   agentId: string,

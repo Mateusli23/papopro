@@ -2,7 +2,12 @@ import { notFound, redirect } from 'next/navigation';
 
 import type { Metadata } from 'next';
 
-import { getActiveSimulationState, getAgentDetailById } from '@/features/agents/queries';
+import {
+  getActiveSimulationState,
+  getAgentDetailById,
+  listAgentOptions,
+} from '@/features/agents/queries';
+import { listDefaultPipeline } from '@/features/leads/queries';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { isUuid } from '@/lib/utils/uuid';
@@ -42,18 +47,26 @@ export default async function AgentDetailPage({ params }: PageProps) {
     redirect('/onboarding');
   }
 
-  const [agent, simulationState] = await Promise.all([
+  const [agent, simulationState, agentOptions, pipeline] = await Promise.all([
     getAgentDetailById(workspaceId, params.id),
     getActiveSimulationState(workspaceId, params.id),
+    listAgentOptions(workspaceId),
+    listDefaultPipeline(workspaceId),
   ]);
 
   if (!agent) notFound();
+
+  // Opções dos Selects do painel de handoff (M11#6): agentes-alvo do
+  // `agent_to_agent` e etapas do `stage_negotiation`.
+  const stageOptions = (pipeline?.stages ?? []).map((s) => ({ id: s.id, name: s.name }));
 
   return (
     <AgentEditorView
       agent={agent}
       initialSimulationState={simulationState}
       callerRole={callerMembership.role}
+      agentOptions={agentOptions}
+      stageOptions={stageOptions}
     />
   );
 }

@@ -13,8 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@papopro/ui';
-import { Archive, ArchiveRestore } from '@papopro/ui/icons';
+import { Archive, ArchiveRestore, Bot, UserPlus } from '@papopro/ui/icons';
 
+import {
+  assumeConversationAction,
+  resumeAiOnConversationAction,
+} from '@/features/agents/handoff-actions';
 import { moveLeadToStage } from '@/features/leads/store';
 import { ACTIVE_STAGES } from '@/lib/fixtures/pipelines';
 import { SALES_REPS } from '@/lib/fixtures/sales-reps';
@@ -66,6 +70,7 @@ export function LeadFichaQuickActions({
   if (!conversation) return null;
 
   const isArchived = Boolean(conversation.archivedAt);
+  const isAiEnabled = conversation.aiEnabled;
 
   const handleStageChange = (nextStageId: string) => {
     if (nextStageId === currentStageId) return;
@@ -88,6 +93,24 @@ export function LeadFichaQuickActions({
       return;
     }
     toast.success('Vendedor atribuído.');
+  };
+
+  const handleHandoffToggle = async () => {
+    if (isAiEnabled) {
+      const result = await assumeConversationAction({ conversationId });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success('Você assumiu a conversa — a IA foi desligada aqui.');
+    } else {
+      const result = await resumeAiOnConversationAction({ conversationId });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success('IA reativada — o agente volta a atender esta conversa.');
+    }
   };
 
   const handleArchiveToggle = async () => {
@@ -160,13 +183,43 @@ export function LeadFichaQuickActions({
         </div>
       </div>
 
+      {/* Handoff agente↔humano (M11#6). `aiEnabled` vem do servidor; o toggle
+       * passa por `assumeConversationAction`/`resumeAiOnConversationAction`. */}
+      <Button
+        type="button"
+        variant={isAiEnabled ? 'ghost' : 'outline'}
+        size="sm"
+        onClick={handleHandoffToggle}
+        className={cn(
+          'mt-1 justify-start gap-2',
+          isAiEnabled ? 'text-muted-foreground hover:text-foreground' : 'text-foreground',
+        )}
+      >
+        {isAiEnabled ? (
+          <>
+            <UserPlus className="size-3.5" />
+            Assumir conversa
+          </>
+        ) : (
+          <>
+            <Bot className="size-3.5" />
+            Devolver pra IA
+          </>
+        )}
+      </Button>
+      {!isAiEnabled && (
+        <p className="text-caption text-muted-foreground/80 -mt-1 pl-1">
+          A IA está desligada nesta conversa — você está no comando.
+        </p>
+      )}
+
       <Button
         type="button"
         variant={isArchived ? 'outline' : 'ghost'}
         size="sm"
         onClick={handleArchiveToggle}
         className={cn(
-          'mt-1 justify-start gap-2',
+          'justify-start gap-2',
           isArchived ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
         )}
       >
