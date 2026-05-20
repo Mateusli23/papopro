@@ -519,6 +519,13 @@ model Workspace {
   /// e regenerável por Owner/Admin em Settings → Connections. Unique pra que
   /// o lookup do route handler seja O(log n) e nunca colida entre workspaces.
   webhookToken String?  @unique @map("webhook_token") @db.VarChar(64)
+  /// Trial 7d sem cartão (M12#2). `createdAt + 7d`, setado no
+  /// `createWorkspaceAction`. NULL = workspace sem trial. Expiração é lazy —
+  /// `getActivePlan` compara `NOW() < trialEndsAt` ao vivo.
+  trialEndsAt       DateTime? @map("trial_ends_at") @db.Timestamptz(6)
+  /// Idempotência dos avisos D-2/D-1 disparados pelo job `/api/cron/trial-warnings`.
+  trialWarnD2SentAt DateTime? @map("trial_warn_d2_sent_at") @db.Timestamptz(6)
+  trialWarnD1SentAt DateTime? @map("trial_warn_d1_sent_at") @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)

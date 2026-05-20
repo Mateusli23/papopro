@@ -13,12 +13,30 @@ import type { SubscriptionPlan, SubscriptionStatus } from '@papopro/db';
  * (status `active` ou `past_due`).
  */
 export interface BillingStateUI {
-  /** Plano efetivo derivado da subscription (ou 'free' quando null). */
+  /** Plano BILLADO derivado da subscription (ou 'free' quando null). NÃO
+   *  reflete o trial — durante o trial isto é 'free' e `trial` carrega o
+   *  estado. Para limites, o plano efetivo é `getActivePlan` (trial → pro). */
   plan: SubscriptionPlan | 'free';
   /** Subscription ativa — `null` no plano free. */
   subscription: SubscriptionUI | null;
   /** Tem customer Stripe registrado? Determina se podemos abrir Portal. */
   hasStripeCustomer: boolean;
+  /** Estado do trial 7d sem cartão (M12#2). `null` = workspace nunca teve trial. */
+  trial: TrialStateUI | null;
+}
+
+/**
+ * Trial 7d sem cartão exposto pra UI (M12#2). `endsAt` em ISO pra atravessar
+ * o boundary RSC → Client. Não-`null` quando o workspace tem trial (ativo ou
+ * já expirado).
+ */
+export interface TrialStateUI {
+  /** `active` = em andamento; `expired` = acabou (workspace caiu pra Free). */
+  status: 'active' | 'expired';
+  /** ISO. Fim do trial. */
+  endsAt: string;
+  /** Dias inteiros restantes — `≥1` enquanto ativo, `0` quando expirado. */
+  daysLeft: number;
 }
 
 export interface SubscriptionUI {

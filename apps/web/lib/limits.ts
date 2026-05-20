@@ -35,6 +35,7 @@ import 'server-only';
 
 import { type Prisma } from '@papopro/db';
 
+import { computeTrialState } from '@/features/billing/trial';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 
 export type Plan = 'free' | 'pro';
@@ -84,14 +85,32 @@ export interface WorkspaceUsage {
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 /**
- * `getActivePlan` — resolve plano via contagem de subscriptions ativas.
- * Mais leve que `getBillingState` (1 query, sem StripeCustomer).
+ * `getActivePlan` — resolve o plano EFETIVO pra fins de limites (M12#2).
+ *
+ * Precedência:
+ *  1. Subscription ativa/past_due → `pro` (pago).
+ *  2. Trial em andamento (`now < trial_ends_at`) → `pro` (trial = acesso Pro).
+ *  3. Senão → `free`.
+ *
+ * O trial mapeia pra `pro` de propósito: assim toda a lógica de limites e
+ * banners (M11#7/M12#4) fica idêntica entre trial e Pro pago. A distinção
+ * "trial vs pago" é do billing (`getBillingState`), não dos limites.
  */
 async function getActivePlan(tx: Prisma.TransactionClient, workspaceId: string): Promise<Plan> {
-  const activeCount = await tx.subscription.count({
-    where: { workspaceId, status: { in: ['active', 'past_due'] } },
-  });
-  return activeCount > 0 ? 'pro' : 'free';
+  const [activeCount, workspace] = await Promise.all([
+    tx.subscription.count({
+      where: { workspaceId, status: { in: ['active', 'past_due'] } },
+    }),
+    tx.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { trialEndsAt: true },
+    }),
+  ]);
+  if (activeCount > 0) return 'pro';
+  if (computeTrialState(workspace?.trialEndsAt ?? null, new Date()).status === 'active') {
+    return 'pro';
+  }
+  return 'free';
 }
 
 async function countActiveLeads(

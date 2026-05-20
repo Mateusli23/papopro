@@ -24,6 +24,7 @@ import { revalidatePath } from 'next/cache';
 
 import { prisma, type Prisma } from '@papopro/db';
 
+import { trialEndsAtFrom } from '@/features/billing/trial';
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { getCurrentUser } from '@/lib/auth/get-user';
 import { requireRole } from '@/lib/auth/require-role';
@@ -150,6 +151,9 @@ export async function createWorkspaceAction(
           // M8#5: gera token URL-safe (43 chars base64url) já na criação.
           // Owner/Admin pode regenerar depois em Settings → Connections.
           webhookToken: generateWebhookToken(),
+          // M12#2: trial de 7 dias sem cartão — começa na criação do
+          // workspace (que já é pós-verificação de email). Expira lazy.
+          trialEndsAt: trialEndsAtFrom(new Date()),
         },
         select: { id: true },
       });
