@@ -14,9 +14,13 @@
  *    Nunca cacheamos dado/JSON/auth — evita servir lead stale ou sessão furada.
  *
  * Registrado só em produção (ver `components/pwa/pwa-provider.tsx`).
+ *
+ * M13#2 acrescenta os listeners de push (`push`, `notificationclick`,
+ * `pushsubscriptionchange`) — a entrega real chega via Web Push criptografado
+ * (ver `lib/notifications/web-push.ts`).
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `papopro-static-${VERSION}`;
 const SHELL_CACHE = `papopro-shell-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
@@ -99,3 +103,83 @@ async function networkFirstNavigation(request) {
     return offline ?? Response.error();
   }
 }
+
+/*
+ * ── Push notifications (M13#2) ──────────────────────────────────────────────
+ *
+ * O payload é o JSON cifrado por `lib/notifications/web-push.ts`:
+ * `{ title, body, url?, tag? }`. Defensivo — payload ausente/corrompido cai
+ * num default em vez de derrubar o handler (Chrome mostra "site atualizado"
+ * genérico se `showNotification` não for chamado).
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = {};
+  }
+
+  const title = data.title || 'PapoPro';
+  const options = {
+    body: data.body || '',
+    icon: '/icon.svg',
+    badge: '/icon.svg',
+    // `tag` igual substitui a notificação anterior — evita pilha de avisos
+    // repetidos do mesmo tipo de evento.
+    tag: data.tag || undefined,
+    data: { url: data.url || '/dashboard' },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+/*
+ * Clique na notificação → foca uma aba já aberta do app (navegando pro
+ * deep-link) ou abre uma nova. `includeUncontrolled` pega abas que ainda não
+ * são controladas por este SW.
+ */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/dashboard';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.focus();
+          if ('navigate' in client) client.navigate(targetUrl);
+          return undefined;
+        }
+      }
+      return self.clients.openWindow(targetUrl);
+    }),
+  );
+});
+
+/*
+ * O push service pode rotacionar a subscription. Re-assinamos com a mesma
+ * VAPID key pra o objeto continuar existindo; a re-persistência no servidor
+ * acontece no próximo load do app (`lib/pwa/push.ts` re-sincroniza o
+ * endpoint). Best-effort — sem sessão/tab aberta não há como persistir aqui.
+ */
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    (async () => {
+      try {
+        const appServerKey =
+          event.oldSubscription &&
+          event.oldSubscription.options &&
+          event.oldSubscription.options.applicationServerKey;
+        if (appServerKey) {
+          await self.registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: appServerKey,
+          });
+        }
+      } catch {
+        // Re-assinatura falhou — o app re-sincroniza no próximo load.
+      }
+    })(),
+  );
+});
