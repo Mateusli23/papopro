@@ -1801,7 +1801,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | **M11#2** | `lib/ai/` (5 arquivos: pricing/usage/claude/embeddings/memory) + `usage_events` schema + SDKs (`@anthropic-ai/sdk` + `openai`) + smoke 28 checks. Prompt caching, retry built-in, top-K pgvector, lead summary background.                       | `m11-2-ai-lib`    | ✅ entregue |
 | **M11#3** | UI hidratada do servidor + 16 Server Actions (CRUD agente + versionamento + roteamento + handoff config + KB campos + simulation real Claude) + helper `buildSystemPrompt` + smoke 52 contratos. Store M5 + fixtures deletados.                  | `m11-3-ui-wiring` | ✅ entregue |
 | **M11#4** | Cérebro upload (PDF/TXT/MD) + extração + chunking + embedding síncrono + Storage bucket `knowledge-base` + re-indexação automática dos 5 campos estruturados em `updateKnowledgeBaseAction` + smoke chunking (11 checks). DOC/DOCX em follow-up. | `m11-4-knowledge` | ✅ entregue |
-| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                | `m11-5-router`    | ⏳ pendente |
+| **M11#5** | Roteador em runtime — match na chegada de mensagem (etapa/tag/número/keyword, primeiro hit), persiste `agent_sessions`, despacha pro Claude com memória 3 camadas. Integra com webhook uazapi M9.                                                | `m11-5-router`    | ✅ entregue |
 | **M11#6** | Handoffs — agente→agente (keyword/etapa/comando, resumo automático passado, pausa o anterior) + agente→humano (manual via botão "Assumir", keyword, intenção comercial, mudança pra Negociação, fora do horário).                                | `m11-6-handoffs`  | ⏳ pendente |
 | **M11#7** | Métricas por agente em `/reports` (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida via sentimento). Enforcement de 3 agentes ativos no Pro IA (reusa pattern M12#4 limits.ts).                            | `m11-7-metrics`   | ⏳ pendente |
 
@@ -2026,6 +2026,57 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 2. Validar bucket: `SELECT id, allowed_mime_types FROM storage.buckets WHERE id = 'knowledge-base'`.
 3. **`OPENAI_API_KEY` já configurada em M11#3 ops** — sem isso, upload retorna `failed` com erro propositivo.
 4. **Custo embedding por upload ~\$0.0003 / 50KB texto** — trivial; sem alerta.
+
+### M11#5 — roteador runtime + dispatch IA no webhook uazapi (entregue 2026-05-19)
+
+**Branch:** `m11-5-router`
+
+**Objetivo:** fechar o **diferencial PRD #3** ponta-a-ponta — mensagem que chega no webhook uazapi (M9#3) pode disparar resposta automática de agente IA. M11 #1-#4 já tinham agentes configurados, prompt+persona+tom+regras+Cérebro indexado, simulação chamando Claude real. M11#5 transforma `agent_routing_rules` (dado parado em M11#3) em runtime: roteia a mensagem, persiste `agent_sessions kind='production'`, monta memória 3 camadas, chama Claude, envia resposta via M9 adapter (anti-ban + jitter + uazapi) — tudo na chegada do inbound.
+
+**Decisões fechadas:**
+
+- **Roteador puro em `lib/ai/router.ts`** (pure function) — separado do loading DB. Testável em smoke sem mocking. `runtime.ts` faz o `prisma.findMany` + chamada Claude + envio; router só decide quem atende dada a lista de rules.
+- **Ordenação determinística** `(priority asc, agentCreatedAt asc, ruleCreatedAt asc, agentId asc)` — `priority` é local ao agente em M11#3 (UI drag-and-drop por agente), então globalmente vira tie-breaker. Sem `agentCreatedAt`/`ruleCreatedAt`/`agentId` o resultado entre dois agentes com mesma priority seria não-determinístico (depende da ordem do DB). Caller (`loadActiveRoutingRules`) hidrata `agentCreatedAt` via JOIN.
+- **Keyword match = palavra inteira case-insensitive, não substring.** "ço" não deve matar "preço". Implementado via regex `(^|[^\p{L}\p{N}])${escaped}($|[^\p{L}\p{N}])` com flag `iu` — `\b` do JS é ASCII-only e quebra com acentos pt-BR. `value` é escapado pra não virar regex hostil.
+- **Sessão production chaveada por `(workspaceId, agentId, conversationId, endedAt IS NULL)`** — mesma conversa + mesmo agente reusa entre turnos. CHECK constraint M11#1 garante `conversationId + leadId NOT NULL` em `kind='production'`. Handoff pra outro agente (M11#6) fechará a sessão atual + abre nova.
+- **Anti-ban check ANTES de Claude** — se lead em blacklist / instância desconectada / fora do horário comercial / rate-limit 24h, retorna sem queimar tokens. Audit log marca tentativa. Sessão fica aberta (próximo turno com anti-ban resolvido reusa).
+- **Anti-ban + adapter reusam pipeline M9** (`assertCanSend` + `applyJitter` 30-50s + `getWhatsAppAdapter().sendText` + `recordSent`) — zero duplicação. Diferença vs `sendTextMessageAction`: caller é o webhook (não Server Action), então não tem `requireRole` nem `revalidatePath`.
+- **`authorId=null` em `Message` outbound da IA** — distingue de vendedor humano (que tem `authorId = member.id`). Activity timeline anota `meta.via='agent' + agentId + agentSessionId + agentMessageId` pra render "Agente X respondeu". UI/relatórios usam a convenção `authorId IS NULL AND direction='out'` → mensagem IA.
+- **Opt-out tem precedência absoluta sobre roteador.** Filtragem em 2 camadas: (a) `handleMessageReceived` (M9) detecta `PARE`/`SAIR`/`CANCELAR` no inbound e adiciona à blacklist + seta `optOut: true` no retorno; (b) webhook só dispara o roteador se `!optOut`. Mesmo com regra `kind=keyword: value=cancelar` configurada, o handler `isOptOut` corre primeiro.
+- **Mídia sem caption (body null/empty) NÃO dispara o roteador.** Match `kind=keyword` exige texto; `stage`/`tag`/`whatsapp_number` poderiam casar, mas o agente não teria input pra responder. Pulamos pra evitar resposta sem contexto.
+- **Dispatch fora da tx do webhook + `await` inline** — Claude + jitter podem demorar 30-60s; tx de webhook não pode segurar. Bump `maxDuration` do webhook 30→90s. Idempotência via `WebhookEvent (source='whatsapp_inbound', externalId=sha256(rawBody))` absorve retry de uazapi se ocorrer.
+- **Custo Anthropic + OpenAI muda perfil de uso.** A partir deste sub-PR, **toda mensagem inbound matched** consome tokens (Sonnet 4.6 + embedding query). Estimativa ~\$0.05–\$0.30 por turno de produção (mesmo intervalo de simulation M11#3). Operador deve monitorar `usage_events feature='agent_chat'` desde o primeiro deploy + setar alerta se quiser bloquear workspaces abusivos. Usado mesmo `feature='agent_chat'` que simulation — distinguível por `agent_session.kind` em queries downstream.
+- **Falha de envio (adapter ou tx final) NÃO faz rollback da resposta Claude.** `agent_message direction='out'` já está persistido + `usage_events` registrado; só o `Message` (WhatsApp) e o `Activity` não chegam. Lead nunca recebe; operador vê pelo audit `whatsapp_message_sent` ausente. Retry inteligente fica pra M11#6+.
+- **Sessão production NÃO é fechada por timeout em M11#5.** Ela persiste enquanto a `Conversation` está ativa. Handoff (M11#6) é o que fecha. Em produção uma conversa pode ter centenas de turnos no mesmo `agent_session`.
+
+**Entregas:**
+
+- [x] [`apps/web/lib/ai/router.ts`](../apps/web/lib/ai/router.ts) (novo, ~140 linhas) — função pura `pickAgentForInbound(rules, ctx) → RouterMatch | null` + helpers exportados `compareRulesForRouting` (testar precedência) + `matchesKeyword` (Unicode-aware word boundary) + `ruleMatchesContext` (testar kinds isoladamente). Sem dependência de Prisma.
+- [x] [`apps/web/features/agents/runtime.ts`](../apps/web/features/agents/runtime.ts) (novo, ~360 linhas) — `runAgentForInboundMessage(input)` orquestra: tx#1 (load agent + instance + create/find session + persist `agent_message in`) → anti-ban check → assembleContext (memória 3 camadas) → `complete` (Claude) → tx#2 (persist `agent_message out` + tokens) → `recordUsage` → `applyJitter` 30-50s → `adapter.sendText` → tx#3 (`Message` out + `Activity` + `recordSent` + audit). Helpers `loadActiveRoutingRules` (JOIN com agente filtrando active+não-deletado, achata pra `RoutingRuleInput[]`) + `loadLeadContextForRouter` (`stageId + leadTags` pra alimentar router).
+- [x] [`apps/web/features/inbox/handlers.ts`](../apps/web/features/inbox/handlers.ts) — `handleMessageReceived` agora retorna `conversationId` no shape de retorno (era omitido). Caller (webhook) precisa pra dispatch.
+- [x] [`apps/web/app/api/webhooks/whatsapp/route.ts`](../apps/web/app/api/webhooks/whatsapp/route.ts) — bump `maxDuration` 30→90s (cobre jitter + Claude + adapter). Captura resultado de `handleMessageReceived` na tx. Após commit + se `event='message.received' && !idempotent && !skipped && !optOut && leadId && messageBody.trim()`: chama helper `dispatchAgentForInbound` que faz `loadActiveRoutingRules` + `loadLeadContextForRouter` (paralelos) + `pickAgentForInbound` + `runAgentForInboundMessage`. Helper é try/catch interno — falha é logada via `reportNonFatal`, webhook segue 200 OK.
+- [x] [`apps/web/app/api/smoke-test/agents/route.ts`](../apps/web/app/api/smoke-test/agents/route.ts) — **+18 checks** em grupo `router-m11-5`: null sem regras, match stage/tag/whatsapp_number/keyword, case-insensitive, palavra inteira não-substring, boundary com acento, body null/vazio safe, primeiro hit por priority asc, tie-break por agentCreatedAt/ruleCreatedAt, compareRulesForRouting determinístico, escape de chars especiais no value. Sem hit DB/API. Total smoke: 63 → **81 (81/81 verde)**.
+- [x] `pnpm --filter @papopro/web typecheck` ✅, `pnpm --filter @papopro/web lint` ✅ (zero warnings), smoke `/api/smoke-test/agents` 81/81 ✅, smoke `/api/smoke-test/ai` (M11#2) sem regressão ✅.
+
+**Não-objetivos M11#5 (explícitos):**
+
+- **Handoff agente↔agente e agente→humano em runtime** → M11#6. M11#5 nem checa `handoff_config` — toda match dispara o agente.
+- **Job de update de `lead_summaries`** após cada turno IA → M11#6. `lead_summary` continua só populado via `updateLeadSummary` direto (simulation/manual); em produção fica vazio nas primeiras conversas até M11#6 plugar o background.
+- **Métricas reais por agente em `/reports`** (total conversas, taxa resolução sem handoff, tempo médio resposta, satisfação inferida) → M11#7.
+- **Enforcement de 3 agentes ativos no Pro IA** → M11#7 (junto com `lib/limits.ts` billing-aware).
+- **Edge Function dedicada pro dispatch IA** — continua Next Route Handler. Latência cabe no `maxDuration=90`.
+- **Streaming de resposta Claude** — non-streaming continua (decisão M11#2; WhatsApp não suporta).
+- **Retry inteligente em falha de adapter** — `reason='adapter_error'` é logado e retorna; M11#6+ adiciona retry com backoff.
+- **Fechamento de sessão production por idle timeout** — sessão fica aberta indefinidamente. Handoff (M11#6) é o gatilho de fechamento.
+- **E2E Playwright "lead manda msg → agente responde"** → M13.
+- **UI mostrando que a mensagem foi enviada pela IA** (badge "IA" na thread) — convenção `authorId IS NULL` já dá o gancho mas UI atual não usa; entra em polimento M13.
+
+**Ops pós-deploy:**
+
+1. **Nada novo de infra.** Sub-PR é pure code (helper TS + handler + plug no webhook + smoke). Não cria migration, não cria Edge Function, não muda cron job, não muda env var, não muda Storage bucket.
+2. **Reusa foundation já documentado:** M9 (uazapi adapter + anti-ban + webhook signature), M11#2 (lib/ai + ANTHROPIC_API_KEY/OPENAI_API_KEY já configuradas em M11#3), M11#3 (Server Actions de agente + `buildSystemPrompt`), M11#4 (KB indexada).
+3. **Custo Anthropic + OpenAI muda perfil.** A partir do merge, **toda inbound matched** consome tokens. Estimar ~\$0.05–\$0.30/turno (Sonnet 4.6). Monitorar `usage_events feature='agent_chat'` desde o primeiro deploy. Distinguir simulation vs production via `agent_session.kind` no JOIN.
+4. **Validação manual recomendada antes do merge dev → main:** com `.env.local` populado (`ANTHROPIC_API_KEY` + `OPENAI_API_KEY` + uazapi conectada), criar agente com regra `kind=keyword value="oi"` ativo, mandar "oi" pelo WhatsApp do dev, conferir: (a) `agent_session kind='production'` criada, (b) `agent_message in` + `out` persistidas, (c) `Message` out com `authorId=null` na inbox, (d) `usage_events` registrado, (e) WhatsApp recebeu a resposta.
 
 ---
 

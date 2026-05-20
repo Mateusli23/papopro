@@ -65,7 +65,13 @@ export async function handleMessageReceived(
   tx: Prisma.TransactionClient,
   ctx: MessageReceivedContext,
   payload: MessageReceivedPayload,
-): Promise<{ skipped: boolean; messageId?: string; leadId?: string; optOut?: boolean }> {
+): Promise<{
+  skipped: boolean;
+  messageId?: string;
+  leadId?: string;
+  conversationId?: string;
+  optOut?: boolean;
+}> {
   const { workspaceId, whatsappAccountId } = ctx;
   const { message } = payload;
 
@@ -271,6 +277,7 @@ export async function handleMessageReceived(
     skipped: false,
     messageId: createdMessage.id,
     leadId: lead.id,
+    conversationId: conversation.id,
     optOut,
   };
 }
