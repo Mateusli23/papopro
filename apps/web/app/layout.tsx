@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 
 import { ThemeProvider } from '@papopro/ui';
 
+import { PwaProvider } from '@/components/pwa/pwa-provider';
 import { Toaster } from '@/components/toaster';
 
 import './globals.css';
@@ -24,6 +25,14 @@ export const metadata: Metadata = {
   },
   description: 'CRM com WhatsApp, motor de cadência e agentes IA para times de vendas consultivas.',
   applicationName: 'PapoPro',
+  // PWA (M13#1) — `manifest` injeta `<link rel="manifest">`; `appleWebApp`
+  // injeta as meta tags que o iOS Safari lê no "Adicionar à Tela de Início".
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    title: 'PapoPro',
+    statusBarStyle: 'default',
+  },
 };
 
 export const viewport: Viewport = {
@@ -50,9 +59,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
            * cada consumer pega o que precisa direto da fonte canônica.
            *
            * `WorkspaceMockProvider` foi removido em M7#4 Onda 3.
+           *
+           * `PwaProvider` (M13#1) é a exceção: registra o service worker e
+           * segura o evento `beforeinstallprompt` (que dispara cedo e some).
            */}
-          {children}
-          <Toaster />
+          <PwaProvider>
+            {children}
+            <Toaster />
+          </PwaProvider>
         </ThemeProvider>
       </body>
     </html>
