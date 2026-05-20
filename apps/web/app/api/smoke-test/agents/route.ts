@@ -37,6 +37,12 @@ import {
 import { countAgents, getNextRouteMatch } from '@/features/agents/transforms';
 import type { Agent } from '@/features/agents/types';
 import { buildSystemPrompt } from '@/lib/ai/build-system-prompt';
+import {
+  compareRulesForRouting,
+  matchesKeyword,
+  pickAgentForInbound,
+  type RoutingRuleInput,
+} from '@/lib/ai/router';
 import { AGENT_TEMPLATES, getAgentTemplate } from '@/lib/fixtures/agent-templates';
 import { chunkText, estimateTokens } from '@/lib/knowledge/chunking';
 
@@ -451,6 +457,199 @@ export function GET() {
       chunks[0]?.content.includes('Curto 1') === true &&
       chunks[0]?.content.includes('Curto 5') === true
     );
+  });
+
+  // ── M11#5: router runtime (pure) ────────────────────────────────────────
+  t = run('router-m11-5', results);
+
+  // Helper pra montar RoutingRuleInput rapidamente nos testes.
+  const makeRule = (overrides: Partial<RoutingRuleInput> = {}): RoutingRuleInput => ({
+    ruleId: overrides.ruleId ?? 'rl_test_00001',
+    agentId: overrides.agentId ?? 'agt_test_00001',
+    agentCreatedAt: overrides.agentCreatedAt ?? new Date('2026-01-01T00:00:00Z'),
+    kind: overrides.kind ?? 'stage',
+    value: overrides.value ?? 'novo',
+    priority: overrides.priority ?? 0,
+    ruleCreatedAt: overrides.ruleCreatedAt ?? new Date('2026-01-01T00:00:00Z'),
+  });
+
+  t('pickAgentForInbound retorna null sem regras', () => {
+    return pickAgentForInbound([], { leadStageId: 'novo' }) === null;
+  });
+
+  t('pickAgentForInbound match exato em stage', () => {
+    const r = pickAgentForInbound([makeRule({ kind: 'stage', value: 'novo' })], {
+      leadStageId: 'novo',
+    });
+    return r?.ruleKind === 'stage' && r?.value === 'novo';
+  });
+
+  t('pickAgentForInbound não casa stage diferente', () => {
+    const r = pickAgentForInbound([makeRule({ kind: 'stage', value: 'novo' })], {
+      leadStageId: 'contato',
+    });
+    return r === null;
+  });
+
+  t('pickAgentForInbound match em tag presente', () => {
+    const r = pickAgentForInbound([makeRule({ kind: 'tag', value: 'vip' })], {
+      leadTags: ['vip', 'urgente'],
+    });
+    return r?.ruleKind === 'tag' && r?.value === 'vip';
+  });
+
+  t('pickAgentForInbound tag ausente não casa', () => {
+    const r = pickAgentForInbound([makeRule({ kind: 'tag', value: 'vip' })], {
+      leadTags: ['normal'],
+    });
+    return r === null;
+  });
+
+  t('pickAgentForInbound tags vazias / undefined não crashea', () => {
+    const r1 = pickAgentForInbound([makeRule({ kind: 'tag', value: 'vip' })], { leadTags: [] });
+    const r2 = pickAgentForInbound([makeRule({ kind: 'tag', value: 'vip' })], {});
+    return r1 === null && r2 === null;
+  });
+
+  t('pickAgentForInbound match em whatsapp_number', () => {
+    const r = pickAgentForInbound([makeRule({ kind: 'whatsapp_number', value: 'acc_main' })], {
+      whatsappAccountId: 'acc_main',
+    });
+    return r?.ruleKind === 'whatsapp_number';
+  });
+
+  t('pickAgentForInbound keyword case-insensitive', () => {
+    const rule = makeRule({ kind: 'keyword', value: 'PREÇO' });
+    const r = pickAgentForInbound([rule], { messageBody: 'Qual o preço do imóvel?' });
+    return r?.ruleKind === 'keyword';
+  });
+
+  t('pickAgentForInbound keyword exige palavra inteira (não substring)', () => {
+    // "ço" não deve matar "preço" — match palavra inteira.
+    const r = pickAgentForInbound([makeRule({ kind: 'keyword', value: 'ço' })], {
+      messageBody: 'Qual o preço?',
+    });
+    return r === null;
+  });
+
+  t('pickAgentForInbound keyword respeita boundary com acento', () => {
+    // "olá" deve casar "Olá tudo bem?" mas não "molá".
+    const rule = makeRule({ kind: 'keyword', value: 'olá' });
+    const r1 = pickAgentForInbound([rule], { messageBody: 'Olá tudo bem?' });
+    const r2 = pickAgentForInbound([rule], { messageBody: 'molá pra você' });
+    return r1?.ruleKind === 'keyword' && r2 === null;
+  });
+
+  t('pickAgentForInbound keyword com body vazio/null não crashea', () => {
+    const rule = makeRule({ kind: 'keyword', value: 'oi' });
+    const r1 = pickAgentForInbound([rule], { messageBody: null });
+    const r2 = pickAgentForInbound([rule], { messageBody: '' });
+    const r3 = pickAgentForInbound([rule], {});
+    return r1 === null && r2 === null && r3 === null;
+  });
+
+  t('pickAgentForInbound primeiro hit por priority asc', () => {
+    const rules = [
+      makeRule({
+        ruleId: 'rl_b',
+        agentId: 'agt_b',
+        priority: 10,
+        kind: 'stage',
+        value: 'novo',
+      }),
+      makeRule({
+        ruleId: 'rl_a',
+        agentId: 'agt_a',
+        priority: 0,
+        kind: 'stage',
+        value: 'novo',
+      }),
+    ];
+    const r = pickAgentForInbound(rules, { leadStageId: 'novo' });
+    return r?.agentId === 'agt_a' && r?.ruleId === 'rl_a';
+  });
+
+  t('pickAgentForInbound tie-break por agentCreatedAt asc', () => {
+    const rules = [
+      makeRule({
+        ruleId: 'rl_b',
+        agentId: 'agt_b',
+        agentCreatedAt: new Date('2026-06-01T00:00:00Z'),
+        priority: 0,
+        kind: 'tag',
+        value: 'vip',
+      }),
+      makeRule({
+        ruleId: 'rl_a',
+        agentId: 'agt_a',
+        agentCreatedAt: new Date('2026-01-01T00:00:00Z'),
+        priority: 0,
+        kind: 'tag',
+        value: 'vip',
+      }),
+    ];
+    const r = pickAgentForInbound(rules, { leadTags: ['vip'] });
+    return r?.agentId === 'agt_a';
+  });
+
+  t('pickAgentForInbound tie-break por ruleCreatedAt asc', () => {
+    const ts = new Date('2026-01-01T00:00:00Z');
+    const rules = [
+      makeRule({
+        ruleId: 'rl_new',
+        agentId: 'agt_x',
+        agentCreatedAt: ts,
+        priority: 0,
+        ruleCreatedAt: new Date('2026-03-01T00:00:00Z'),
+        kind: 'stage',
+        value: 'novo',
+      }),
+      makeRule({
+        ruleId: 'rl_old',
+        agentId: 'agt_x',
+        agentCreatedAt: ts,
+        priority: 0,
+        ruleCreatedAt: new Date('2026-01-15T00:00:00Z'),
+        kind: 'stage',
+        value: 'novo',
+      }),
+    ];
+    const r = pickAgentForInbound(rules, { leadStageId: 'novo' });
+    return r?.ruleId === 'rl_old';
+  });
+
+  t('pickAgentForInbound múltiplas regras — primeiro que casa vence', () => {
+    // priority 0 não casa, priority 5 casa, priority 10 casaria mas não chega.
+    const rules = [
+      makeRule({ ruleId: 'r0', agentId: 'a0', priority: 0, kind: 'stage', value: 'outro' }),
+      makeRule({ ruleId: 'r5', agentId: 'a5', priority: 5, kind: 'tag', value: 'vip' }),
+      makeRule({ ruleId: 'r10', agentId: 'a10', priority: 10, kind: 'tag', value: 'vip' }),
+    ];
+    const r = pickAgentForInbound(rules, { leadStageId: 'novo', leadTags: ['vip'] });
+    return r?.ruleId === 'r5';
+  });
+
+  t('compareRulesForRouting é estável e determinístico', () => {
+    const ts = new Date('2026-01-01T00:00:00Z');
+    const a = makeRule({ ruleId: 'r1', agentId: 'aaa', priority: 0, ruleCreatedAt: ts });
+    const b = makeRule({ ruleId: 'r2', agentId: 'aaa', priority: 0, ruleCreatedAt: ts });
+    // Mesmo agentId, mesmas datas, mesma priority → ruleId desempata.
+    // Ambos têm agentId 'aaa', então fallback final (agentId) também é igual.
+    // Resultado deve ser 0 (estável — não inventa ordem).
+    return compareRulesForRouting(a, b) === 0;
+  });
+
+  t('matchesKeyword aceita palavras com pontuação ao redor', () => {
+    return (
+      matchesKeyword('Quero falar com um humano!', 'humano') === true &&
+      matchesKeyword('humano?', 'humano') === true &&
+      matchesKeyword('(humano)', 'humano') === true
+    );
+  });
+
+  t('matchesKeyword escapa caracteres especiais do value', () => {
+    // value com "?" não deve virar quantifier regex.
+    return matchesKeyword('Você está aí?', 'aí?') === true;
   });
 
   // ── Summary ─────────────────────────────────────────────────────────────
