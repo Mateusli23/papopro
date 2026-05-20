@@ -17,12 +17,14 @@ import { NextResponse } from 'next/server';
 import { AuditAction, SubscriptionPlan, SubscriptionStatus } from '@papopro/db';
 
 import { checkoutSessionInputSchema } from '@/features/billing/schemas';
+import { computeTrialState, pickTrialWarning, trialEndsAtFrom } from '@/features/billing/trial';
 import {
   getCurrentPeriod,
   getFirstPriceId,
   getWorkspaceIdFromMetadata,
   mapStripeStatus,
 } from '@/features/billing/webhook/extract';
+import { renderTrialExpiringEmail } from '@/lib/email/templates/trial-expiring';
 import {
   PLAN_LIMITS,
   computeLimitState,
@@ -302,6 +304,118 @@ export function GET() {
   t('toLimitStateUI agents pro 3/3 → limit finito, isUnlimited false, percent 100', () => {
     const ui = toLimitStateUI(computeLimitState('pro', 3, 3));
     return ui.limit === 3 && ui.isUnlimited === false && ui.percent === 100;
+  });
+
+  // ── Trial 7d (M12#2) ────────────────────────────────────────────────────
+  t = run('trial-m12-2', results);
+  const trialNow = new Date('2026-06-01T12:00:00.000Z');
+  const hoursFromNow = (h: number) => new Date(trialNow.getTime() + h * 3_600_000);
+
+  t('trialEndsAtFrom adiciona 7 dias', () => {
+    const ends = trialEndsAtFrom(trialNow);
+    const diffDays = Math.round((ends.getTime() - trialNow.getTime()) / 86_400_000);
+    return diffDays === 7 || `recebi ${diffDays}`;
+  });
+  t('computeTrialState: trialEndsAt null → status none', () => {
+    return computeTrialState(null, trialNow).status === 'none';
+  });
+  t('computeTrialState: data futura → active + daysLeft', () => {
+    const s = computeTrialState(hoursFromNow(72), trialNow);
+    return (s.status === 'active' && s.daysLeft === 3) || `status=${s.status} d=${s.daysLeft}`;
+  });
+  t('computeTrialState: data passada → expired, daysLeft 0', () => {
+    const s = computeTrialState(hoursFromNow(-1), trialNow);
+    return s.status === 'expired' && s.daysLeft === 0;
+  });
+  t('computeTrialState: daysLeft arredonda pra cima (36h → 2)', () => {
+    return computeTrialState(hoursFromNow(36), trialNow).daysLeft === 2;
+  });
+  t('computeTrialState: trial ativo tem daysLeft >= 1', () => {
+    return computeTrialState(hoursFromNow(2), trialNow).daysLeft === 1;
+  });
+  t('pickTrialWarning: ~36h restante, nada enviado → d2', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(36),
+        now: trialNow,
+        d2SentAt: null,
+        d1SentAt: null,
+      }) === 'd2'
+    );
+  });
+  t('pickTrialWarning: ~12h restante, nada enviado → d1', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(12),
+        now: trialNow,
+        d2SentAt: null,
+        d1SentAt: null,
+      }) === 'd1'
+    );
+  });
+  t('pickTrialWarning: d2 já enviado, ~36h → null', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(36),
+        now: trialNow,
+        d2SentAt: trialNow,
+        d1SentAt: null,
+      }) === null
+    );
+  });
+  t('pickTrialWarning: ~12h, d2 enviado mas d1 null → d1 (precedência)', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(12),
+        now: trialNow,
+        d2SentAt: trialNow,
+        d1SentAt: null,
+      }) === 'd1'
+    );
+  });
+  t('pickTrialWarning: trial expirado → null', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(-5),
+        now: trialNow,
+        d2SentAt: null,
+        d1SentAt: null,
+      }) === null
+    );
+  });
+  t('pickTrialWarning: ~5 dias restantes → null (fora da janela)', () => {
+    return (
+      pickTrialWarning({
+        trialEndsAt: hoursFromNow(120),
+        now: trialNow,
+        d2SentAt: null,
+        d1SentAt: null,
+      }) === null
+    );
+  });
+  t('renderTrialExpiringEmail d1: assunto menciona "amanhã"', () => {
+    const e = renderTrialExpiringEmail({
+      workspaceName: 'Imobiliária X',
+      daysLeft: 1,
+      billingUrl: 'https://app.pipeflow.com.br/settings/billing',
+    });
+    return e.subject.includes('amanhã') && e.html.length > 0 && e.text.includes('Imobiliária X');
+  });
+  t('renderTrialExpiringEmail d2: assunto menciona "2 dias"', () => {
+    const e = renderTrialExpiringEmail({
+      workspaceName: 'Imobiliária X',
+      daysLeft: 2,
+      billingUrl: 'https://app.pipeflow.com.br/settings/billing',
+    });
+    return e.subject.includes('2 dias');
+  });
+  t('renderTrialExpiringEmail escapa HTML do nome do workspace', () => {
+    const e = renderTrialExpiringEmail({
+      workspaceName: '<script>alert(1)</script>',
+      daysLeft: 1,
+      billingUrl: 'https://app.pipeflow.com.br/settings/billing',
+    });
+    return !e.html.includes('<script>') && e.html.includes('&lt;script&gt;');
   });
 
   const passed = results.filter((r) => r.ok).length;

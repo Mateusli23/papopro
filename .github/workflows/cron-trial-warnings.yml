@@ -1,0 +1,52 @@
+name: Trial expiring warnings
+
+# M12#2 — Dispara o endpoint `/api/cron/trial-warnings` diariamente às
+# 12:00 UTC (= 09:00 BRT, horário comercial). O endpoint avisa por email os
+# Owners de workspaces cujo trial de 7 dias está a ≤2d / ≤1d do fim.
+#
+# Por que GitHub Action em vez de pg_cron + pg_net + Edge Function: Edge
+# Functions estão bloqueadas em dev local nessa máquina (memória
+# `dev-local-windows-antivirus-tls`) e o endpoint reusa `lib/email/` direto.
+# Mesmo padrão do `cron-cleanup-attachments.yml`.
+#
+# **Secrets necessários** (Repo Settings → Secrets and variables → Actions):
+#  - `CRON_SECRET` — mesma string em `apps/web/.env` (Vercel) e aqui
+#  - `APP_HOST` — `app.pipeflow.com.br` em produção; ajustável em staging
+
+on:
+  schedule:
+    # Diariamente às 12:00 UTC (= 09:00 BRT, manhã — o Owner vê o email no dia).
+    - cron: '0 12 * * *'
+  # Permite trigger manual via UI do GitHub pra debug.
+  workflow_dispatch:
+
+jobs:
+  trial-warnings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Trigger trial-warnings endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_HOST: ${{ secrets.APP_HOST }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_HOST" ]; then
+            echo "::error::CRON_SECRET ou APP_HOST não configurado nos secrets."
+            exit 1
+          fi
+
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            "https://$APP_HOST/api/cron/trial-warnings")
+
+          status="${response##*$'\n'}"
+          body="${response%$'\n'*}"
+
+          echo "HTTP $status"
+          echo "Response: $body"
+
+          if [ "$status" != "200" ]; then
+            echo "::error::trial-warnings endpoint retornou $status"
+            exit 1
+          fi

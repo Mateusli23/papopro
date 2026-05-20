@@ -3,9 +3,10 @@ import { TooltipProvider } from '@papopro/ui';
 import { CmdKPalette } from '@/components/app-shell/cmdk-palette';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { Topbar } from '@/components/app-shell/topbar';
+import { TrialBanner } from '@/features/billing/components/trial-banner';
 import { WelcomeWizardController } from '@/features/onboarding/components/welcome-wizard-controller';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
-import { readWizardCookie } from '@/lib/auth/workspace-cookie';
+import { readWizardCookie, readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 
 /**
  * **`dynamic = 'force-dynamic'` (M7#4 review fix):** todas as rotas filhas
@@ -38,6 +39,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const context = await getCurrentUserContext();
   const hasWorkspace = (context?.memberships.length ?? 0) > 0;
   const wizardCompleted = readWizardCookie();
+  const workspaceId = readWorkspaceCookie();
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -46,6 +48,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
           <main id="conteudo-principal" className="flex-1 overflow-y-auto">
+            {/*
+             * Banner de trial (M12#2) — async Server Component que se
+             * resolve pra `null` quando o workspace não está em trial ativo.
+             */}
+            {hasWorkspace && workspaceId && <TrialBanner workspaceId={workspaceId} />}
             {children}
           </main>
         </div>
