@@ -16,6 +16,7 @@ import type { ColdAlertUI, LeadEnrollmentUI } from '@/features/cadences/queries'
 import { DealCreateDialog } from '@/features/deals/components/deal-create-dialog';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import { LeadDetailCard } from '@/features/leads/components/lead-detail-card';
+import { LeadLgpdCard } from '@/features/leads/components/lead-lgpd-card';
 import { LeadNextActions } from '@/features/leads/components/lead-next-actions';
 import { LeadTimeline } from '@/features/leads/components/lead-timeline';
 import type { LeadWithRelations } from '@/features/leads/queries';
@@ -76,6 +77,10 @@ export function LeadDetailView({
   const canEdit = callerRole !== 'Viewer';
   const canAddNote = canEdit;
   const canCreateDeal = canEdit;
+  // LGPD (M13#3): exportar/excluir dados do titular é restrito. Export é
+  // Owner/Admin (vetor de vazamento); erase é Owner only (irreversível).
+  const canViewLgpd = callerRole === 'Owner' || callerRole === 'Admin';
+  const canEraseLgpd = callerRole === 'Owner';
 
   // Pra abrir o DealCreateDialog precisamos do shape `LeadComboboxOption`.
   // No contexto da ficha, o lead já tá selecionado — passamos uma lista de 1.
@@ -175,6 +180,9 @@ export function LeadDetailView({
             callerUserId={callerUserId}
             callerRole={callerRole}
           />
+          {canViewLgpd && (
+            <LeadLgpdCard leadId={lead.id} leadName={lead.name} canErase={canEraseLgpd} />
+          )}
         </div>
       </div>
 
@@ -198,13 +206,16 @@ export function LeadDetailView({
               Cadências
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="ficha" className="mt-4">
+          <TabsContent value="ficha" className="mt-4 flex flex-col gap-4">
             <LeadDetailCard
               lead={lead}
               salesReps={salesReps}
               stages={stages}
               callerRole={callerRole}
             />
+            {canViewLgpd && (
+              <LeadLgpdCard leadId={lead.id} leadName={lead.name} canErase={canEraseLgpd} />
+            )}
           </TabsContent>
           <TabsContent value="historico" className="mt-4">
             <LeadTimeline

@@ -6,24 +6,24 @@ import { LogoFull } from '@papopro/ui';
  * concorremos com ele aqui), sem redes sociais com badges (até existirem
  * de verdade, fica visualmente ruidoso).
  *
- * Links pra `/privacidade` e `/termos` apontam pra rotas que serão criadas
- * em M13 (deploy) ou puxadas do `apps/web/legal` se já existirem lá. Por
- * ora deixamos como `#` placeholder — clicar não navega pra lugar nenhum,
- * mas o link está semanticamente no lugar certo pra SEO e a11y.
+ * Links de produto usam caminho absoluto com âncora (`/#secao`) pra
+ * funcionarem tanto da home quanto das páginas `/legal/*`. Os links legais
+ * apontam pras páginas reais criadas em M13#3.
  *
  * Server Component — só HTML estático.
  */
 
 const PRODUCT_LINKS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '#funcionalidades', label: 'Funcionalidades' },
-  { href: '#roi', label: 'Calculadora de ROI' },
-  { href: '#planos', label: 'Planos' },
-  { href: '#faq', label: 'Perguntas frequentes' },
+  { href: '/#funcionalidades', label: 'Funcionalidades' },
+  { href: '/#roi', label: 'Calculadora de ROI' },
+  { href: '/#planos', label: 'Planos' },
+  { href: '/#faq', label: 'Perguntas frequentes' },
 ];
 
 const COMPANY_LINKS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '#privacidade', label: 'Política de privacidade' },
-  { href: '#termos', label: 'Termos de uso' },
+  { href: '/legal/privacy', label: 'Política de privacidade' },
+  { href: '/legal/terms', label: 'Termos de uso' },
+  { href: '/legal/cookies', label: 'Política de cookies' },
   { href: 'https://app.pipeflow.com.br/login', label: 'Entrar' },
 ];
 

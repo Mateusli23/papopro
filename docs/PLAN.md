@@ -2407,7 +2407,7 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | --------- | ---------------------------------------------------------------------------------- | --------------------- | ----------- |
 | **M13#1** | PWA — manifest, service worker, ícones, tela "Instalar app"                        | `m13-1-pwa`           | ✅ entregue |
 | **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ✅ entregue |
-| **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ⏳ pendente |
+| **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ✅ entregue |
 | **M13#4** | Observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y              | `m13-4-observability` | ⏳ pendente |
 | **M13#5** | E2E Playwright (signup → … → upgrade)                                              | `m13-5-e2e`           | ⏳ pendente |
 
@@ -2428,12 +2428,12 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Entregas — LGPD e Auditoria:**
 
-- [ ] Tela de exportação completa de dados do lead (formulário + log de auditoria)
-- [ ] Exclusão de lead sob solicitação do titular (cascade controlado, mantém log)
-- [ ] Auditoria com filtros por usuário, tipo de evento, período (Owner/Admin)
-- [ ] Retenção de logs: 12 meses (Pro/Pro IA), 24 meses (Enterprise) — job de purge mensal
-- [ ] Política de cookies + banner de consentimento na landing
-- [ ] Termos de uso e privacidade publicados em `/legal/terms` e `/legal/privacy`
+- [x] Tela de exportação completa de dados do lead (card na ficha + log de auditoria) _(M13#3)_
+- [x] Exclusão de lead sob solicitação do titular (hard delete + cascade, mantém log) _(M13#3)_
+- [x] Auditoria com filtros por usuário, tipo de evento, período (Owner/Admin) _(M13#3)_
+- [x] Retenção de logs: 12 meses (Pro/Pro IA), 24 meses (Enterprise — futuro) — cron de purge mensal _(M13#3)_
+- [x] Política de cookies + banner de consentimento na landing _(M13#3)_
+- [x] Termos de uso e privacidade publicados em `/legal/terms` e `/legal/privacy` _(M13#3)_
 
 **Entregas — Observabilidade & Polimento:**
 
@@ -2550,6 +2550,54 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 4. Testes manuais de push: iOS Safari 16.4+ (PWA instalado), Android Chrome, Desktop Chrome/Edge.
 
 **Próximo passo:** **M13#3** (LGPD — exportação/exclusão de dados, auditoria, retenção, cookie banner) — **launch-blocking**.
+
+---
+
+### M13#3 — LGPD (entregue 2026-05-20)
+
+**Branch:** `m13-3-lgpd`
+
+**Objetivo:** fechar os requisitos de LGPD que travam o trial público (CLAUDE.md §7.5) — direito do titular (portabilidade + eliminação), trilha de auditoria navegável, retenção de logs e consentimento de cookies + páginas legais na landing.
+
+**Decisões fechadas:**
+
+- **Exclusão = hard delete em cascade, não anonimização in-place.** `eraseLeadDataAction` apaga a row de `leads`; o `ON DELETE CASCADE` dos FKs leva negócios, tarefas, atividades, conversas+mensagens, anexos, cadências, resumo de IA e sessões de agente. O `audit_logs` **sobrevive** — não tem FK pro lead (`entity_id` é `VarChar`), é o tombstone de compliance. O registro `data_deleted` grava só `leadId` + contagens, **nunca PII** (não pode re-vazar o que apagou). Cascade de FK ignora RLS (integridade referencial); o `leads_delete` policy (M8#1) cobre o delete de topo.
+- **Erase é storage-first.** Anexos vivem em dois lugares: row em `attachments` (cascateada) + objeto no Supabase Storage (não-transacional). Apaga o Storage **antes** do delete no banco — se o Storage falhar, aborta e nada some, operação re-executável. O contrário deixaria arquivo pessoal órfão sem row pro `cleanup-attachments` capturar.
+- **Export LGPD é JSON, não CSV.** O dump de um lead é aninhado (conversas têm mensagens, cadências têm steps) — CSV achataria mal. Rota `POST` (não `GET`): a exportação grava `audit_logs` (LGPD §3.4); `GET` seria disparável por prefetch/crawler, inflando a auditoria.
+- **Sem migration nova.** Tudo lê/apaga tabelas que já existem (`audit_logs`, `notifications`, `leads` + filhos). O enum `audit_action` já tinha `export_started` e `data_deleted` desde M7. **Zero ops de banco pro operador** — diferente do M13#2.
+- **Retenção global em 12 meses.** O tier Enterprise (24m) ainda não existe no enum `SubscriptionPlan` (só `pro`). O purge corta `audit_logs` em 12m pra todo workspace e `notifications` em 30d (PRD §3.2 — o M13#2 adiou o purge do sino pra cá). Quando o Enterprise entrar, o purge de auditoria vira per-workspace — ver [`lib/lgpd/retention.ts`](apps/web/lib/lgpd/retention.ts).
+- **Cron Next route, não Edge Function.** Mesmo precedente de `cleanup-attachments`/`trial-warnings` — Edge Functions bloqueadas no dev local ([[dev-local-windows-antivirus-tls]]). GitHub Action mensal → `POST /api/cron/purge-logs`.
+- **Consentimento de cookies gateia os trackers.** `<AnalyticsGate>` só renderiza `<AnalyticsScripts>` (PostHog/GA4/Meta) depois do aceite no `<CookieBanner>`. Escolha em `localStorage`; aceitar liga os scripts na hora (hook reage a evento), sem reload.
+- **Páginas legais com chrome próprio.** `/legal/*` usa um top-bar mínimo (só logo → `/`) em vez do `<Header>` da landing — o Header tem âncoras (`#funcionalidades`) que não resolvem fora da home. Footer reusado; links de produto viraram absolutos (`/#secao`).
+
+**Entregas:**
+
+- [x] [`features/leads/lgpd-actions.ts`](apps/web/features/leads/lgpd-actions.ts) — `exportLeadDataAction` (dump JSON completo, Owner/Admin) + `eraseLeadDataAction` (hard delete, Owner only, confirmação por nome).
+- [x] [`app/api/exports/leads/[id]/lgpd/route.ts`](apps/web/app/api/exports/leads/[id]/lgpd/route.ts) — wrapper HTTP `POST` com `Content-Disposition`.
+- [x] [`features/leads/components/lead-lgpd-card.tsx`](apps/web/features/leads/components/lead-lgpd-card.tsx) — card "Privacidade e LGPD" na ficha do lead (export via `fetch`/blob + dialog de exclusão com confirmação dupla). Montado no `lead-detail-view` (desktop + tab mobile), só pra Owner/Admin.
+- [x] `features/audit/` — `labels.ts` (56 ações × rótulo pt-BR + grupos), `schemas.ts`, `types.ts`, `transforms.ts`, `queries.ts` (`listAuditLogs` paginada + `listAuditActors`), `components/audit-filters.tsx` + `components/audit-table.tsx`.
+- [x] [`app/(dashboard)/settings/audit/page.tsx`](<apps/web/app/(dashboard)/settings/audit/page.tsx>) — viewer `/settings/audit` (Owner/Admin) com filtro por autor/evento/período; entrada nova no `settings-nav-config`.
+- [x] [`lib/lgpd/retention.ts`](apps/web/lib/lgpd/retention.ts) — helpers de corte (12m auditoria / 30d notificações).
+- [x] [`app/api/cron/purge-logs/route.ts`](apps/web/app/api/cron/purge-logs/route.ts) + [`.github/workflows/cron-purge-logs.yml`](.github/workflows/cron-purge-logs.yml) — purge mensal (Bearer `CRON_SECRET`).
+- [x] Landing — [`lib/consent.ts`](apps/landing/lib/consent.ts) (consentimento em `localStorage` + hook), [`components/cookie-banner.tsx`](apps/landing/components/cookie-banner.tsx), [`components/analytics-gate.tsx`](apps/landing/components/analytics-gate.tsx) (gateia `AnalyticsScripts`); `app/layout.tsx` atualizado.
+- [x] Landing — [`components/legal-page.tsx`](apps/landing/components/legal-page.tsx) (chrome compartilhado) + `app/legal/{terms,privacy,cookies}/page.tsx`; footer com links legais reais.
+- [x] [`app/api/smoke-test/lgpd/route.ts`](apps/web/app/api/smoke-test/lgpd/route.ts) — retenção + rótulos + transforms.
+- [x] `pnpm typecheck` ✅, `lint` ✅, `build` ✅, smoke `/api/smoke-test/lgpd` ✅.
+
+**Não-objetivos M13#3 (explícitos):**
+
+- **Export CSV do log de auditoria** — o viewer com filtros atende o requisito; export é polimento.
+- **Purge per-workspace / tier Enterprise 24m** — o enum `SubscriptionPlan` não tem `enterprise`; quando tiver, `retention.ts` + o cron passam a olhar o plano.
+- **Mascaramento de IP no `audit_logs`** — segue gravando IP completo (TODO antigo de `lib/audit/context.ts`); decisão de produto, fora do escopo deste sub-PR.
+- **Purge batched** — `deleteMany` direto; volume MVP não justifica o select-ids-then-delete do `cleanup-attachments`.
+- **Conteúdo legal definitivo** — Termos/Privacidade/Cookies são rascunho de engenharia e **precisam de revisão jurídica** antes do trial público (flag nos próprios arquivos).
+
+**Ops pós-deploy (operador):**
+
+1. Configurar a GitHub Action `cron-purge-logs` — reusa os secrets `CRON_SECRET` + `APP_HOST` (já usados por `cleanup-attachments`/`trial-warnings`; nada novo).
+2. Revisão jurídica do conteúdo de `/legal/{terms,privacy,cookies}` antes de abrir o trial público.
+
+**Próximo passo:** **M13#4** (observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y).
 
 ---
 
