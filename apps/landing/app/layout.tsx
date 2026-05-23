@@ -2,7 +2,8 @@ import type { Metadata, Viewport } from 'next';
 
 import { ThemeProvider } from '@papopro/ui';
 
-import { AnalyticsScripts } from '@/components/analytics-scripts';
+import { AnalyticsGate } from '@/components/analytics-gate';
+import { CookieBanner } from '@/components/cookie-banner';
 import { Toaster } from '@/components/toaster';
 
 import './globals.css';
@@ -116,14 +117,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           {children}
           <Toaster />
+          {/*
+           * Banner de consentimento de cookies (M13#3 — LGPD). Fixo no rodapé
+           * até o visitante decidir.
+           */}
+          <CookieBanner />
         </ThemeProvider>
         {/*
-         * AnalyticsScripts no fim do body: cada provider é condicionado a
-         * env, então em dev sem chaves nada é renderizado. Strategy
-         * `afterInteractive` em todos: carregam depois do primeiro paint,
-         * sem bloquear LCP.
+         * AnalyticsGate no fim do body: só injeta os trackers (PostHog/GA4/
+         * Meta) depois do consentimento do visitante (LGPD). Cada provider
+         * ainda é condicionado a env — em dev sem chaves nada é renderizado.
          */}
-        <AnalyticsScripts />
+        <AnalyticsGate />
       </body>
     </html>
   );
