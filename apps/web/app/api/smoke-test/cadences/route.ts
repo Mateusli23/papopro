@@ -58,6 +58,7 @@ import {
   sumActiveEnrollments,
 } from '@/features/cadences/transforms';
 import { resolvePlaceholders } from '@/features/inbox/transforms';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { CADENCE_TEMPLATES, getTemplate } from '@/lib/fixtures/cadence-templates';
 import { FAKE_CADENCES } from '@/lib/fixtures/cadences';
 import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
@@ -95,6 +96,9 @@ const stepIdGen = () => `step_test_${(++stepCounter).toString().padStart(5, '0')
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Fixtures ────────────────────────────────────────────────────────────

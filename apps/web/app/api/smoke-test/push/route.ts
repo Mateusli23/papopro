@@ -26,6 +26,7 @@ import {
 
 import { NextResponse } from 'next/server';
 
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import {
   type WebPushSubscription,
   encryptPayload,
@@ -117,6 +118,9 @@ function decryptAes128gcm(
 }
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── isWebPushConfigured ─────────────────────────────────────────────────

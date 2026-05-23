@@ -24,6 +24,7 @@ import {
   getWorkspaceIdFromMetadata,
   mapStripeStatus,
 } from '@/features/billing/webhook/extract';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { renderTrialExpiringEmail } from '@/lib/email/templates/trial-expiring';
 import {
   PLAN_LIMITS,
@@ -62,6 +63,9 @@ function run(group: string, results: CheckResult[]) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Audit actions extension ─────────────────────────────────────────────

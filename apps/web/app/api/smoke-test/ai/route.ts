@@ -27,6 +27,7 @@ import {
   getDefaultAnthropicModel,
   getDefaultEmbeddingModel,
 } from '@/lib/ai/pricing';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 
 interface CheckResult {
   group: string;
@@ -56,6 +57,9 @@ function run(group: string, results: CheckResult[]) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── pricing-m11-2 ───────────────────────────────────────────────────────

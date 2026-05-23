@@ -18,6 +18,7 @@ import {
   sumOpenPipelineCents,
 } from '@/features/deals/transforms';
 import type { Deal } from '@/features/deals/types';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { getStageName } from '@/lib/fixtures/pipelines';
 
@@ -171,6 +172,9 @@ function formatBRL(cents: number) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   // Pega 1 deal de cada etapa pra construir cenários representativos.
   const dealNovo = FAKE_DEALS.find((d) => d.stageId === 'novo' && d.status === 'open')!;
   const dealEmContato = FAKE_DEALS.find((d) => d.stageId === 'em_contato' && d.status === 'open')!;

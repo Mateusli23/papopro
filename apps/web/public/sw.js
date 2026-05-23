@@ -139,9 +139,27 @@ self.addEventListener('push', (event) => {
  * deep-link) ou abre uma nova. `includeUncontrolled` pega abas que ainda não
  * são controladas por este SW.
  */
+/**
+ * Sanitiza `targetUrl` para garantir caminho relativo same-origin. Atacante
+ * que entregar um push (cenário: subscription roubada ou bug no dispatcher)
+ * NÃO pode redirecionar o usuário pra `https://evil.com` ou `javascript:...`.
+ * Aceita apenas paths começando com `/` e sem `//` (protocolo-relativo).
+ */
+function safeNotificationUrl(raw) {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 512) return '/dashboard';
+  if (!raw.startsWith('/')) return '/dashboard';
+  if (raw.startsWith('//')) return '/dashboard';
+  // Bloqueia CRLF / control chars (header smuggling em casos exóticos).
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code < 32 || code === 127) return '/dashboard';
+  }
+  return raw;
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/dashboard';
+  const targetUrl = safeNotificationUrl(event.notification.data && event.notification.data.url);
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
