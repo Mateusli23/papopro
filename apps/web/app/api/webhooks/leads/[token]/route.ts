@@ -91,8 +91,24 @@ export async function POST(
     return err('invalid_token', 'Token inválido.', 404);
   }
 
-  // 1. Rate limit ANTES do lookup — se o atacante chuta tokens em massa, não
-  //    queremos pagar uma query Postgres em cada.
+  // 1. Rate limit ANTES do lookup — dois buckets:
+  //    a) por IP (defense contra fuzz de tokens: limite por chave de token só
+  //       não ajuda quando o atacante chuta valores diferentes a cada request).
+  //    b) por token (limite por workspace pro caminho legítimo).
+  // O bucket por IP é primeiro porque cobre o ataque mais comum (descoberta
+  // de token). Em prod multi-instância Vercel o limite efetivo escala com
+  // workers — TODO migrar pra Redis (Upstash) antes do trial público.
+  const ipKey =
+    request.headers.get('cf-connecting-ip') ??
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    request.headers.get('x-real-ip') ??
+    'unknown';
+  const ipRl = checkRateLimit(`leads-ip:${ipKey}`, 300, 60_000);
+  if (!ipRl.ok) {
+    const response = err('rate_limited', 'Muitos pedidos — aguarde um pouco.', 429);
+    response.headers.set('Retry-After', String(Math.ceil(ipRl.retryAfterMs / 1000)));
+    return response;
+  }
   const rl = checkRateLimit(token, 100, 60_000);
   if (!rl.ok) {
     const response = err('rate_limited', 'Muitos pedidos — aguarde um pouco.', 429);

@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 import { exportLeadsAction } from '@/features/leads/actions';
 import { exportLeadsSchema } from '@/features/leads/schemas';
+import { checkRateLimit } from '@/lib/webhooks/rate-limit';
 
 /**
  * `POST /api/exports/leads` (M8#7) — wrapper HTTP da `exportLeadsAction`.
@@ -28,6 +29,25 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Rate-limit por IP — defense-in-depth contra exfiltração em massa via
+  // sessão comprometida (Owner phishing). 30 export-requests/hora cobre o uso
+  // legítimo (geração ad-hoc esporádica) com folga. RBAC ainda é validado na
+  // Server Action; este gate adiciona um teto físico de chamadas.
+  const ipKey =
+    request.headers.get('cf-connecting-ip') ??
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
+    request.headers.get('x-real-ip') ??
+    'unknown';
+  const rl = checkRateLimit(`exports-leads:${ipKey}`, 30, 3600_000);
+  if (!rl.ok) {
+    const response = NextResponse.json(
+      { ok: false, error: 'Muitas exportações — tente em alguns minutos.' },
+      { status: 429 },
+    );
+    response.headers.set('Retry-After', String(Math.ceil(rl.retryAfterMs / 1000)));
+    return response;
+  }
+
   let raw: unknown;
   try {
     raw = await request.json();

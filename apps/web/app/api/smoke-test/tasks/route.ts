@@ -24,6 +24,7 @@ import {
   getTasksOnDay,
   groupTasksByDay,
 } from '@/features/tasks/transforms';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { FAKE_TASKS } from '@/lib/fixtures/tasks';
 
 interface CheckResult {
@@ -56,6 +57,9 @@ function run(group: string, results: CheckResult[]) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Fixtures ────────────────────────────────────────────────────────────

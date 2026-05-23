@@ -8,6 +8,7 @@ import { prisma } from '@papopro/db';
 
 import { dispatchNotification } from '@/lib/notifications/dispatch';
 import { reportNonFatal } from '@/lib/observability/report';
+import { checkRateLimit } from '@/lib/webhooks/rate-limit';
 
 /**
  * `POST /api/internal/notify` (M13#2) — ponte entre os gatilhos no Postgres
@@ -74,6 +75,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const { event, workspaceId, leadId } = parsed.data;
   const appBaseUrl = request.nextUrl.origin;
+
+  // Rate-limit per (workspace, event) — protege contra spam caso o secret vaze
+  // (CI log, copy/paste em issue). Bound bem acima do volume orgânico esperado:
+  // lead_cooling dispara hourly; whatsapp_connection_down em downtime real é
+  // ~1/min. 60/min é folga 60x.
+  const rl = checkRateLimit(`notify:${workspaceId}:${event}`, 60, 60_000);
+  if (!rl.ok) {
+    const response = NextResponse.json({ ok: false, error: 'rate_limited' }, { status: 429 });
+    response.headers.set('Retry-After', String(Math.ceil(rl.retryAfterMs / 1000)));
+    return response;
+  }
 
   try {
     if (event === 'lead_cooling') {

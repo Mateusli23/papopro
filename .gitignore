@@ -76,3 +76,9 @@ prisma/migrations/dev/
 .yarn/install-state.gz
 
 .git-commit-msg-*.txt
+
+# Screenshots locais de validação manual (Playwright/Browser MCP). Não devem
+# ir pro repo — podem conter dados sensíveis e poluem o histórico.
+_shot-*.png
+*-shot-*.png
+.shots/

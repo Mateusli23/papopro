@@ -63,6 +63,7 @@ import {
   pickAgentForInbound,
   type RoutingRuleInput,
 } from '@/lib/ai/router';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { AGENT_TEMPLATES, getAgentTemplate } from '@/lib/fixtures/agent-templates';
 import { chunkText, estimateTokens } from '@/lib/knowledge/chunking';
 
@@ -134,6 +135,9 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── M11#1: Enums Prisma ─────────────────────────────────────────────────

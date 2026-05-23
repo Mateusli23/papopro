@@ -16,6 +16,7 @@ import { signupSchema } from '@/features/auth/schemas';
 import { toSwitcherItem, workspaceInitials } from '@/features/workspace/presentation';
 import { workspaceCreateSchema } from '@/features/workspace/schemas';
 import type { MembershipSummary } from '@/lib/auth/get-user';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { renderInviteEmail } from '@/lib/email/templates/invite';
 import { isUuid } from '@/lib/utils/uuid';
 import { ensureUniqueSlug, slugify } from '@/lib/workspace/slugify';
@@ -45,6 +46,9 @@ function assert(
 }
 
 export async function GET(): Promise<NextResponse> {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ===========================================================================

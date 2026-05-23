@@ -40,6 +40,7 @@ import {
   sortConversations,
 } from '@/features/inbox/transforms';
 import type { InboxFilters } from '@/features/inbox/types';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { FAKE_CONVERSATIONS } from '@/lib/fixtures/conversations';
 import { FAKE_LEADS } from '@/lib/fixtures/leads';
 import { FAKE_MESSAGES } from '@/lib/fixtures/messages';
@@ -78,6 +79,9 @@ const TEST_AUTHOR = 'user_mateus';
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Fixtures ────────────────────────────────────────────────────────────

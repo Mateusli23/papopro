@@ -37,6 +37,7 @@ import {
   countMembers,
   generateWebhookToken,
 } from '@/features/settings/transforms';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { FAKE_MEMBERS } from '@/lib/fixtures/members';
 import { FAKE_NOTIFICATION_PREFS, NOTIFICATION_EVENTS } from '@/lib/fixtures/notification-prefs';
 import {
@@ -86,6 +87,9 @@ const outageIdGen = () => `out_test_${(++outageCounter).toString().padStart(5, '
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Fixtures ────────────────────────────────────────────────────────────

@@ -37,6 +37,7 @@ import {
   reorderQuickRepliesSchema,
   updateQuickReplySchema,
 } from '@/features/quick-replies/schemas';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import {
   type SendTextResult,
   type WhatsAppAdapter,
@@ -113,6 +114,9 @@ const NEW_AUDIT_ACTIONS = [
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
   const t = run('whatsapp-schema-m9', results);
 
