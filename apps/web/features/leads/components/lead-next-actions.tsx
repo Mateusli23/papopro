@@ -20,6 +20,7 @@ import {
   Calendar,
   CheckCircle2,
   Edit,
+  ListChecks,
   Mail,
   MessageCircle,
   MoreVertical,
@@ -104,11 +105,14 @@ export function LeadNextActions({
         </header>
 
         {pending.length === 0 ? (
-          <p className="text-body text-muted-foreground">
-            {canEdit
-              ? 'Nenhuma tarefa pendente. Use "Adicionar tarefa" abaixo pra criar uma.'
-              : 'Nenhuma tarefa pendente neste lead.'}
-          </p>
+          <div className="border-border/60 bg-muted/30 flex flex-col items-center gap-2 rounded-md border border-dashed px-4 py-6 text-center">
+            <ListChecks className="text-muted-foreground/70 size-5" aria-hidden />
+            <p className="text-body text-muted-foreground max-w-xs">
+              {canEdit
+                ? 'Nenhuma tarefa pendente. Use "Adicionar tarefa" abaixo pra criar uma.'
+                : 'Nenhuma tarefa pendente neste lead.'}
+            </p>
+          </div>
         ) : (
           <ul className="flex flex-col gap-2">
             {pending.map((task) => (

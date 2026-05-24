@@ -138,14 +138,17 @@ export function LeadEnrollmentsSection({
       </div>
 
       {initialEnrollments.length === 0 ? (
-        <p className="text-muted-foreground text-caption">
-          Lead ainda não está em nenhuma cadência.{' '}
-          {availableCadences.length === 0 && (
-            <Link href="/cadences" className="text-primary hover:underline">
-              Crie ou ative uma cadência
-            </Link>
-          )}
-        </p>
+        <div className="border-border/60 bg-muted/30 flex flex-col items-center gap-2 rounded-md border border-dashed px-4 py-6 text-center">
+          <Repeat className="text-muted-foreground/70 size-5" aria-hidden />
+          <p className="text-body text-muted-foreground max-w-xs">
+            Lead ainda não está em nenhuma cadência.{' '}
+            {availableCadences.length === 0 && (
+              <Link href="/cadences" className="text-primary hover:underline">
+                Crie ou ative uma cadência
+              </Link>
+            )}
+          </p>
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
           {initialEnrollments.map((enrollment) => (

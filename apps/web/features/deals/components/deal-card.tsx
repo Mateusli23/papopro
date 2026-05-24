@@ -198,7 +198,7 @@ export function DealCard({ deal, isOverlay = false, onEdit }: DealCardProps) {
 function DealTitleLink({ deal, dragging }: { deal: Deal; dragging: boolean }) {
   if (dragging) {
     return (
-      <span className="text-body text-foreground line-clamp-2 cursor-grabbing font-semibold">
+      <span className="text-body text-foreground line-clamp-2 cursor-grabbing break-words font-semibold">
         {deal.title}
       </span>
     );
@@ -207,7 +207,7 @@ function DealTitleLink({ deal, dragging }: { deal: Deal; dragging: boolean }) {
   return (
     <Link
       href={`/leads/${deal.leadId}`}
-      className="text-body text-foreground group-hover:text-primary line-clamp-2 font-semibold"
+      className="text-body text-foreground group-hover:text-primary line-clamp-2 break-words font-semibold"
     >
       {deal.title}
     </Link>

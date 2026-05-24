@@ -13,8 +13,9 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  EmptyState,
 } from '@papopro/ui';
-import { Download } from '@papopro/ui/icons';
+import { Download, FileText } from '@papopro/ui/icons';
 
 import { useSubscription } from '../store';
 import type { Invoice } from '../types';
@@ -26,33 +27,45 @@ import type { Invoice } from '../types';
  */
 export function InvoicesTable() {
   const sub = useSubscription();
+  const hasInvoices = sub.invoices.length > 0;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Histórico de faturas</CardTitle>
         <CardDescription>
-          Últimas {sub.invoices.length} cobranças. Faturas pagas ficam disponíveis por 24 meses.
+          {hasInvoices
+            ? `Últimas ${sub.invoices.length} cobranças. Faturas pagas ficam disponíveis por 24 meses.`
+            : 'Faturas pagas ficam disponíveis por 24 meses.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="border-border overflow-hidden rounded-md border">
-          <table className="w-full text-left">
-            <thead className="bg-muted/50">
-              <tr className="text-caption text-muted-foreground">
-                <th className="px-4 py-2 font-semibold">Data</th>
-                <th className="px-4 py-2 font-semibold">Valor</th>
-                <th className="px-4 py-2 font-semibold">Status</th>
-                <th className="px-4 py-2 text-right font-semibold">Recibo</th>
-              </tr>
-            </thead>
-            <tbody className="divide-border divide-y">
-              {sub.invoices.map((inv) => (
-                <InvoiceRow key={inv.id} invoice={inv} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {hasInvoices ? (
+          <div className="border-border overflow-hidden rounded-md border">
+            <table className="w-full text-left">
+              <thead className="bg-muted/50">
+                <tr className="text-caption text-muted-foreground">
+                  <th className="px-4 py-2 font-semibold">Data</th>
+                  <th className="px-4 py-2 font-semibold">Valor</th>
+                  <th className="px-4 py-2 font-semibold">Status</th>
+                  <th className="px-4 py-2 text-right font-semibold">Recibo</th>
+                </tr>
+              </thead>
+              <tbody className="divide-border divide-y">
+                {sub.invoices.map((inv) => (
+                  <InvoiceRow key={inv.id} invoice={inv} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            icon={FileText}
+            title="Nenhuma fatura ainda"
+            description="Suas cobranças aparecem aqui assim que houver um pagamento processado pelo Stripe."
+            className="p-6"
+          />
+        )}
       </CardContent>
     </Card>
   );
