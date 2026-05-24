@@ -16,6 +16,7 @@
     "package.json"
   ],
   "scripts": {
+    "postinstall": "prisma generate",
     "lint": "eslint --max-warnings=0 \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf .turbo node_modules",
