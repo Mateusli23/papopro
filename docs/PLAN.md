@@ -2406,8 +2406,8 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 | Sub-PR    | Escopo                                                                             | Branch                | Status      |
 | --------- | ---------------------------------------------------------------------------------- | --------------------- | ----------- |
 | **M13#1** | PWA — manifest, service worker, ícones, tela "Instalar app"                        | `m13-1-pwa`           | ✅ entregue |
-| **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ⏳ pendente |
-| **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ⏳ pendente |
+| **M13#2** | Push notifications — VAPID, `push_subscriptions`, `/settings/notifications` real   | `m13-2-push`          | ✅ entregue |
+| **M13#3** | LGPD — exportação/exclusão de dados, filtros de auditoria, retenção, cookie banner | `m13-3-lgpd`          | ✅ entregue |
 | **M13#4** | Observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y              | `m13-4-observability` | ⏳ pendente |
 | **M13#5** | E2E Playwright (signup → … → upgrade)                                              | `m13-5-e2e`           | ⏳ pendente |
 
@@ -2420,19 +2420,20 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 
 **Entregas — Push Notifications:**
 
-- [ ] Subscribe via VAPID + persistir `push_subscriptions` por usuário/dispositivo
-- [ ] Edge Function `send-push` chamada nos eventos da matriz PRD §3.2
-- [ ] Tela `/settings/notifications` totalmente funcional (preferências por evento × canal; eventos administrativos não desligáveis)
-- [ ] Testes manuais nos 3 ambientes: iOS Safari 16.4+ instalado como PWA, Android Chrome, Desktop Chrome/Edge
+- [x] Subscribe via VAPID + persistir `push_subscriptions` por usuário/dispositivo
+- [x] Entrega de Web Push criptografada (VAPID RFC 8292 + payload `aes128gcm` RFC 8291) hand-rolled com `node:crypto` + dispatcher central. **Decisão:** Next route, não Edge Function `send-push` — ver M13#2 abaixo
+- [x] Tela `/settings/notifications` totalmente funcional (preferências por evento × canal persistidas; eventos administrativos não desligáveis)
+- [x] 4 eventos da matriz PRD §3.2 conectados ao dispatcher (`lead_cooling`, `whatsapp_connection_down`, `trial_expiring`, `whatsapp_message_received`)
+- [ ] Testes manuais nos 3 ambientes: iOS Safari 16.4+ instalado como PWA, Android Chrome, Desktop Chrome/Edge — **pós-deploy** (precisa de chaves VAPID + HTTPS)
 
 **Entregas — LGPD e Auditoria:**
 
-- [ ] Tela de exportação completa de dados do lead (formulário + log de auditoria)
-- [ ] Exclusão de lead sob solicitação do titular (cascade controlado, mantém log)
-- [ ] Auditoria com filtros por usuário, tipo de evento, período (Owner/Admin)
-- [ ] Retenção de logs: 12 meses (Pro/Pro IA), 24 meses (Enterprise) — job de purge mensal
-- [ ] Política de cookies + banner de consentimento na landing
-- [ ] Termos de uso e privacidade publicados em `/legal/terms` e `/legal/privacy`
+- [x] Tela de exportação completa de dados do lead (card na ficha + log de auditoria) _(M13#3)_
+- [x] Exclusão de lead sob solicitação do titular (hard delete + cascade, mantém log) _(M13#3)_
+- [x] Auditoria com filtros por usuário, tipo de evento, período (Owner/Admin) _(M13#3)_
+- [x] Retenção de logs: 12 meses (Pro/Pro IA), 24 meses (Enterprise — futuro) — cron de purge mensal _(M13#3)_
+- [x] Política de cookies + banner de consentimento na landing _(M13#3)_
+- [x] Termos de uso e privacidade publicados em `/legal/terms` e `/legal/privacy` _(M13#3)_
 
 **Entregas — Observabilidade & Polimento:**
 
@@ -2501,6 +2502,102 @@ Checks: typecheck ✅, lint (max-warnings=0) ✅, build ✅, `pnpm test` ✅ (1 
 **Ops pós-deploy:** nenhuma — puro código estático + client. Validação real é Lighthouse PWA + instalar num device (iOS/Android/desktop).
 
 **Próximo passo:** **M13#2** (push notifications) — reusa o service worker registrado aqui.
+
+---
+
+### M13#2 — Push Notifications (entregue 2026-05-20)
+
+**Branch:** `m13-2-push`
+
+**Objetivo:** Web Push ponta-a-ponta — assinar um dispositivo, persistir, e nos eventos da matriz PRD §3.2 entregar push (+ in-app + email conforme preferência). `/settings/notifications` deixa de ser mock; o sino do topbar passa a ler a tabela `notifications` real.
+
+**Decisões fechadas:**
+
+- **`send-push` é módulo Next (`lib/notifications/web-push.ts`), não Edge Function.** O PLAN original previa uma Edge Function `send-push`, mas o M12#2 já firmou o precedente de **evitar Edge Functions novas** nessa máquina (antivírus + TLS — ver comentário de [`cron/trial-warnings/route.ts`](apps/web/app/api/cron/trial-warnings/route.ts)). O `node:crypto` cobre tudo (ECDH P-256, HKDF-SHA256, AES-128-GCM, assinatura ES256) — VAPID (RFC 8292) + payload `aes128gcm` (RFC 8291/8188) hand-rolled, **zero dependência nova**, mesma linha do service worker do M13#1. Roda no Node runtime da Vercel, testável localmente.
+- **Eventos de origem Edge entram por trigger Postgres, não por código Deno.** `lead_cooling` (cold-lead-detector) e `whatsapp_connection_down` (heartbeat) são detectados por Edge Functions já existentes. Em vez de editar/redesployar os arquivos Deno, a migration adiciona 2 triggers (`notify_on_cold_lead_alert` em `cold_lead_alerts AFTER INSERT`; `notify_on_whatsapp_unhealthy` em `whatsapp_instances` quando `health_score` vira `unhealthy`) que fazem `pg_net.http_post` pra `/api/internal/notify`. Zero Edge Function tocada — mesmo padrão dos triggers de auto-ack do M10#4.
+- **Dispatcher central** (`lib/notifications/dispatch.ts`) é a fonte única do fanout. Resolve `notification_preferences`, escreve `notifications` (in-app), envia Web Push e email (Resend) — respeitando a matriz PRD §3.2 (eventos administrativos não desligáveis). Contexto admin/sistema → `prisma` direto, sempre filtrando `workspaceId`/`userId` (igual ao `cron/trial-warnings`).
+- **Sino in-app migrado pra tabela `notifications`.** Sai a mistura M10#4 (cold alerts + fixture); o sino lê 100% de `notifications` via `loadRecentNotifications`. O badge "leads frios" da sidebar segue separado (`loadColdAlertsCount`, lifecycle de ack do M10#4).
+- **RLS workspace-scoped** nas 2 tabelas novas (`current_workspace_id()`), padrão de `notification_preferences`/`usage_events` — compatível com Prisma. Escopo por usuário aplicado no `where` do app (defense-in-depth).
+
+**Entregas:**
+
+- [x] Migration [`20260531120000_m13_2_push.sql`](supabase/migrations/20260531120000_m13_2_push.sql) — tabelas `push_subscriptions` + `notifications` (RLS), helper `notify_dispatch` + 2 triggers de fanout via `pg_net`.
+- [x] Modelos Prisma `PushSubscription` + `Notification` ([`schema.prisma`](packages/db/prisma/schema.prisma)).
+- [x] [`lib/notifications/web-push.ts`](apps/web/lib/notifications/web-push.ts) — `sendWebPush` (VAPID ES256 + `aes128gcm`), hand-rolled com `node:crypto`.
+- [x] [`lib/notifications/dispatch.ts`](apps/web/lib/notifications/dispatch.ts) — `dispatchNotification` (fanout in-app / push / email por preferência).
+- [x] [`public/sw.js`](apps/web/public/sw.js) — listeners `push` / `notificationclick` / `pushsubscriptionchange` (`VERSION` bump v1→v2).
+- [x] [`lib/pwa/push.ts`](apps/web/lib/pwa/push.ts) — assinar/cancelar/sincronizar push no browser.
+- [x] `features/notifications/` — Server Actions (assinatura, prefs, mark-read), queries (`loadRecentNotifications`, `loadNotificationPrefs`), schemas Zod, tipos.
+- [x] [`PushPermissionBlock`](apps/web/features/settings/components/push-permission-block.tsx) + [`NotificationMatrix`](apps/web/features/settings/components/notification-matrix.tsx) reais — assinatura + push de teste + matriz persistida.
+- [x] Sino in-app ([`notifications-button.tsx`](apps/web/components/app-shell/notifications-button.tsx) + [`notifications-dropdown.tsx`](apps/web/components/app-shell/notifications-dropdown.tsx)) migrado pra tabela `notifications`.
+- [x] Rota [`/api/internal/notify`](apps/web/app/api/internal/notify/route.ts) — resolve destinatários + copy pros eventos de trigger; 4 eventos conectados (2 via trigger, `trial_expiring` no cron M12#2, `whatsapp_message_received` no webhook uazapi).
+- [x] [`/api/smoke-test/push`](apps/web/app/api/smoke-test/push/route.ts) — round-trip de assinatura VAPID + cifra/decifra `aes128gcm` (10/10 ✅).
+- [x] `pnpm typecheck` ✅, `lint` ✅, `build` ✅, smoke `/api/smoke-test/push` 10/10 ✅.
+
+**Não-objetivos M13#2 (explícitos):**
+
+- **Wiring dos outros 6 eventos da matriz** (`new_lead_assigned`, `task_due`, `agent_handoff_to_human`, `bulk_send_finished`, `workspace_invite_received`, `payment_failed`) — o dispatcher está pronto; conectam quando o gatilho existir/for priorizado.
+- **Ícones PNG raster nas notificações** — `icon.svg` cobre; raster é polimento.
+- **Retenção/purge da tabela `notifications`** — o sino filtra 30d na query; o purge mensal entra no M13#3 (LGPD).
+
+**Ops pós-deploy (operador):**
+
+1. Gerar chaves VAPID: `node scripts/generate-vapid.mjs --env` → preencher `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` (Vercel prod + `.env.local`).
+2. Definir `NOTIFY_DISPATCH_SECRET` (Vercel) e espelhar em Postgres:
+   `ALTER DATABASE postgres SET app.notify_dispatch_secret = '<valor>';`
+   `ALTER DATABASE postgres SET app.app_url = 'https://app.pipeflow.com.br';`
+3. Aplicar a migration `20260531120000_m13_2_push.sql` (via MCP `apply_migration`).
+4. Testes manuais de push: iOS Safari 16.4+ (PWA instalado), Android Chrome, Desktop Chrome/Edge.
+
+**Próximo passo:** **M13#3** (LGPD — exportação/exclusão de dados, auditoria, retenção, cookie banner) — **launch-blocking**.
+
+---
+
+### M13#3 — LGPD (entregue 2026-05-20)
+
+**Branch:** `m13-3-lgpd`
+
+**Objetivo:** fechar os requisitos de LGPD que travam o trial público (CLAUDE.md §7.5) — direito do titular (portabilidade + eliminação), trilha de auditoria navegável, retenção de logs e consentimento de cookies + páginas legais na landing.
+
+**Decisões fechadas:**
+
+- **Exclusão = hard delete em cascade, não anonimização in-place.** `eraseLeadDataAction` apaga a row de `leads`; o `ON DELETE CASCADE` dos FKs leva negócios, tarefas, atividades, conversas+mensagens, anexos, cadências, resumo de IA e sessões de agente. O `audit_logs` **sobrevive** — não tem FK pro lead (`entity_id` é `VarChar`), é o tombstone de compliance. O registro `data_deleted` grava só `leadId` + contagens, **nunca PII** (não pode re-vazar o que apagou). Cascade de FK ignora RLS (integridade referencial); o `leads_delete` policy (M8#1) cobre o delete de topo.
+- **Erase é storage-first.** Anexos vivem em dois lugares: row em `attachments` (cascateada) + objeto no Supabase Storage (não-transacional). Apaga o Storage **antes** do delete no banco — se o Storage falhar, aborta e nada some, operação re-executável. O contrário deixaria arquivo pessoal órfão sem row pro `cleanup-attachments` capturar.
+- **Export LGPD é JSON, não CSV.** O dump de um lead é aninhado (conversas têm mensagens, cadências têm steps) — CSV achataria mal. Rota `POST` (não `GET`): a exportação grava `audit_logs` (LGPD §3.4); `GET` seria disparável por prefetch/crawler, inflando a auditoria.
+- **Sem migration nova.** Tudo lê/apaga tabelas que já existem (`audit_logs`, `notifications`, `leads` + filhos). O enum `audit_action` já tinha `export_started` e `data_deleted` desde M7. **Zero ops de banco pro operador** — diferente do M13#2.
+- **Retenção global em 12 meses.** O tier Enterprise (24m) ainda não existe no enum `SubscriptionPlan` (só `pro`). O purge corta `audit_logs` em 12m pra todo workspace e `notifications` em 30d (PRD §3.2 — o M13#2 adiou o purge do sino pra cá). Quando o Enterprise entrar, o purge de auditoria vira per-workspace — ver [`lib/lgpd/retention.ts`](apps/web/lib/lgpd/retention.ts).
+- **Cron Next route, não Edge Function.** Mesmo precedente de `cleanup-attachments`/`trial-warnings` — Edge Functions bloqueadas no dev local ([[dev-local-windows-antivirus-tls]]). GitHub Action mensal → `POST /api/cron/purge-logs`.
+- **Consentimento de cookies gateia os trackers.** `<AnalyticsGate>` só renderiza `<AnalyticsScripts>` (PostHog/GA4/Meta) depois do aceite no `<CookieBanner>`. Escolha em `localStorage`; aceitar liga os scripts na hora (hook reage a evento), sem reload.
+- **Páginas legais com chrome próprio.** `/legal/*` usa um top-bar mínimo (só logo → `/`) em vez do `<Header>` da landing — o Header tem âncoras (`#funcionalidades`) que não resolvem fora da home. Footer reusado; links de produto viraram absolutos (`/#secao`).
+
+**Entregas:**
+
+- [x] [`features/leads/lgpd-actions.ts`](apps/web/features/leads/lgpd-actions.ts) — `exportLeadDataAction` (dump JSON completo, Owner/Admin) + `eraseLeadDataAction` (hard delete, Owner only, confirmação por nome).
+- [x] [`app/api/exports/leads/[id]/lgpd/route.ts`](apps/web/app/api/exports/leads/[id]/lgpd/route.ts) — wrapper HTTP `POST` com `Content-Disposition`.
+- [x] [`features/leads/components/lead-lgpd-card.tsx`](apps/web/features/leads/components/lead-lgpd-card.tsx) — card "Privacidade e LGPD" na ficha do lead (export via `fetch`/blob + dialog de exclusão com confirmação dupla). Montado no `lead-detail-view` (desktop + tab mobile), só pra Owner/Admin.
+- [x] `features/audit/` — `labels.ts` (56 ações × rótulo pt-BR + grupos), `schemas.ts`, `types.ts`, `transforms.ts`, `queries.ts` (`listAuditLogs` paginada + `listAuditActors`), `components/audit-filters.tsx` + `components/audit-table.tsx`.
+- [x] [`app/(dashboard)/settings/audit/page.tsx`](<apps/web/app/(dashboard)/settings/audit/page.tsx>) — viewer `/settings/audit` (Owner/Admin) com filtro por autor/evento/período; entrada nova no `settings-nav-config`.
+- [x] [`lib/lgpd/retention.ts`](apps/web/lib/lgpd/retention.ts) — helpers de corte (12m auditoria / 30d notificações).
+- [x] [`app/api/cron/purge-logs/route.ts`](apps/web/app/api/cron/purge-logs/route.ts) + [`.github/workflows/cron-purge-logs.yml`](.github/workflows/cron-purge-logs.yml) — purge mensal (Bearer `CRON_SECRET`).
+- [x] Landing — [`lib/consent.ts`](apps/landing/lib/consent.ts) (consentimento em `localStorage` + hook), [`components/cookie-banner.tsx`](apps/landing/components/cookie-banner.tsx), [`components/analytics-gate.tsx`](apps/landing/components/analytics-gate.tsx) (gateia `AnalyticsScripts`); `app/layout.tsx` atualizado.
+- [x] Landing — [`components/legal-page.tsx`](apps/landing/components/legal-page.tsx) (chrome compartilhado) + `app/legal/{terms,privacy,cookies}/page.tsx`; footer com links legais reais.
+- [x] [`app/api/smoke-test/lgpd/route.ts`](apps/web/app/api/smoke-test/lgpd/route.ts) — retenção + rótulos + transforms.
+- [x] `pnpm typecheck` ✅, `lint` ✅, `build` ✅, smoke `/api/smoke-test/lgpd` ✅.
+
+**Não-objetivos M13#3 (explícitos):**
+
+- **Export CSV do log de auditoria** — o viewer com filtros atende o requisito; export é polimento.
+- **Purge per-workspace / tier Enterprise 24m** — o enum `SubscriptionPlan` não tem `enterprise`; quando tiver, `retention.ts` + o cron passam a olhar o plano.
+- **Mascaramento de IP no `audit_logs`** — segue gravando IP completo (TODO antigo de `lib/audit/context.ts`); decisão de produto, fora do escopo deste sub-PR.
+- **Purge batched** — `deleteMany` direto; volume MVP não justifica o select-ids-then-delete do `cleanup-attachments`.
+- **Conteúdo legal definitivo** — Termos/Privacidade/Cookies são rascunho de engenharia e **precisam de revisão jurídica** antes do trial público (flag nos próprios arquivos).
+
+**Ops pós-deploy (operador):**
+
+1. Configurar a GitHub Action `cron-purge-logs` — reusa os secrets `CRON_SECRET` + `APP_HOST` (já usados por `cleanup-attachments`/`trial-warnings`; nada novo).
+2. Revisão jurídica do conteúdo de `/legal/{terms,privacy,cookies}` antes de abrir o trial público.
+
+**Próximo passo:** **M13#4** (observabilidade — Sentry, PostHog, Vercel Analytics, Lighthouse, a11y).
 
 ---
 

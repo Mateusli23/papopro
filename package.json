@@ -5,7 +5,7 @@
   "description": "PapoPro — CRM SaaS multi-empresa com WhatsApp, cadência automática e agentes IA. Monorepo Turborepo + pnpm.",
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=20.0.0",
+    "node": "20.x",
     "pnpm": ">=9.0.0"
   },
   "scripts": {

@@ -13,6 +13,7 @@ import {
   Building2,
   CreditCard,
   Download,
+  History,
   Lock,
   type LucideIcon,
   Plug,
@@ -60,6 +61,12 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     href: '/settings/security',
     icon: Lock,
     description: 'Trocar senha e gerenciar sessão',
+  },
+  {
+    label: 'Auditoria',
+    href: '/settings/audit',
+    icon: History,
+    description: 'Histórico de eventos do workspace (LGPD)',
   },
   {
     label: 'Conexões',

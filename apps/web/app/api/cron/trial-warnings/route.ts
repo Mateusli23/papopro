@@ -7,6 +7,7 @@ import { prisma } from '@papopro/db';
 import { pickTrialWarning } from '@/features/billing/trial';
 import { sendEmail } from '@/lib/email/resend';
 import { renderTrialExpiringEmail } from '@/lib/email/templates/trial-expiring';
+import { dispatchNotification } from '@/lib/notifications/dispatch';
 import { reportNonFatal } from '@/lib/observability/report';
 
 /**
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         trialWarnD1SentAt: true,
         members: {
           where: { role: 'Owner' },
-          select: { user: { select: { email: true } } },
+          select: { user: { select: { id: true, email: true } } },
           take: 1,
         },
       },
@@ -147,6 +148,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         data: warning === 'd1' ? { trialWarnD1SentAt: now } : { trialWarnD2SentAt: now },
       });
       result.sent += 1;
+
+      // Fanout in-app + push (M13#2). O email já saiu acima com o template
+      // dedicado, então restringe os canais — sem `dispatchNotification`
+      // mandaria um segundo email genérico. Best-effort: nunca lança.
+      const ownerUserId = ws.members[0]?.user?.id;
+      if (ownerUserId) {
+        await dispatchNotification({
+          workspaceId: ws.id,
+          event: 'trial_expiring',
+          recipientUserIds: [ownerUserId],
+          title: 'Seu teste grátis está acabando',
+          body:
+            daysLeft === 1
+              ? 'O teste do PapoPro termina amanhã — assine o Pro para não perder acesso.'
+              : `Faltam ${daysLeft} dias do seu teste do PapoPro — assine o Pro para não perder acesso.`,
+          url: '/settings/billing',
+          channels: ['inapp', 'push'],
+          appBaseUrl: request.nextUrl.origin,
+        });
+      }
     }
 
     return NextResponse.json({ ok: true, at: now.toISOString(), result });

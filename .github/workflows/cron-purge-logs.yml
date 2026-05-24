@@ -1,0 +1,52 @@
+name: Purge old logs (LGPD retention)
+
+# M13#3 — Dispara o endpoint `/api/cron/purge-logs` mensalmente. O endpoint
+# apaga `audit_logs` com mais de 12 meses e `notifications` com mais de 30
+# dias, aplicando a retenção de logs exigida pela LGPD (CLAUDE.md §7.5).
+#
+# Por que GitHub Action em vez de pg_cron + pg_net + Edge Function: Edge
+# Functions estão bloqueadas em dev local nessa máquina (memória
+# `dev-local-windows-antivirus-tls`). GitHub Action é portável, testável
+# manualmente via `workflow_dispatch` e independente do estado da Vercel.
+#
+# **Secrets necessários** (Repo Settings → Secrets and variables → Actions):
+#  - `CRON_SECRET` — mesma string em `apps/web/.env` (Vercel) e aqui
+#  - `APP_HOST` — `app.pipeflow.com.br` em produção; ajustável em staging
+
+on:
+  schedule:
+    # Dia 1 de cada mês às 04:00 UTC (= 01:00 BRT, baixíssimo tráfego).
+    - cron: '0 4 1 * *'
+  # Permite trigger manual via UI do GitHub pra debug.
+  workflow_dispatch:
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Trigger purge endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_HOST: ${{ secrets.APP_HOST }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_HOST" ]; then
+            echo "::error::CRON_SECRET ou APP_HOST não configurado nos secrets."
+            exit 1
+          fi
+
+          response=$(curl -sS -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            "https://$APP_HOST/api/cron/purge-logs")
+
+          status="${response##*$'\n'}"
+          body="${response%$'\n'*}"
+
+          echo "HTTP $status"
+          echo "Response: $body"
+
+          if [ "$status" != "200" ]; then
+            echo "::error::Purge endpoint retornou $status"
+            exit 1
+          fi

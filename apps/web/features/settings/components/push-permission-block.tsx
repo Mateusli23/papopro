@@ -7,46 +7,140 @@ import { toast } from 'react-hot-toast';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '@papopro/ui';
 import { Bell } from '@papopro/ui/icons';
 
-type PermissionState = 'default' | 'granted' | 'denied' | 'unsupported';
+import {
+  removePushSubscriptionAction,
+  savePushSubscriptionAction,
+  sendTestPushAction,
+} from '@/features/notifications/actions';
+import {
+  getCurrentPushSubscription,
+  getNotificationPermission,
+  isPushSupported,
+  subscribeToPush,
+  unsubscribeFromPush,
+} from '@/lib/pwa/push';
 
 /**
- * Bloco do topo da tela de Notificações: status do `Notification.permission`
- * + botão de testar push. Em M5 o "teste" é toast local; em M13 dispara push
- * real via service worker (`apps/web/public/sw.js`).
+ * Bloco do topo da tela de Notificações (M13#2 — real).
  *
- * Lê `Notification.permission` apenas após mount pra evitar warning de
- * hydration mismatch (browser-only).
+ * Em M5 o "push de teste" era um toast local. Agora:
+ *  - **Ativar** → pede permissão, assina no `pushManager` e persiste a
+ *    subscription via `savePushSubscriptionAction`.
+ *  - **Desativar** → cancela a assinatura e apaga a linha no servidor.
+ *  - **Push de teste** → `sendTestPushAction` dispara um Web Push real pra
+ *    todos os dispositivos do usuário.
+ *
+ * Ao montar com uma subscription já ativa, re-sincroniza ela no servidor
+ * (silencioso) — cobre o caso do `pushsubscriptionchange` ter rotacionado o
+ * endpoint enquanto o app estava fechado.
+ *
+ * **Dev:** o service worker só é registrado em produção (decisão do M13#1),
+ * então ativar push em `pnpm dev` falha com mensagem explicativa — esperado.
  */
-export function PushPermissionBlock() {
-  const [perm, setPerm] = React.useState<PermissionState>('default');
 
+type PushStatus = 'loading' | 'unsupported' | 'denied' | 'idle' | 'subscribed';
+
+const ERROR_COPY: Record<string, string> = {
+  unsupported: 'Seu navegador não suporta notificações push.',
+  sw_not_registered: 'Instale o app (ou rode em produção) para ativar o push neste dispositivo.',
+  permission_denied:
+    'Notificações bloqueadas — reabilite nas permissões do navegador e tente de novo.',
+  subscribe_failed: 'Não foi possível ativar o push agora. Tente de novo.',
+};
+
+export function PushPermissionBlock({ vapidPublicKey }: { vapidPublicKey: string }) {
+  const [status, setStatus] = React.useState<PushStatus>('loading');
+  const [busy, setBusy] = React.useState(false);
+
+  const configured = vapidPublicKey.length > 0;
+
+  // Estado inicial — lido só após mount (browser-only, evita hydration mismatch).
   React.useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      setPerm('unsupported');
-      return;
+    let cancelled = false;
+
+    async function resolve() {
+      if (!isPushSupported()) {
+        if (!cancelled) setStatus('unsupported');
+        return;
+      }
+      if (getNotificationPermission() === 'denied') {
+        if (!cancelled) setStatus('denied');
+        return;
+      }
+      const existing = await getCurrentPushSubscription();
+      if (cancelled) return;
+      if (existing) {
+        setStatus('subscribed');
+        // Re-sincroniza silenciosamente (endpoint pode ter rotacionado).
+        void savePushSubscriptionAction({
+          endpoint: existing.endpoint,
+          p256dh: existing.p256dh,
+          auth: existing.auth,
+          userAgent: navigator.userAgent,
+        });
+      } else {
+        setStatus('idle');
+      }
     }
-    setPerm(Notification.permission as PermissionState);
+
+    void resolve();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function handleTest() {
-    if (perm === 'unsupported') {
-      toast.error('Seu navegador não suporta notificações push');
+  async function handleSubscribe() {
+    if (!configured) {
+      toast.error('Push ainda não foi configurado no servidor.');
       return;
     }
-    if (perm === 'denied') {
-      toast.error('Push bloqueado nas permissões do navegador. Reabilite e tente de novo.');
-      return;
-    }
-    if (perm === 'default') {
-      Notification.requestPermission().then((next) => {
-        setPerm(next as PermissionState);
-        if (next === 'granted') {
-          toast.success('Push autorizado — em M13 chega notificação real aqui');
-        }
+    setBusy(true);
+    try {
+      const subscription = await subscribeToPush(vapidPublicKey);
+      const result = await savePushSubscriptionAction({
+        endpoint: subscription.endpoint,
+        p256dh: subscription.p256dh,
+        auth: subscription.auth,
+        userAgent: navigator.userAgent,
       });
-      return;
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      setStatus('subscribed');
+      toast.success('Push ativado neste dispositivo.');
+    } catch (err) {
+      const code = err instanceof Error ? err.message : 'subscribe_failed';
+      if (code === 'permission_denied') setStatus('denied');
+      toast.error(ERROR_COPY[code] ?? ERROR_COPY.subscribe_failed!);
+    } finally {
+      setBusy(false);
     }
-    toast.success('Push de teste enviado (mock — vira real em M13)');
+  }
+
+  async function handleUnsubscribe() {
+    setBusy(true);
+    try {
+      const endpoint = await unsubscribeFromPush();
+      if (endpoint) await removePushSubscriptionAction(endpoint);
+      setStatus('idle');
+      toast.success('Push desativado neste dispositivo.');
+    } catch {
+      toast.error('Não foi possível desativar o push agora.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleTest() {
+    setBusy(true);
+    try {
+      const result = await sendTestPushAction();
+      if (result.ok) toast.success('Push de teste enviado — confira a notificação.');
+      else toast.error(result.error);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -54,30 +148,48 @@ export function PushPermissionBlock() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="text-primary size-4" />
-          Notificações push deste navegador
+          Notificações push deste dispositivo
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
-          <PermissionBadge state={perm} />
+          <StatusBadge status={status} />
           <span className="text-body text-muted-foreground">
-            {perm === 'granted' && 'Push autorizado pelo navegador.'}
-            {perm === 'default' && 'Você ainda não autorizou push neste navegador.'}
-            {perm === 'denied' && 'Push bloqueado — reabilite nas permissões do site.'}
-            {perm === 'unsupported' && 'Seu navegador atual não suporta push.'}
+            {status === 'loading' && 'Verificando…'}
+            {status === 'subscribed' && 'Este dispositivo recebe notificações push.'}
+            {status === 'idle' && 'Ative para receber alertas mesmo com o app fechado.'}
+            {status === 'denied' && 'Push bloqueado — reabilite nas permissões do navegador.'}
+            {status === 'unsupported' && 'Seu navegador atual não suporta push.'}
           </span>
         </div>
-        <Button onClick={handleTest} variant="outline" disabled={perm === 'unsupported'}>
-          Enviar push de teste
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {status === 'subscribed' ? (
+            <>
+              <Button onClick={handleTest} variant="outline" disabled={busy}>
+                Enviar teste
+              </Button>
+              <Button onClick={handleUnsubscribe} variant="ghost" disabled={busy}>
+                Desativar
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={handleSubscribe}
+              disabled={busy || status === 'loading' || status === 'unsupported' || !configured}
+            >
+              Ativar push
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function PermissionBadge({ state }: { state: PermissionState }) {
-  if (state === 'granted') return <Badge variant="success">Autorizado</Badge>;
-  if (state === 'denied') return <Badge variant="destructive">Bloqueado</Badge>;
-  if (state === 'unsupported') return <Badge variant="outline">Sem suporte</Badge>;
-  return <Badge variant="warning">Pendente</Badge>;
+function StatusBadge({ status }: { status: PushStatus }) {
+  if (status === 'subscribed') return <Badge variant="success">Ativo</Badge>;
+  if (status === 'denied') return <Badge variant="destructive">Bloqueado</Badge>;
+  if (status === 'unsupported') return <Badge variant="outline">Sem suporte</Badge>;
+  if (status === 'loading') return <Badge variant="outline">…</Badge>;
+  return <Badge variant="warning">Inativo</Badge>;
 }
