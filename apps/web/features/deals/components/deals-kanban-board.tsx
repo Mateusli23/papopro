@@ -3,6 +3,7 @@
 import * as React from 'react';
 
 import {
+  closestCenter,
   DndContext,
   DragOverlay,
   KeyboardSensor,
@@ -162,12 +163,14 @@ export function DealsKanbanBoard({
   return (
     <DndContext
       sensors={canEdit ? sensors : []}
+      collisionDetection={closestCenter}
+      autoScroll={{ threshold: { x: 0.1, y: 0.1 }, acceleration: 5 }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="-mx-4 flex touch-pan-x snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div className="-mx-4 flex touch-pan-x gap-3 overflow-x-auto px-4 pb-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         {stages.map((stage) => (
-          <div key={stage.id} data-stage={stage.id} className="snap-start">
+          <div key={stage.id} data-stage={stage.id}>
             <DealsKanbanColumn
               stage={stage}
               deals={dealsByStage.get(stage.id) ?? []}
