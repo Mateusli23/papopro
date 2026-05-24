@@ -51,7 +51,7 @@ export function MobileNav({ workspaces, activeWorkspaceId, coldAlertsCount }: Mo
       </SheetTrigger>
       <SheetContent
         side="left"
-        className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-72 flex-col p-0"
+        className="bg-sidebar text-sidebar-foreground border-sidebar-border flex w-72 max-w-[calc(100vw-3rem)] flex-col p-0"
       >
         {/* Title/Description são exigidos pelo Radix Dialog para acessibilidade.
             Escondemos visualmente, mas leitores de tela leem. */}

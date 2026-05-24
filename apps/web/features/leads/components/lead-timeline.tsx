@@ -84,7 +84,7 @@ export function LeadTimeline({ leadId, initialActivities, stages, canAddNote }: 
                   variant={filter === f ? 'default' : 'ghost'}
                   size="sm"
                   onClick={() => setFilter(f)}
-                  className="h-7 px-2.5"
+                  className="h-11 px-3 sm:h-7 sm:px-2.5"
                 >
                   {FILTER_LABEL[f]}
                 </Button>

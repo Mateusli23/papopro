@@ -543,7 +543,7 @@ function TagsField({
           }}
           onBlur={addTag}
           placeholder={lead.tags.length === 0 ? 'Adicionar tag…' : '+'}
-          className="h-7 max-w-[120px]"
+          className="h-9 max-w-[120px] sm:h-7"
         />
       )}
     </div>
