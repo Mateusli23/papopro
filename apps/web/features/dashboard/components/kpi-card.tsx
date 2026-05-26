@@ -70,7 +70,7 @@ export function KpiCard({ label, value, hint, Icon, tone, trend }: KpiCardProps)
   return (
     <div
       className={cn(
-        'border-border flex items-start gap-3 rounded-xl border p-3 ring-1',
+        'border-border flex min-w-0 items-start gap-3 rounded-xl border p-3 ring-1',
         t.bg,
         t.ring,
       )}
@@ -83,8 +83,10 @@ export function KpiCard({ label, value, hint, Icon, tone, trend }: KpiCardProps)
       </span>
       <div className="flex min-w-0 flex-col">
         <span className="text-caption text-muted-foreground font-medium">{label}</span>
-        <div className="flex items-baseline gap-2">
-          <span className={cn('text-title font-semibold tabular-nums', t.text)}>{value}</span>
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className={cn('text-title min-w-0 truncate font-semibold tabular-nums', t.text)}>
+            {value}
+          </span>
           {trend && <TrendIndicator trend={trend} />}
         </div>
         {hint && <span className="text-caption text-muted-foreground/80">{hint}</span>}

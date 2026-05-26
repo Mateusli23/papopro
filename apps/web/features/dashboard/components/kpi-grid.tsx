@@ -9,9 +9,21 @@ import type { RangeBounds } from '@/features/dashboard/types';
 import { useDeals } from '@/features/deals/store';
 import { useLeads } from '@/features/leads/store';
 import { useTasks } from '@/features/tasks/store';
-import { formatCentsCompact } from '@/lib/utils/format';
 
 import { KpiCard } from './kpi-card';
+
+const DASHBOARD_BRL_COMPACT = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+  notation: 'compact',
+  compactDisplay: 'short',
+  maximumFractionDigits: 1,
+});
+
+function formatDashboardMoney(cents: number): string {
+  if (cents <= 0) return 'R$ 0';
+  return DASHBOARD_BRL_COMPACT.format(cents / 100);
+}
 
 interface KpiGridProps {
   bounds: RangeBounds;
@@ -41,9 +53,10 @@ export function KpiGrid({ bounds }: KpiGridProps) {
   return (
     <section
       aria-label="Indicadores principais"
-      // 2 cols em mobile, 3 em tablet (cards respiram), 5 em desktop largo
+      // 1 col em celular estreito evita valores monetários grandes saindo da tela.
+      // 2 cols em telas um pouco maiores, 3 em tablet, 5 em desktop largo
       // pra acomodar valores monetários "R$ 999K" + trend sem quebrar.
-      className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5"
+      className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-5"
     >
       <KpiCard
         label="Novos leads recebidos"
@@ -66,7 +79,7 @@ export function KpiGrid({ bounds }: KpiGridProps) {
       />
       <KpiCard
         label="Valor em aberto"
-        value={k.openPipelineCents > 0 ? formatCentsCompact(k.openPipelineCents) : 'R$ 0'}
+        value={formatDashboardMoney(k.openPipelineCents)}
         Icon={TrendingUp}
         tone="warning"
         hint={
@@ -96,7 +109,7 @@ export function KpiGrid({ bounds }: KpiGridProps) {
        */}
       <KpiCard
         label="Propostas em negociação"
-        value={k.proposalsCents > 0 ? formatCentsCompact(k.proposalsCents) : 'R$ 0'}
+        value={formatDashboardMoney(k.proposalsCents)}
         Icon={FileText}
         tone="info"
         hint="valor ainda em conversa"

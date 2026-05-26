@@ -18,12 +18,11 @@ import type { DashboardRange } from '../types';
 const RANGE_OPTIONS: Array<{
   key: Exclude<DashboardRange, 'custom'>;
   label: string;
-  helper: string;
 }> = [
-  { key: 'today', label: 'Hoje', helper: 'Somente os dados de hoje' },
-  { key: 'week', label: 'Esta semana', helper: 'Semana atual do dashboard' },
-  { key: 'month', label: 'Este mês', helper: 'Mês atual do dashboard' },
-  { key: 'all', label: 'Todo o período', helper: 'Todo histórico disponível' },
+  { key: 'today', label: 'Hoje' },
+  { key: 'week', label: 'Esta semana' },
+  { key: 'month', label: 'Este mês' },
+  { key: 'all', label: 'Todo o período' },
 ];
 
 /**
@@ -82,19 +81,11 @@ export function DashboardRangePills() {
                 aria-selected={active}
                 onClick={() => selectPreset(option.key)}
                 className={cn(
-                  'rounded-md px-3 py-2 text-left transition-colors',
+                  'text-body rounded-md px-3 py-2 text-left font-medium transition-colors',
                   active ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-foreground',
                 )}
               >
-                <span className="text-body block font-medium">{option.label}</span>
-                <span
-                  className={cn(
-                    'text-caption block',
-                    active ? 'text-primary-foreground/80' : 'text-muted-foreground',
-                  )}
-                >
-                  {option.helper}
-                </span>
+                {option.label}
               </button>
             );
           })}
