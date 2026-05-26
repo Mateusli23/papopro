@@ -21,7 +21,7 @@ interface KpiGridProps {
  * Os 5 KPIs do topo do dashboard. Recalculam em real-time via `useLeads()`,
  * `useDeals()` e `useTasks()` quando o usuário muda algo em outra rota.
  *
- * Os 3 KPIs sensíveis a período (Leads novos, Conversão, Propostas) recebem
+ * Os 3 KPIs sensíveis a período (Novos leads, Conversão, Propostas) recebem
  * `trend` (↑/↓ % vs período anterior igual). Pipeline e Tarefas Pendentes
  * são snapshot atual — sem trend (faria comparação ambígua).
  *
@@ -46,7 +46,7 @@ export function KpiGrid({ bounds }: KpiGridProps) {
       className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5"
     >
       <KpiCard
-        label="Leads novos"
+        label="Novos leads recebidos"
         value={String(k.newLeadsCount)}
         Icon={Users}
         tone="info"
@@ -54,7 +54,7 @@ export function KpiGrid({ bounds }: KpiGridProps) {
         hint={
           k.hotLeadsCount > 0
             ? `${k.hotLeadsCount} ${k.hotLeadsCount === 1 ? 'quente' : 'quentes'} agora`
-            : 'no período selecionado'
+            : 'dentro do período filtrado'
         }
       />
       <KpiCard
@@ -65,25 +65,25 @@ export function KpiGrid({ bounds }: KpiGridProps) {
         hint={k.pendingTasksCount === 0 ? 'tudo em dia' : 'aguardando ação'}
       />
       <KpiCard
-        label="Pipeline"
+        label="Valor em aberto"
         value={k.openPipelineCents > 0 ? formatCentsCompact(k.openPipelineCents) : 'R$ 0'}
         Icon={TrendingUp}
         tone="warning"
         hint={
           k.openDealsCount > 0
-            ? `em ${k.openDealsCount} ${k.openDealsCount === 1 ? 'negócio' : 'negócios'}`
+            ? `somando ${k.openDealsCount} ${k.openDealsCount === 1 ? 'negócio ativo' : 'negócios ativos'}`
             : 'nada em andamento'
         }
       />
       <KpiCard
-        label="Taxa de conversão"
+        label="Conversão no período"
         value={`${k.conversionRatePct}%`}
         Icon={Activity}
         tone="success"
         trend={k.conversionTrend}
         hint={
           k.closedInRange === 0
-            ? 'sem fechamentos no período'
+            ? 'sem negócios fechados ainda'
             : `${k.wonInRange} ${k.wonInRange === 1 ? 'ganho' : 'ganhos'} · ${k.lostInRange} ${k.lostInRange === 1 ? 'perdido' : 'perdidos'}`
         }
       />
@@ -95,11 +95,11 @@ export function KpiGrid({ bounds }: KpiGridProps) {
        * o trend real volta. Por enquanto, sem indicador.
        */}
       <KpiCard
-        label="Propostas"
+        label="Propostas em negociação"
         value={k.proposalsCents > 0 ? formatCentsCompact(k.proposalsCents) : 'R$ 0'}
         Icon={FileText}
         tone="info"
-        hint="negócios abertos em proposta"
+        hint="valor ainda em conversa"
       />
     </section>
   );

@@ -49,14 +49,16 @@ export function FunnelHorizontalChart() {
     <Card className="flex h-full flex-col">
       <CardHeader>
         <CardTitle className="text-title">Funil de vendas</CardTitle>
-        <CardDescription>Negócios em cada etapa do pipeline — abertos e terminais.</CardDescription>
+        <CardDescription>
+          Veja onde seus negócios estão parados e clique em uma etapa para agir.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 pt-0">
         {totalCount === 0 ? (
           <EmptyState
             icon={Layers}
-            title="Sem negócios no funil"
-            description="Adicione um negócio pra começar a popular o funil."
+            title="Nenhum negócio em andamento"
+            description="Quando você criar uma oportunidade, ela aparece aqui por etapa."
           />
         ) : (
           <ul className="flex flex-col gap-2.5" aria-label="Funil de vendas por etapa">

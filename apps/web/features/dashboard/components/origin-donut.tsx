@@ -59,15 +59,17 @@ export function OriginDonut({ bounds }: OriginDonutProps) {
   return (
     <Card className="flex h-full flex-col">
       <CardHeader>
-        <CardTitle className="text-title">Leads por origem</CardTitle>
-        <CardDescription>De onde vêm os leads no período selecionado.</CardDescription>
+        <CardTitle className="text-title">Origem dos leads</CardTitle>
+        <CardDescription>
+          Entenda quais canais estão trazendo oportunidades no período filtrado.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex-1 pt-0">
         {totalCount === 0 ? (
           <EmptyState
             icon={Globe}
-            title="Sem leads no período"
-            description="Quando entrarem leads no range escolhido, a distribuição aparece aqui."
+            title="Nenhum lead nesse período"
+            description="Ao receber leads, você verá aqui quais canais estão funcionando melhor."
           />
         ) : (
           <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-stretch sm:gap-6">

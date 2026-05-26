@@ -2,9 +2,6 @@
 
 import * as React from 'react';
 
-import { Button } from '@papopro/ui';
-import { PlusCircle, Sparkles } from '@papopro/ui/icons';
-
 import { useDashboardRange } from '../hooks/use-dashboard-range';
 import { formatHeaderDate } from '../range';
 
@@ -21,8 +18,8 @@ import { UpcomingDealsTable } from './upcoming-deals-table';
  * Variante pós-wizard do dashboard — operacional do dia.
  *
  * Estrutura (top → bottom), espelhando a imagem de referência aprovada:
- *  1. Header com saudação + data por extenso, à direita pills de período
- *  2. KpiGrid: 5 cards (Leads novos / Tarefas pendentes / Pipeline / Conversão / Propostas)
+ *  1. Header com saudação + data por extenso, à direita seletor único de período
+ *  2. KpiGrid: 5 cards (Novos leads / Tarefas pendentes / Valor em aberto / Conversão / Propostas)
  *     com trend (↑/↓ %) nos sensíveis a período
  *  3. Funil horizontal (1/3) + Donut Origem (2/3 OU 1/2 — ver abaixo)
  *  4. Atividade recente (1/3) + Próximos do prazo (2/3)
@@ -34,10 +31,8 @@ import { UpcomingDealsTable } from './upcoming-deals-table';
  *  - Funil tem 6 linhas + label de valor — precisa largura
  *  - 50/50 dá balance visual; 1/3 + 2/3 espremeria o donut
  *
- * Em mobile (<lg) tudo empilha verticalmente; pills viram scroll horizontal.
- *
- * Os botões "Ativar agente IA" e "Adicionar lead" permanecem placeholders
- * (sem onClick) — virarão ações reais nos milestones backend.
+ * Em mobile (<lg) tudo empilha verticalmente; o filtro fica abaixo do título
+ * sem disputar atenção com CTAs avançados.
  */
 export function PostWizardDashboard({ greeting }: { greeting: string }) {
   const { bounds } = useDashboardRange();
@@ -50,16 +45,8 @@ export function PostWizardDashboard({ greeting }: { greeting: string }) {
           <h1 className="text-title-lg text-foreground font-semibold">{greeting}</h1>
           <p className="text-body text-muted-foreground">{dateLine}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+        <div className="flex items-center lg:justify-end">
           <DashboardRangePills />
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm">
-              <Sparkles /> Ativar agente IA
-            </Button>
-            <Button size="sm">
-              <PlusCircle /> Adicionar lead
-            </Button>
-          </div>
         </div>
       </header>
 
