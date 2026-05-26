@@ -37,6 +37,7 @@ import { revalidatePath } from 'next/cache';
 import { type Prisma } from '@papopro/db';
 
 import { maybeHandoffOnStageChange } from '@/features/agents/handoff-runtime';
+import { ORDER_STEP } from '@/features/deals/transforms';
 import { getRequestAuditContext } from '@/lib/audit/context';
 import { requireRole } from '@/lib/auth/require-role';
 import { serializeLeadsCsv, type LeadCsvRow } from '@/lib/exports/csv';
@@ -47,6 +48,7 @@ import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { isPrismaErrorCode } from '@/lib/utils/prisma-errors';
 
+import { buildInitialDealData } from './create-initial-deal';
 import {
   archiveLeadSchema,
   assignLeadSchema,
@@ -154,7 +156,7 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
       const [stage, assignee] = await Promise.all([
         tx.pipelineStage.findFirst({
           where: { id: parsed.data.stageId, pipeline: { workspaceId } },
-          select: { id: true },
+          select: { id: true, tone: true },
         }),
         tx.workspaceMember.findFirst({
           where: { id: parsed.data.assignedTo, workspaceId },
@@ -183,6 +185,28 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
         select: { id: true },
       });
 
+      const lastDeal = await tx.deal.findFirst({
+        where: { workspaceId, stageId: parsed.data.stageId, deletedAt: null },
+        orderBy: { orderInStage: 'desc' },
+        select: { orderInStage: true },
+      });
+      const orderInStage = (lastDeal?.orderInStage ?? 0) + ORDER_STEP;
+
+      const deal = await tx.deal.create({
+        data: buildInitialDealData({
+          workspaceId,
+          leadId: lead.id,
+          leadName: parsed.data.name,
+          stageId: parsed.data.stageId,
+          stageTone: stage.tone,
+          ownerId: parsed.data.assignedTo,
+          valueCents: parsed.data.valueCents,
+          orderInStage,
+          userId,
+        }),
+        select: { id: true },
+      });
+
       // Tags m:n.
       if (parsed.data.tags.length > 0) {
         await syncLeadTags(tx, workspaceId, lead.id, parsed.data.tags);
@@ -196,6 +220,26 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
           type: 'lead_created',
           authorId: parsed.data.assignedTo,
           meta: { origin: parsed.data.origin } as Prisma.InputJsonValue,
+        },
+      });
+
+      // Audit log da oportunidade automática criada para alimentar o Kanban.
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          userId,
+          action: 'deal_created',
+          entityType: 'deal',
+          entityId: deal.id,
+          changes: {
+            title: parsed.data.name,
+            leadId: lead.id,
+            stageId: parsed.data.stageId,
+            valueCents: parsed.data.valueCents,
+            createdFromLead: true,
+          } as Prisma.InputJsonValue,
+          ipAddress,
+          userAgent,
         },
       });
 
@@ -217,6 +261,8 @@ export async function createLeadAction(input: LeadCreateInput): Promise<LeadActi
     });
 
     revalidatePath('/leads');
+    revalidatePath('/kanban');
+    revalidatePath('/dashboard');
     return { ok: true, leadId };
   } catch (err) {
     if (err instanceof Error) {
