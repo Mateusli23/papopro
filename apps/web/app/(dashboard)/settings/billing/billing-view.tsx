@@ -303,14 +303,13 @@ function ProActiveCard({
 
   const statusBadgeVariant =
     sub.status === 'active' ? 'success' : sub.status === 'past_due' ? 'warning' : 'destructive';
-  const STATUS_LABELS: Record<typeof sub.status, string> = {
+  const statusLabel = {
     active: 'Ativa',
     past_due: 'Pagamento atrasado',
     canceled: 'Cancelada',
     unpaid: 'Não paga',
     incomplete: 'Incompleta',
-  };
-  const statusLabel = STATUS_LABELS[sub.status];
+  }[sub.status];
 
   return (
     <Card>
