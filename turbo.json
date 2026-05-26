@@ -13,7 +13,19 @@
         "DIRECT_URL",
         "SUPABASE_URL",
         "SUPABASE_ANON_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY"
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "APP_HOST",
+        "AUTH_SECRET",
+        "AUTH_COOKIE_DOMAIN",
+        "UAZAPI_*",
+        "ANTHROPIC_*",
+        "OPENAI_*",
+        "STRIPE_*",
+        "RESEND_*",
+        "VAPID_*",
+        "CADENCE_DISPATCH_SECRET",
+        "NOTIFY_DISPATCH_SECRET",
+        "CRON_SECRET"
       ]
     },
     "dev": {
