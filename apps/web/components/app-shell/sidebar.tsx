@@ -1,4 +1,5 @@
 import { LogoFull } from '@papopro/ui';
+import { ChevronLeft, ChevronRight } from '@papopro/ui/icons';
 
 import { toSwitcherItem } from '@/features/workspace/presentation';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
@@ -7,6 +8,7 @@ import { loadColdAlertsCount } from '@/lib/cold-alerts/load-count';
 
 import { SidebarFooter } from './sidebar-footer';
 import { SidebarNav } from './sidebar-nav';
+import { SidebarState } from './sidebar-state';
 import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switcher';
 
 /**
@@ -30,19 +32,31 @@ export async function Sidebar() {
   ]);
 
   return (
-    <aside
-      className="bg-sidebar text-sidebar-foreground border-sidebar-border w-sidebar hidden h-screen shrink-0 flex-col border-r lg:flex"
-      aria-label="Barra lateral"
-    >
-      <div className="border-sidebar-border flex h-14 items-center border-b px-4">
-        <LogoFull />
-      </div>
-      <div className="border-sidebar-border border-b p-2">
-        <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
-      </div>
-      <SidebarNav coldAlertsCount={coldAlertsCount} />
-      <SidebarFooter />
-    </aside>
+    <SidebarState>
+      {({ collapsed, toggleCollapsed }) => (
+        <>
+          <div className="border-sidebar-border flex h-14 items-center justify-between border-b px-3">
+            {!collapsed && <LogoFull />}
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground inline-flex size-9 items-center justify-center rounded-md transition-colors"
+              aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+              title={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+            >
+              {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+            </button>
+          </div>
+          {!collapsed && (
+            <div className="border-sidebar-border border-b p-2">
+              <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
+            </div>
+          )}
+          <SidebarNav collapsed={collapsed} coldAlertsCount={coldAlertsCount} />
+          <SidebarFooter collapsed={collapsed} />
+        </>
+      )}
+    </SidebarState>
   );
 }
 

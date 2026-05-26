@@ -1,13 +1,12 @@
 /**
  * Configuração declarativa do menu lateral.
  *
- * Cada item vira um `<Link>` na sidebar. Dividimos em "principal" e
- * "configurações" pra renderizar com separator no meio. As rotas seguem o
- * roadmap do produto (CLAUDE.md §4 e PLAN.md M3+) — algumas ainda não existem
- * em código; os links levam pra páginas placeholder até virem em M3+.
+ * Grupos organizados por valor para o usuário:
+ * - Principal: operação diária do CRM.
+ * - Automação: recursos avançados que ampliam o atendimento.
+ * - Gestão: análise e configuração.
  */
 import {
-  Bell,
   Bot,
   Inbox,
   KanbanSquare,
@@ -37,27 +36,32 @@ export interface NavGroup {
 
 export const NAV_GROUPS: NavGroup[] = [
   {
+    title: 'Principal',
     items: [
       { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Leads', href: '/leads', icon: Users },
       { label: 'Kanban', href: '/kanban', icon: KanbanSquare },
+      { label: 'Tarefas', href: '/tasks', icon: ListChecks },
       // Badge **dinâmico**: o `<SidebarNav>` mescla `useUnreadCount()` neste
       // item antes de renderizar (M5#4c). `badge` fica `undefined` aqui pra
       // que sem mensagens não-lidas o número simplesmente some — o componente
       // só pinta o `<Badge>` quando `item.badge !== undefined`.
       { label: 'Inbox', href: '/inbox', icon: Inbox },
-      // Ícone Bot (não Sparkles) — alinhado com cmdk-palette, editor e
-      // empty state da lista (review MEDIUM M5#5: visual consistency).
-      { label: 'Agentes', href: '/agents', icon: Bot },
-      { label: 'Cadências', href: '/cadences', icon: Repeat },
-      { label: 'Tarefas', href: '/tasks', icon: ListChecks },
-      { label: 'Relatórios', href: '/reports', icon: PieChart },
     ],
   },
   {
-    title: 'Sistema',
+    title: 'Automação',
     items: [
-      { label: 'Notificações', href: '/settings/notifications', icon: Bell },
+      // Ícone Bot (não Sparkles) — alinhado com cmdk-palette, editor e
+      // empty state da lista (review MEDIUM M5#5: visual consistency).
+      { label: 'Cadências', href: '/cadences', icon: Repeat },
+      { label: 'Agentes IA', href: '/agents', icon: Bot },
+    ],
+  },
+  {
+    title: 'Gestão',
+    items: [
+      { label: 'Relatórios', href: '/reports', icon: PieChart },
       { label: 'Configurações', href: '/settings', icon: Settings },
     ],
   },
