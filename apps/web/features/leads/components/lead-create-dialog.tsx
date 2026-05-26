@@ -110,7 +110,9 @@ export function LeadCreateDialog({
       setSubmitError(result.error);
       return;
     }
-    toast.success(`Lead "${data.name}" criado.`, { duration: 4000 });
+    toast.success(`Lead "${data.name}" criado e oportunidade aberta no Kanban.`, {
+      duration: 5000,
+    });
     onOpenChange(false);
     // Refresh força Server Component `/leads/page.tsx` a re-fetch.
     router.refresh();
@@ -120,11 +122,11 @@ export function LeadCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Adicionar lead</DialogTitle>
           <DialogDescription>
-            Cadastro rápido — depois você completa a ficha na página do lead.
+            Cadastro rápido — o app já abre a oportunidade correspondente no Kanban.
           </DialogDescription>
         </DialogHeader>
 

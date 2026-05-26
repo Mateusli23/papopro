@@ -9,95 +9,111 @@ import { ptBR } from 'date-fns/locale';
 import { DayPicker, type DateRange } from 'react-day-picker';
 
 import { Button, cn, Popover, PopoverContent, PopoverTrigger } from '@papopro/ui';
-import { Calendar } from '@papopro/ui/icons';
+import { Calendar, ChevronDown } from '@papopro/ui/icons';
 
 import { useDashboardRange } from '../hooks/use-dashboard-range';
 import { DASHBOARD_NOW } from '../range';
 import type { DashboardRange } from '../types';
 
-/**
- * Pills de filtro de período do dashboard. Replicam o padrão da imagem
- * de referência: Hoje, Esta Semana, Este Mês, Máximo, Personalizado.
- *
- * - Item ativo destaca-se com `bg-primary text-primary-foreground`.
- * - "Personalizado" abre um Popover com `<DayPicker mode="range">` (já no
- *   projeto via M5#2 Tasks, finalmente usado).
- * - Em mobile, vira scroll horizontal com `snap-x` — caberá na largura
- *   típica de 360px com 5 pills sem quebrar layout.
- *
- * Persiste em URL via `useDashboardRange()` (que usa `router.replace()` —
- * trocar pill não polui o "Voltar" do navegador).
- */
-
-const PILLS: Array<{ key: Exclude<DashboardRange, 'custom'>; label: string }> = [
+const RANGE_OPTIONS: Array<{
+  key: Exclude<DashboardRange, 'custom'>;
+  label: string;
+}> = [
   { key: 'today', label: 'Hoje' },
   { key: 'week', label: 'Esta semana' },
   { key: 'month', label: 'Este mês' },
-  { key: 'all', label: 'Máximo' },
+  { key: 'all', label: 'Todo o período' },
 ];
 
+/**
+ * Seletor único de período do dashboard.
+ *
+ * Mantém a mesma persistência em URL via `useDashboardRange()`, mas reduz o
+ * peso visual do topo: em vez de várias pills competindo com o título, há um
+ * botão compacto "Período: X" que abre as opções e o calendário personalizado.
+ */
 export function DashboardRangePills() {
   const { bounds, setRange } = useDashboardRange();
-  const [customOpen, setCustomOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
 
   const isCustom = bounds.range === 'custom';
+  const activeLabel = isCustom
+    ? bounds.label
+    : RANGE_OPTIONS.find((o) => o.key === bounds.range)?.label;
+
+  function selectPreset(range: Exclude<DashboardRange, 'custom'>) {
+    setRange(range);
+    setOpen(false);
+  }
 
   return (
-    <div
-      role="group"
-      aria-label="Filtro de período"
-      className="flex snap-x items-center gap-1 overflow-x-auto"
-    >
-      {PILLS.map((pill) => {
-        const active = bounds.range === pill.key;
-        return (
-          <button
-            key={pill.key}
-            type="button"
-            onClick={() => setRange(pill.key)}
-            className={cn(
-              'text-caption shrink-0 snap-start rounded-md border px-3 py-1.5 font-medium transition-colors',
-              active
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-background text-foreground border-border hover:bg-muted',
-            )}
-            aria-pressed={active}
-          >
-            {pill.label}
-          </button>
-        );
-      })}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            'border-border bg-background text-foreground hover:bg-muted inline-flex min-h-9 w-full items-center justify-between gap-2 rounded-md border px-3 py-2 transition-colors',
+            'focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:w-auto sm:min-w-56',
+          )}
+          aria-label={`Alterar período. Período atual: ${activeLabel}`}
+        >
+          <span className="text-body flex items-center gap-2 font-medium">
+            <Calendar className="text-muted-foreground size-4" aria-hidden />
+            <span className="text-muted-foreground font-normal">Período:</span>
+            <span>{activeLabel}</span>
+          </span>
+          <ChevronDown className="text-muted-foreground size-4" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(calc(100vw-2rem),24rem)] p-2" align="end">
+        <div
+          className="flex flex-col gap-1"
+          role="listbox"
+          aria-label="Selecionar período do dashboard"
+        >
+          {RANGE_OPTIONS.map((option) => {
+            const active = bounds.range === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => selectPreset(option.key)}
+                className={cn(
+                  'text-body rounded-md px-3 py-2 text-left font-medium transition-colors',
+                  active ? 'bg-primary text-primary-foreground' : 'hover:bg-muted text-foreground',
+                )}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
 
-      <Popover open={customOpen} onOpenChange={setCustomOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-pressed={isCustom}
-            className={cn(
-              'text-caption inline-flex shrink-0 snap-start items-center gap-1 rounded-md border px-3 py-1.5 font-medium transition-colors',
-              isCustom
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'bg-background text-foreground border-border hover:bg-muted',
-            )}
-          >
-            <Calendar className="size-3.5" />
-            <span>{isCustom ? bounds.label : 'Personalizado'}</span>
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-3" align="end">
+        <div className="border-border mt-2 border-t pt-3">
+          <div className="mb-2 flex items-center gap-2 px-1">
+            <Calendar className="text-muted-foreground size-4" aria-hidden />
+            <div>
+              <p className="text-body text-foreground font-medium">Período personalizado</p>
+              <p className="text-caption text-muted-foreground">
+                Escolha início e fim para filtrar o dashboard.
+              </p>
+            </div>
+          </div>
           <CustomRangePicker
             initial={isCustom ? { from: bounds.start, to: bounds.end } : undefined}
             onApply={(range) => {
               if (range.from && range.to) {
                 setRange('custom', { start: range.from, end: range.to });
-                setCustomOpen(false);
+                setOpen(false);
               }
             }}
-            onCancel={() => setCustomOpen(false)}
+            onCancel={() => setOpen(false)}
           />
-        </PopoverContent>
-      </Popover>
-    </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -124,17 +140,21 @@ function CustomRangePicker({ initial, onApply, onCancel }: CustomRangePickerProp
         // congeladas em M5; em M8+ vira `new Date()` real (review M5p#2).
         toDate={DASHBOARD_NOW}
       />
-      <div className="text-caption text-muted-foreground">
+      <div className="text-caption text-muted-foreground px-1">
         {selected?.from && selected?.to
           ? `${fmtDate(selected.from, "d 'de' MMM", { locale: ptBR })} – ${fmtDate(selected.to, "d 'de' MMM", { locale: ptBR })}`
-          : 'Selecione início e fim'}
+          : 'Selecione a data inicial e a data final'}
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel}>
           Cancelar
         </Button>
-        <Button size="sm" onClick={() => selected && onApply(selected)} disabled={!selected?.to}>
-          Aplicar
+        <Button
+          size="sm"
+          onClick={() => selected && onApply(selected)}
+          disabled={!selected?.from || !selected?.to}
+        >
+          Aplicar período
         </Button>
       </div>
     </div>

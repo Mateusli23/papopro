@@ -39,13 +39,13 @@ export async function TrialBanner({ workspaceId }: Props) {
       >
         <Clock className="size-4 shrink-0" />
         <span className="text-body flex-1">
-          <strong>Teste grátis do PapoPro</strong> — {daysLabel}. Depois disso o workspace volta pro
-          plano Free.
+          <strong>Teste grátis ativo</strong> — {daysLabel}. Você pode revisar os planos quando
+          quiser.
         </span>
         <Button asChild size="sm" variant={urgent ? 'default' : 'outline'} className="gap-1">
           <Link href="/settings/billing">
             <Sparkles className="size-3.5" />
-            Assinar Pro
+            Ver planos
           </Link>
         </Button>
       </div>
