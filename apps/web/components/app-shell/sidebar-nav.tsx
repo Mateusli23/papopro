@@ -20,6 +20,8 @@ interface SidebarNavProps {
    * só renderiza o número. `0` = sem badge.
    */
   coldAlertsCount?: number;
+  /** Desktop: quando true, mostra apenas ícones com labels acessíveis. */
+  collapsed?: boolean;
 }
 
 /**
@@ -39,7 +41,11 @@ interface SidebarNavProps {
  * em `Sidebar`/`Topbar` com RBAC fino). Mesma técnica do inbox. Quando 0,
  * badge some.
  */
-export function SidebarNav({ onNavigate, coldAlertsCount = 0 }: SidebarNavProps) {
+export function SidebarNav({
+  onNavigate,
+  coldAlertsCount = 0,
+  collapsed = false,
+}: SidebarNavProps) {
   const pathname = usePathname();
   const inboxUnread = useUnreadCount();
 
@@ -83,11 +89,14 @@ export function SidebarNav({ onNavigate, coldAlertsCount = 0 }: SidebarNavProps)
   }, [pathname]);
 
   return (
-    <ScrollArea className="flex-1 px-3 py-4">
+    <ScrollArea className={cn('flex-1 py-4', collapsed ? 'px-2' : 'px-3')}>
       <nav aria-label="Navegação principal" className="flex flex-col gap-6">
         {groups.map((group, gi) => (
           <div key={gi} className="flex flex-col gap-1">
-            {group.title && (
+            {group.title && collapsed && gi > 0 && (
+              <div className="bg-sidebar-border mx-auto my-2 h-px w-8" aria-hidden />
+            )}
+            {group.title && !collapsed && (
               <div className="text-caption text-muted-foreground px-3 pb-1 font-semibold uppercase tracking-wide">
                 {group.title}
               </div>
@@ -103,8 +112,11 @@ export function SidebarNav({ onNavigate, coldAlertsCount = 0 }: SidebarNavProps)
                   href={href}
                   onClick={onNavigate}
                   aria-current={isActive ? 'page' : undefined}
+                  aria-label={collapsed ? item.label : undefined}
+                  title={collapsed ? item.label : undefined}
                   className={cn(
-                    'text-body group relative flex items-center gap-3 rounded-md px-3 py-2 transition-colors',
+                    'text-body group relative flex items-center rounded-md py-2 transition-colors',
+                    collapsed ? 'justify-center px-2' : 'gap-3 px-3',
                     isActive
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground',
@@ -117,13 +129,19 @@ export function SidebarNav({ onNavigate, coldAlertsCount = 0 }: SidebarNavProps)
                     />
                   )}
                   <Icon className="size-4 shrink-0" />
-                  <span className="flex-1 truncate">{item.label}</span>
+                  {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
                   {item.badge !== undefined && (
-                    <Badge variant="default" className="h-5 px-1.5">
+                    <Badge
+                      variant="default"
+                      className={cn(
+                        'h-5 px-1.5',
+                        collapsed && 'absolute right-0 top-0 h-4 min-w-4 px-1 text-[10px]',
+                      )}
+                    >
                       {item.badge}
                     </Badge>
                   )}
-                  {item.soon && (
+                  {item.soon && !collapsed && (
                     <span className="text-muted-foreground/70 text-caption opacity-0 transition-opacity group-hover:opacity-100">
                       em breve
                     </span>

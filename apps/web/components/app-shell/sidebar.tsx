@@ -1,13 +1,10 @@
-import { LogoFull } from '@papopro/ui';
-
 import { toSwitcherItem } from '@/features/workspace/presentation';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { loadColdAlertsCount } from '@/lib/cold-alerts/load-count';
 
-import { SidebarFooter } from './sidebar-footer';
-import { SidebarNav } from './sidebar-nav';
-import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switcher';
+import { SidebarState } from './sidebar-state';
+import type { WorkspaceSwitcherItem } from './workspace-switcher';
 
 /**
  * Sidebar fixa de 240px (CLAUDE.md §8). Visível em ≥1024px; abaixo disso vira
@@ -30,19 +27,11 @@ export async function Sidebar() {
   ]);
 
   return (
-    <aside
-      className="bg-sidebar text-sidebar-foreground border-sidebar-border w-sidebar hidden h-screen shrink-0 flex-col border-r lg:flex"
-      aria-label="Barra lateral"
-    >
-      <div className="border-sidebar-border flex h-14 items-center border-b px-4">
-        <LogoFull />
-      </div>
-      <div className="border-sidebar-border border-b p-2">
-        <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
-      </div>
-      <SidebarNav coldAlertsCount={coldAlertsCount} />
-      <SidebarFooter />
-    </aside>
+    <SidebarState
+      workspaces={workspaces}
+      activeWorkspaceId={activeWorkspaceId}
+      coldAlertsCount={coldAlertsCount}
+    />
   );
 }
 
