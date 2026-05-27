@@ -30,6 +30,7 @@ import { Loader2 } from '@papopro/ui/icons';
 
 import { updateDealAction } from '@/features/deals/actions';
 import type { SalesRep } from '@/features/leads/types';
+import { formatCentsForCurrencyInput, parseCurrencyInputToCents } from '@/lib/utils/format';
 
 import { updateDealSchema, type UpdateDealInput } from '../schemas';
 import type { Deal } from '../types';
@@ -76,11 +77,6 @@ function buildDefaults(deal: Deal): UpdateDealInput {
   };
 }
 
-function formatCentsForDisplay(cents: number): string {
-  if (!cents) return '';
-  return String(Math.floor(cents / 100));
-}
-
 export function DealEditDialog({ open, onOpenChange, deal, salesReps }: DealEditDialogProps) {
   const router = useRouter();
   const [isPending, startTransition] = React.useTransition();
@@ -98,22 +94,19 @@ export function DealEditDialog({ open, onOpenChange, deal, salesReps }: DealEdit
     defaultValues: buildDefaults(deal),
   });
 
-  const [valueDisplay, setValueDisplay] = React.useState(formatCentsForDisplay(deal.valueCents));
+  const [valueDisplay, setValueDisplay] = React.useState(
+    formatCentsForCurrencyInput(deal.valueCents),
+  );
   const [dueDisplay, setDueDisplay] = React.useState(isoToDateInput(deal.dueAt));
 
   React.useEffect(() => {
     if (open) {
       reset(buildDefaults(deal));
-      setValueDisplay(formatCentsForDisplay(deal.valueCents));
+      setValueDisplay(formatCentsForCurrencyInput(deal.valueCents));
       setDueDisplay(isoToDateInput(deal.dueAt));
       setSubmitError(null);
     }
   }, [open, deal, reset]);
-
-  function parseValueToCents(raw: string): number {
-    const digits = raw.replace(/\D/g, '');
-    return digits ? parseInt(digits, 10) * 100 : 0;
-  }
 
   function onSubmit(data: UpdateDealInput) {
     setSubmitError(null);
@@ -161,9 +154,9 @@ export function DealEditDialog({ open, onOpenChange, deal, salesReps }: DealEdit
                 value={valueDisplay}
                 onChange={(e) => {
                   setValueDisplay(e.target.value);
-                  setValue('valueCents', parseValueToCents(e.target.value));
+                  setValue('valueCents', parseCurrencyInputToCents(e.target.value));
                 }}
-                placeholder="ex: 50000"
+                placeholder="ex: 800.000"
               />
             </Field>
 
