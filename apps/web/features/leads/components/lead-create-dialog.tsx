@@ -27,6 +27,8 @@ import {
 } from '@papopro/ui';
 import { AlertCircle, Loader2 } from '@papopro/ui/icons';
 
+import { parseCurrencyInputToCents } from '@/lib/utils/format';
+
 import { createLeadAction } from '../actions';
 import { LEAD_ORIGINS, leadCreateSchema, type LeadCreateInput } from '../schemas';
 import type { PipelineStage, SalesRep } from '../types';
@@ -88,12 +90,6 @@ export function LeadCreateDialog({
 
   // Aceita "850.000" / "850000" / "1.200,00" e converte pra centavos.
   const [valueDisplay, setValueDisplay] = React.useState('');
-
-  function parseValueToCents(raw: string): number {
-    const digits = raw.replace(/\D/g, '');
-    if (!digits) return 0;
-    return parseInt(digits, 10);
-  }
 
   React.useEffect(() => {
     if (open) {
@@ -241,9 +237,9 @@ export function LeadCreateDialog({
                 value={valueDisplay}
                 onChange={(e) => {
                   setValueDisplay(e.target.value);
-                  setValue('valueCents', parseValueToCents(e.target.value));
+                  setValue('valueCents', parseCurrencyInputToCents(e.target.value));
                 }}
-                placeholder="ex: 50000"
+                placeholder="ex: 800.000"
               />
             </Field>
           </div>

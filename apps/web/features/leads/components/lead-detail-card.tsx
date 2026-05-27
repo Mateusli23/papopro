@@ -24,7 +24,13 @@ import {
 } from '@papopro/ui';
 import { Archive, Building2, Loader2, Mail, Phone, Tag, User } from '@papopro/ui/icons';
 
-import { formatCents, formatDateShort, initialsOf } from '@/lib/utils/format';
+import {
+  formatCents,
+  formatCentsForCurrencyInput,
+  formatDateShort,
+  initialsOf,
+  parseCurrencyInputToCents,
+} from '@/lib/utils/format';
 
 import {
   archiveLeadAction,
@@ -435,15 +441,15 @@ function ValueField({
   onSave: (valueCents: number) => void | Promise<void>;
 }) {
   const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState((lead.valueCents / 100).toFixed(0));
+  const [draft, setDraft] = React.useState(formatCentsForCurrencyInput(lead.valueCents));
 
   React.useEffect(() => {
-    setDraft((lead.valueCents / 100).toFixed(0));
+    setDraft(formatCentsForCurrencyInput(lead.valueCents));
   }, [lead.valueCents]);
 
   async function commit() {
-    const reais = parseInt(draft.replace(/\D/g, ''), 10) || 0;
-    if (reais * 100 !== lead.valueCents) await onSave(reais * 100);
+    const valueCents = parseCurrencyInputToCents(draft);
+    if (valueCents !== lead.valueCents) await onSave(valueCents);
     setEditing(false);
   }
 
@@ -460,7 +466,7 @@ function ValueField({
             e.preventDefault();
             void commit();
           } else if (e.key === 'Escape') {
-            setDraft((lead.valueCents / 100).toFixed(0));
+            setDraft(formatCentsForCurrencyInput(lead.valueCents));
             setEditing(false);
           }
         }}

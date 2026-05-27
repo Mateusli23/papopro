@@ -33,6 +33,7 @@ import { Loader2 } from '@papopro/ui/icons';
 import { createDealAction } from '@/features/deals/actions';
 import type { LeadComboboxOption } from '@/features/deals/queries';
 import type { PipelineStage, SalesRep } from '@/features/leads/types';
+import { formatCentsForCurrencyInput, parseCurrencyInputToCents } from '@/lib/utils/format';
 
 import { dealCreateSchema, type DealCreateInput } from '../schemas';
 
@@ -81,13 +82,6 @@ function buildDefaults(
   };
 }
 
-/** Formata centavos pro display do campo "Valor" (sem separadores, só dígitos
- *  inteiros em BRL — bate com o `parseValueToCents` do form). */
-function formatCentsForDisplay(cents: number): string {
-  if (!cents) return '';
-  return String(Math.floor(cents / 100));
-}
-
 export function DealCreateDialog({
   open,
   onOpenChange,
@@ -132,7 +126,7 @@ export function DealCreateDialog({
   });
 
   const [valueDisplay, setValueDisplay] = React.useState(
-    formatCentsForDisplay(defaultValueCents ?? 0),
+    formatCentsForCurrencyInput(defaultValueCents),
   );
   const [dueDisplay, setDueDisplay] = React.useState(
     fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'),
@@ -150,7 +144,7 @@ export function DealCreateDialog({
           salesReps,
         ),
       );
-      setValueDisplay(formatCentsForDisplay(defaultValueCents ?? 0));
+      setValueDisplay(formatCentsForCurrencyInput(defaultValueCents));
       setDueDisplay(fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'));
       setSubmitError(null);
     }
@@ -164,11 +158,6 @@ export function DealCreateDialog({
     salesReps,
     reset,
   ]);
-
-  function parseValueToCents(raw: string): number {
-    const digits = raw.replace(/\D/g, '');
-    return digits ? parseInt(digits, 10) * 100 : 0;
-  }
 
   function onSubmit(data: DealCreateInput) {
     setSubmitError(null);
@@ -276,9 +265,9 @@ export function DealCreateDialog({
                 value={valueDisplay}
                 onChange={(e) => {
                   setValueDisplay(e.target.value);
-                  setValue('valueCents', parseValueToCents(e.target.value));
+                  setValue('valueCents', parseCurrencyInputToCents(e.target.value));
                 }}
-                placeholder="ex: 50000"
+                placeholder="ex: 800.000"
               />
             </Field>
 
