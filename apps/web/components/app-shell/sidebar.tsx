@@ -1,15 +1,10 @@
-import { LogoFull } from '@papopro/ui';
-import { ChevronLeft, ChevronRight } from '@papopro/ui/icons';
-
 import { toSwitcherItem } from '@/features/workspace/presentation';
 import { getCurrentUserContext } from '@/lib/auth/get-user';
 import { readWorkspaceCookie } from '@/lib/auth/workspace-cookie';
 import { loadColdAlertsCount } from '@/lib/cold-alerts/load-count';
 
-import { SidebarFooter } from './sidebar-footer';
-import { SidebarNav } from './sidebar-nav';
 import { SidebarState } from './sidebar-state';
-import { WorkspaceSwitcher, type WorkspaceSwitcherItem } from './workspace-switcher';
+import type { WorkspaceSwitcherItem } from './workspace-switcher';
 
 /**
  * Sidebar fixa de 240px (CLAUDE.md §8). Visível em ≥1024px; abaixo disso vira
@@ -32,31 +27,11 @@ export async function Sidebar() {
   ]);
 
   return (
-    <SidebarState>
-      {({ collapsed, toggleCollapsed }) => (
-        <>
-          <div className="border-sidebar-border flex h-14 items-center justify-between border-b px-3">
-            {!collapsed && <LogoFull />}
-            <button
-              type="button"
-              onClick={toggleCollapsed}
-              className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground inline-flex size-9 items-center justify-center rounded-md transition-colors"
-              aria-label={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
-              title={collapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
-            >
-              {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-            </button>
-          </div>
-          {!collapsed && (
-            <div className="border-sidebar-border border-b p-2">
-              <WorkspaceSwitcher workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
-            </div>
-          )}
-          <SidebarNav collapsed={collapsed} coldAlertsCount={coldAlertsCount} />
-          <SidebarFooter collapsed={collapsed} />
-        </>
-      )}
-    </SidebarState>
+    <SidebarState
+      workspaces={workspaces}
+      activeWorkspaceId={activeWorkspaceId}
+      coldAlertsCount={coldAlertsCount}
+    />
   );
 }
 
