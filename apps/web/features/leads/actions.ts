@@ -123,6 +123,26 @@ async function syncLeadTags(
   }
 }
 
+async function syncSingleOpenDealValue(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  leadId: string,
+  valueCents: number,
+): Promise<void> {
+  const openDeals = await tx.deal.findMany({
+    where: { workspaceId, leadId, deletedAt: null, status: 'open' },
+    select: { id: true },
+    take: 2,
+  });
+
+  if (openDeals.length !== 1) return;
+
+  await tx.deal.update({
+    where: { id: openDeals[0]!.id },
+    data: { valueCents },
+  });
+}
+
 // =============================================================================
 // createLeadAction
 // =============================================================================
@@ -346,6 +366,10 @@ export async function updateLeadAction(input: UpdateLeadInput): Promise<LeadActi
         data,
       });
 
+      if (patch.valueCents !== undefined) {
+        await syncSingleOpenDealValue(tx, workspaceId, leadId, patch.valueCents);
+      }
+
       if (tags !== undefined) {
         await syncLeadTags(tx, workspaceId, leadId, tags);
       }
@@ -379,6 +403,8 @@ export async function updateLeadAction(input: UpdateLeadInput): Promise<LeadActi
 
     revalidatePath('/leads');
     revalidatePath(`/leads/${leadId}`);
+    revalidatePath('/kanban');
+    revalidatePath('/dashboard');
     return { ok: true, leadId };
   } catch (err) {
     if (err instanceof Error) {

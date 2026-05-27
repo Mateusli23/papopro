@@ -152,6 +152,16 @@ function statusFromStageTone(tone: string): 'open' | 'won' | 'lost' {
   return 'open';
 }
 
+async function countOpenDealsForLead(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  leadId: string,
+): Promise<number> {
+  return tx.deal.count({
+    where: { workspaceId, leadId, deletedAt: null, status: 'open' },
+  });
+}
+
 // =============================================================================
 // createDealAction
 // =============================================================================
@@ -201,6 +211,11 @@ export async function createDealAction(input: DealCreateInput): Promise<DealActi
       // Status automático se nasce direto em stage terminal.
       const initialStatus = statusFromStageTone(stage.tone);
       const closedAt = initialStatus === 'open' ? null : new Date();
+      const openDealsBeforeCreate = await countOpenDealsForLead(
+        tx,
+        workspaceId,
+        parsed.data.leadId,
+      );
 
       const deal = await tx.deal.create({
         data: {
@@ -219,6 +234,13 @@ export async function createDealAction(input: DealCreateInput): Promise<DealActi
         },
         select: { id: true },
       });
+
+      if (initialStatus === 'open' && openDealsBeforeCreate === 0) {
+        await tx.lead.update({
+          where: { id: parsed.data.leadId },
+          data: { valueCents: parsed.data.valueCents },
+        });
+      }
 
       // Activity `lead_created` não cabe aqui (é do lead, não do deal).
       // Não temos `deal_created` em activity_type ainda (M8#1 só adicionou em
@@ -245,6 +267,7 @@ export async function createDealAction(input: DealCreateInput): Promise<DealActi
 
     revalidatePath('/kanban');
     revalidatePath('/leads');
+    revalidatePath('/dashboard');
     return { ok: true, dealId };
   } catch (err) {
     if (err instanceof Error) {
@@ -386,7 +409,7 @@ export async function updateDealAction(input: UpdateDealInput): Promise<DealActi
     await withWorkspace(workspaceId, async (tx) => {
       const deal = await tx.deal.findFirst({
         where: { id: dealId, workspaceId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, leadId: true, status: true },
       });
       if (!deal) throw new Error('DEAL_NOT_FOUND');
 
@@ -418,6 +441,17 @@ export async function updateDealAction(input: UpdateDealInput): Promise<DealActi
         data,
       });
 
+      if (
+        patch.valueCents !== undefined &&
+        deal.status === 'open' &&
+        (await countOpenDealsForLead(tx, workspaceId, deal.leadId)) === 1
+      ) {
+        await tx.lead.update({
+          where: { id: deal.leadId },
+          data: { valueCents: patch.valueCents },
+        });
+      }
+
       await tx.auditLog.create({
         data: {
           workspaceId,
@@ -434,6 +468,7 @@ export async function updateDealAction(input: UpdateDealInput): Promise<DealActi
 
     revalidatePath('/kanban');
     revalidatePath('/leads');
+    revalidatePath('/dashboard');
     return { ok: true, dealId };
   } catch (err) {
     if (err instanceof Error) {

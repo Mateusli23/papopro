@@ -35,6 +35,38 @@ export function formatCents(cents: number | undefined): string {
   return BRL_PRECISE.format(cents / 100);
 }
 
+/**
+ * Converte entrada humana em BRL para centavos.
+ *
+ * Regra de produto: quando o usuário digita só números/separadores de milhar
+ * (`800000`, `800.000`, `R$ 800.000`), o valor representa reais inteiros.
+ * Só tratamos centavos quando há separador decimal claro no final
+ * (`800.000,50` ou `800000.50`).
+ */
+export function parseCurrencyInputToCents(raw: string): number {
+  const normalized = raw.trim();
+  if (!normalized) return 0;
+
+  const decimalMatch = normalized.match(/[,.](\d{1,2})\s*$/);
+  const hasExplicitDecimal = Boolean(decimalMatch);
+  const centsPart = hasExplicitDecimal ? decimalMatch?.[1]?.padEnd(2, '0') : undefined;
+  const integerPart = hasExplicitDecimal
+    ? normalized.slice(0, normalized.length - (decimalMatch?.[0]?.length ?? 0))
+    : normalized;
+
+  const reaisDigits = integerPart.replace(/\D/g, '');
+  const reais = reaisDigits ? Number.parseInt(reaisDigits, 10) : 0;
+  const cents = centsPart ? Number.parseInt(centsPart, 10) : 0;
+
+  return reais * 100 + cents;
+}
+
+/** Valor inteiro em reais para preencher inputs editáveis sem `R$`. */
+export function formatCentsForCurrencyInput(cents: number | undefined): string {
+  if (!cents) return '';
+  return String(Math.floor(cents / 100));
+}
+
 /** "há 2 horas", "há 3 dias" — preserva sentido sem precisar de data exata. */
 export function formatRelative(iso: string | undefined): string {
   if (!iso) return '—';
