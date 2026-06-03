@@ -26,22 +26,15 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { prisma, type Prisma } from '@papopro/db';
 
 import {
-  loadActiveRoutingRules,
-  loadConversationDispatchState,
-  loadLeadContextForRouter,
-  runAgentForInboundMessage,
-} from '@/features/agents/runtime';
-import {
   handleInstanceStatus,
   handleMessageReceived,
   handleMessageStatus,
 } from '@/features/inbox/handlers';
-import { pickAgentForInbound } from '@/lib/ai/router';
 import { dispatchNotification } from '@/lib/notifications/dispatch';
 import { reportNonFatal } from '@/lib/observability/report';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
 import { checkRateLimit } from '@/lib/webhooks/rate-limit';
-import { uazapiWebhookSchema } from '@/lib/whatsapp/webhook-schemas';
+import { normalizeUazapiWebhook } from '@/lib/whatsapp/webhook-schemas';
 import { verifyUazapiSignature } from '@/lib/whatsapp/webhook-verify';
 
 export const dynamic = 'force-dynamic';
@@ -72,6 +65,14 @@ function err(code: string, message: string, status: number): NextResponse {
   return NextResponse.json(body, { status });
 }
 
+function webhookSecret(): string {
+  const secret = process.env.UAZAPI_WEBHOOK_SECRET ?? '';
+  if (process.env.NODE_ENV === 'production' && !secret.trim()) {
+    throw new Error('UAZAPI_WEBHOOK_SECRET é obrigatório em produção/preview');
+  }
+  return secret;
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // 1. Raw body (antes de JSON.parse — HMAC precisa dos bytes literais)
   let rawBody: string;
@@ -82,7 +83,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // 2. HMAC verify
-  const secret = process.env.UAZAPI_WEBHOOK_SECRET ?? '';
+  let secret: string;
+  try {
+    secret = webhookSecret();
+  } catch (e) {
+    reportNonFatal('whatsapp.webhook.secret_missing', e, {});
+    return err('webhook_secret_missing', 'Webhook WhatsApp sem secret configurado.', 500);
+  }
   const verify = verifyUazapiSignature(secret, rawBody, request.headers.get('x-uazapi-signature'));
   if (!verify.ok) {
     return err('signature_invalid', 'Assinatura inválida.', 401);
@@ -95,11 +102,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch {
     return err('invalid_json', 'JSON inválido no corpo da requisição.', 400);
   }
-  const parsed = uazapiWebhookSchema.safeParse(payload);
-  if (!parsed.success) {
-    return err('invalid_payload', parsed.error.issues[0]?.message ?? 'Payload inválido.', 422);
+  const event = normalizeUazapiWebhook(payload);
+  if (!event) {
+    return err('invalid_payload', 'Payload WhatsApp inválido ou evento ignorado.', 422);
   }
-  const event = parsed.data;
 
   // 4. Rate limit por instance_id (chave dedicada `whatsapp:` pra não colidir
   //    com keys do leads webhook em produção compartilhando o mesmo Map).
@@ -199,11 +205,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return { idempotent: false, messageReceived };
     });
 
-    // ── Agente IA dispatch (M11#5) ──────────────────────────────────────
-    // Roda DEPOIS da tx do webhook. Idempotência: se uazapi retry e o
-    // event id (sha256 raw body) já foi marcado `processedAt`, o caminho
-    // tx acima cai em `idempotent:true` e nem chega aqui — agente não
-    // dispara duas vezes pro mesmo inbound.
+    // ── Notificação inbound manual ──────────────────────────────────────
+    // Escopo desta entrega: WhatsApp funcionando no PapoPro, sem agente IA.
+    // Portanto o webhook salva mensagem/conversa/lead e notifica o vendedor,
+    // mas NÃO despacha `runAgentForInboundMessage` automaticamente.
     if (
       event.event === 'message.received' &&
       !result.idempotent &&
@@ -220,21 +225,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         result.messageReceived.leadId,
         request.nextUrl.origin,
       );
-
-      const messageBody = event.message.text?.body ?? null;
-      // Mídia sem caption (body null) só pode disparar `kind=keyword` (que
-      // exige texto) — pulamos o roteador inteiro pra evitar falso match.
-      if (messageBody && messageBody.trim()) {
-        await dispatchAgentForInbound({
-          workspaceId: instance.workspaceId,
-          leadId: result.messageReceived.leadId,
-          leadPhone: event.message.from.trim(),
-          conversationId: result.messageReceived.conversationId ?? '',
-          instanceId: instance.id,
-          whatsappAccountId: instance.accountId,
-          messageBody,
-        });
-      }
     }
 
     return ok({ ok: true, idempotent: result.idempotent });
@@ -256,83 +246,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       event: event.event,
     });
     return err('internal', 'Não foi possível processar agora. Tente em instantes.', 500);
-  }
-}
-
-interface DispatchAgentInput {
-  workspaceId: string;
-  leadId: string;
-  leadPhone: string;
-  conversationId: string;
-  instanceId: string;
-  whatsappAccountId: string;
-  messageBody: string;
-}
-
-/**
- * Roteia + despacha agente IA pra mensagem inbound. Fora da tx do webhook —
- * pode rodar até ~80s (jitter 30-50s + Claude + adapter). Falhas são logadas
- * sem propagar pro webhook (provedor já recebeu 200 da persistência inbound;
- * agente é "best-effort").
- *
- * **Fluxo de resolução do agente (M11#6 — sessão sticky):**
- *   1. `ai_enabled=false` → handoff agente→humano ativo; não despacha.
- *   2. Sessão production aberta → continua com o agente dono dela (pula o
- *      roteador — garante que a conversa não troca de agente entre turnos e
- *      que regras `keyword` sigam respondendo após a 1ª mensagem).
- *   3. Sem sessão aberta → roda o roteador (M11#5) pra escolher o agente.
- *
- * **Não bloqueia o webhook em caminhos sem agente:** se nenhum agente ativo
- * casa, retorna imediatamente.
- */
-async function dispatchAgentForInbound(input: DispatchAgentInput): Promise<void> {
-  // Sem conversationId resolvido (raro — só se handleMessageReceived mudar
-  // contrato), não dispara agente. Defense-in-depth.
-  if (!input.conversationId) return;
-
-  try {
-    const dispatch = await loadConversationDispatchState(input.workspaceId, input.conversationId);
-    // Conversa em mãos humanas (handoff agente→humano) — roteador pula.
-    if (!dispatch.aiEnabled) return;
-
-    let agentId: string;
-    if (dispatch.stickyAgentId) {
-      // Conversa já tem agente dono — continua com ele entre turnos.
-      agentId = dispatch.stickyAgentId;
-    } else {
-      // Primeiro contato (sem sessão aberta) — roteador decide.
-      const [rules, leadCtx] = await Promise.all([
-        loadActiveRoutingRules(input.workspaceId),
-        loadLeadContextForRouter(input.workspaceId, input.leadId),
-      ]);
-      if (rules.length === 0) return;
-
-      const match = pickAgentForInbound(rules, {
-        leadStageId: leadCtx?.leadStageId,
-        leadTags: leadCtx?.leadTags ?? [],
-        whatsappAccountId: input.whatsappAccountId,
-        messageBody: input.messageBody,
-      });
-      if (!match) return;
-      agentId = match.agentId;
-    }
-
-    await runAgentForInboundMessage({
-      workspaceId: input.workspaceId,
-      agentId,
-      leadId: input.leadId,
-      leadPhone: input.leadPhone,
-      conversationId: input.conversationId,
-      instanceId: input.instanceId,
-      whatsappAccountId: input.whatsappAccountId,
-      latestUserMessage: input.messageBody,
-    });
-  } catch (err) {
-    reportNonFatal('whatsapp.webhook.agent_dispatch', err, {
-      workspaceId: input.workspaceId,
-      leadId: input.leadId,
-      conversationId: input.conversationId,
-    });
   }
 }
 

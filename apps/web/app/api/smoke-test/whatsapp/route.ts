@@ -65,6 +65,7 @@ import {
   instanceStatusSchema,
   messageReceivedSchema,
   messageStatusSchema,
+  normalizeUazapiWebhook,
 } from '@/lib/whatsapp/webhook-schemas';
 import { verifyUazapiSignaturePure } from '@/lib/whatsapp/webhook-verify';
 
@@ -359,6 +360,30 @@ export async function GET() {
           timestamp: '2026-05-15T10:00:00Z',
         },
       }).success || 'expected valid'
+    );
+  });
+
+  await w('normalizeRealUazapiMessage', () => {
+    const normalized = normalizeUazapiWebhook({
+      event: 'messages',
+      owner: 'inst-1',
+      messageid: 'wa-msg-1',
+      chatid: '5534999999999@s.whatsapp.net',
+      sender: '5534999999999@s.whatsapp.net',
+      fromMe: false,
+      isGroup: false,
+      messageType: 'Conversation',
+      messageTimestamp: Date.now(),
+      text: 'Olá, tenho interesse no imóvel.',
+    });
+
+    return (
+      (normalized?.event === 'message.received' &&
+        normalized.instance_id === 'inst-1' &&
+        normalized.message.from.startsWith('+5534') &&
+        normalized.message.from.endsWith('9999') &&
+        normalized.message.text?.body === 'Olá, tenho interesse no imóvel.') ||
+      'normalização UAZAPI real falhou'
     );
   });
 

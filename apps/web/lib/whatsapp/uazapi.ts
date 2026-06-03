@@ -1,26 +1,17 @@
 /**
- * uazapi HTTP client (M9#2).
+ * uazapi HTTP client alinhado à documentação oficial v2.1.0.
  *
- * Implementação do `WhatsAppAdapter` contra a uazapi (Whatsmeow-based, plano
- * Standard). Endpoints e payloads seguem o formato comum da uazapi v2 —
- * cada workspace tem uma instância dedicada identificada por `externalInstanceId`
- * (gerado pela uazapi no `connect`).
+ * Escopo desta entrega: WhatsApp MVP em staging — conexão/QR, status,
+ * webhook opcional e envio manual de texto. Não implementa agente IA.
  *
- * **Auth:** `Authorization: Bearer <UAZAPI_API_KEY>` em todas as chamadas.
- *           Admin key — mesma pra todos os workspaces; isolamento é por
- *           `externalInstanceId`.
+ * Auth oficial:
+ *  - chamadas administrativas: header `admintoken`
+ *  - chamadas da instância: header `token`
  *
- * **Retries:** 3 tentativas com backoff 250ms/500ms/1000ms para erros 5xx
- * e network errors (fetch lança). 4xx propaga direto (input ruim, sem retry).
- *
- * **Timeout:** 10s por tentativa via `AbortController`. uazapi connect pode
- * demorar (~3-5s) então 10s cobre folga.
- *
- * **`reportNonFatal`** em todos os catches — preserva erro pro caller mas
- * grava trace no Sentry com scope `whatsapp.uazapi.<method>` e contexto
- * `{ workspaceId, externalInstanceId? }`.
- *
- * **Server-only:** usa segredos do env, nunca importar em `'use client'`.
+ * Para evitar migration agora, o token da instância vem de env:
+ * `UAZAPI_INSTANCE_TOKEN`. O adapter NÃO usa token como identificador público
+ * persistido. Se a UAZAPI não retornar `instance.id`, configure também
+ * `UAZAPI_INSTANCE_ID` com o identificador não secreto que o webhook envia.
  */
 import 'server-only';
 
@@ -36,48 +27,95 @@ import type {
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [250, 500, 1_000] as const;
+const QR_TTL_MS = 120_000;
 
 interface UazapiClientConfig {
   baseUrl: string;
-  apiKey: string;
+  instanceToken?: string;
+  instanceId?: string;
+  webhookUrl?: string;
 }
 
-interface UazapiResponse<T> {
-  ok: boolean;
-  data?: T;
-  error?: string;
+interface UazapiInstance {
+  id?: string;
+  status?: string;
+  qrcode?: string;
+  qrCode?: string;
+  paircode?: string;
+  profileName?: string;
 }
 
 interface UazapiConnectResponse {
-  instance_id: string;
-  qr_base64: string;
-  qr_expires_at: string; // ISO
+  connected?: boolean;
+  loggedIn?: boolean;
+  instance?: UazapiInstance;
 }
 
 interface UazapiStatusResponse {
-  status: 'connected' | 'connecting' | 'disconnected';
-  phone_number?: string;
-  last_seen_at?: string; // ISO
+  instance?: UazapiInstance;
+  status?: {
+    connected?: boolean;
+    loggedIn?: boolean;
+    jid?: { user?: string } | null;
+  };
 }
 
 interface UazapiSendTextResponse {
-  message_id: string;
-  sent_at: string; // ISO
+  id?: string;
+  messageid?: string;
+  messageId?: string;
+  response?: { status?: string; message?: string };
 }
+
+type UazapiAuth = { kind: 'admin'; token: string } | { kind: 'instance'; token: string };
 
 function readUazapiConfig(): UazapiClientConfig {
   const baseUrl = process.env.UAZAPI_BASE_URL;
-  const apiKey = process.env.UAZAPI_API_KEY;
-  if (!baseUrl || !apiKey) {
-    throw new Error('uazapi: UAZAPI_BASE_URL e UAZAPI_API_KEY são obrigatórios');
+  const instanceToken = process.env.UAZAPI_INSTANCE_TOKEN;
+  const instanceId = process.env.UAZAPI_INSTANCE_ID;
+  const webhookUrl = resolveWebhookUrl(
+    process.env.UAZAPI_WEBHOOK_URL,
+    process.env.NEXT_PUBLIC_APP_URL,
+  );
+
+  if (!baseUrl) {
+    throw new Error('uazapi: UAZAPI_BASE_URL é obrigatório');
   }
-  return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey };
+
+  return {
+    baseUrl: baseUrl.replace(/\/$/, ''),
+    instanceToken: instanceToken || undefined,
+    instanceId: instanceId || undefined,
+    webhookUrl,
+  };
+}
+
+function resolveWebhookUrl(
+  explicitUrl: string | undefined,
+  appUrl: string | undefined,
+): string | undefined {
+  const explicit = explicitUrl?.trim();
+  if (explicit) {
+    const clean = explicit.replace(/\/$/, '');
+    return clean.endsWith('/api/webhooks/whatsapp') ? clean : `${clean}/api/webhooks/whatsapp`;
+  }
+  const app = appUrl?.trim();
+  return app ? `${app.replace(/\/$/, '')}/api/webhooks/whatsapp` : undefined;
+}
+
+function headersFor(auth: UazapiAuth): Record<string, string> {
+  return {
+    [auth.kind === 'admin' ? 'admintoken' : 'token']: auth.token,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
 }
 
 async function uazapiFetch<T>(
   config: UazapiClientConfig,
   path: string,
   init: RequestInit,
+  auth: UazapiAuth,
   scope: string,
   context: Record<string, unknown>,
 ): Promise<T> {
@@ -92,16 +130,13 @@ async function uazapiFetch<T>(
         signal: controller.signal,
         headers: {
           ...(init.headers ?? {}),
-          Authorization: `Bearer ${config.apiKey}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
+          ...headersFor(auth),
         },
       });
       clearTimeout(timer);
 
       if (response.status >= 500) {
         lastError = new Error(`uazapi ${path}: HTTP ${response.status}`);
-        // 5xx é retry-able — segue pro próximo loop após delay
         if (attempt < MAX_RETRIES - 1) {
           await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
           continue;
@@ -111,24 +146,20 @@ async function uazapiFetch<T>(
       }
 
       if (!response.ok) {
-        // 4xx propaga sem retry — payload/auth ruim
         const text = await response.text().catch(() => '');
         const err = new Error(`uazapi ${path}: HTTP ${response.status} ${text}`);
         reportNonFatal(scope, err, context);
         throw err;
       }
 
-      const payload = (await response.json()) as UazapiResponse<T>;
-      if (!payload.ok || payload.data === undefined) {
-        const err = new Error(`uazapi ${path}: ${payload.error ?? 'resposta sem data'}`);
-        reportNonFatal(scope, err, context);
-        throw err;
+      if (response.status === 204) {
+        return undefined as T;
       }
-      return payload.data;
+      const text = await response.text();
+      return (text ? JSON.parse(text) : undefined) as T;
     } catch (err) {
       clearTimeout(timer);
       lastError = err as Error;
-      // AbortError + network error: tenta de novo se ainda dá
       const isAbort = lastError.name === 'AbortError';
       const isLast = attempt >= MAX_RETRIES - 1;
       if (isLast) {
@@ -136,59 +167,161 @@ async function uazapiFetch<T>(
         throw lastError;
       }
       if (!isAbort && !lastError.message.includes('HTTP 5')) {
-        // erro não-retry-able (4xx já foi throw direto acima)
         reportNonFatal(scope, lastError, { ...context, attempt });
         throw lastError;
       }
       await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
     }
   }
-  // Inalcançável — loop sempre retorna ou throw
+
   throw lastError ?? new Error(`uazapi ${path}: esgotou ${MAX_RETRIES} tentativas`);
+}
+
+function stripDataUrl(base64OrDataUrl: string | undefined): string | null {
+  if (!base64OrDataUrl) return null;
+  const value = base64OrDataUrl.trim();
+  if (!value) return null;
+  return value.replace(/^data:image\/\w+;base64,/, '');
+}
+
+function normalizePhoneFromJid(user: string | undefined): string | undefined {
+  if (!user) return undefined;
+  const digits = user.replace(/\D/g, '');
+  if (digits.length < 10) return undefined;
+  return `+${digits}`;
+}
+
+function normalizeStatus(response: UazapiStatusResponse): WhatsAppInstanceStatus['status'] {
+  const raw = response.instance?.status;
+  if (raw === 'connected' || raw === 'connecting' || raw === 'disconnected') return raw;
+  if (response.status?.connected || response.status?.loggedIn) return 'connected';
+  return 'connecting';
+}
+
+function resolveInstanceToken(config: UazapiClientConfig): string {
+  if (config.instanceToken) {
+    return config.instanceToken;
+  }
+  throw new Error('uazapi: UAZAPI_INSTANCE_TOKEN é obrigatório para o MVP atual');
+}
+
+function resolveExternalInstanceId(
+  config: UazapiClientConfig,
+  data?: UazapiConnectResponse,
+): string {
+  const externalInstanceId = data?.instance?.id ?? config.instanceId;
+  if (!externalInstanceId) {
+    throw new Error(
+      'uazapi: configure UAZAPI_INSTANCE_ID ou use uma instância que retorne instance.id',
+    );
+  }
+  return externalInstanceId;
+}
+
+async function configureWebhookIfPossible(
+  config: UazapiClientConfig,
+  token: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  if (!config.webhookUrl) return;
+
+  try {
+    await uazapiFetch<unknown>(
+      config,
+      '/webhook',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          enabled: true,
+          url: config.webhookUrl,
+          events: ['messages', 'messages_update', 'connection'],
+          excludeMessages: ['isGroupYes'],
+          addUrlEvents: false,
+          addUrlTypesMessages: false,
+          action: 'add',
+        }),
+      },
+      { kind: 'instance', token },
+      'whatsapp.uazapi.configureWebhook',
+      context,
+    );
+  } catch (err) {
+    // Webhook não deve impedir o QR; reporta e deixa o usuário conectar.
+    reportNonFatal('whatsapp.uazapi.configureWebhook.nonfatal', err, context);
+  }
 }
 
 export const uazapiAdapter: WhatsAppAdapter = {
   async connectInstance({ workspaceId }): Promise<WhatsAppQrCode> {
     const config = readUazapiConfig();
+    const instanceToken = resolveInstanceToken(config);
+
     const data = await uazapiFetch<UazapiConnectResponse>(
       config,
       '/instance/connect',
       {
         method: 'POST',
-        body: JSON.stringify({ workspace_id: workspaceId }),
+        body: JSON.stringify({ browser: 'auto' }),
       },
+      { kind: 'instance', token: instanceToken },
       'whatsapp.uazapi.connectInstance',
-      { workspaceId },
+      { workspaceId, externalInstanceId: config.instanceId },
     );
+
+    const externalInstanceId = resolveExternalInstanceId(config, data);
+
+    await configureWebhookIfPossible(config, instanceToken, {
+      workspaceId,
+      externalInstanceId,
+    });
+
+    const qrBase64 = stripDataUrl(data.instance?.qrcode ?? data.instance?.qrCode);
+    if (!qrBase64 && !data.connected && !data.loggedIn) {
+      throw new Error('uazapi: /instance/connect não retornou QR Code');
+    }
+
     return {
-      externalInstanceId: data.instance_id,
-      qrBase64: data.qr_base64,
-      expiresAt: new Date(data.qr_expires_at),
+      externalInstanceId,
+      qrBase64: qrBase64 ?? '',
+      expiresAt: new Date(Date.now() + QR_TTL_MS),
     };
   },
 
   async getInstanceStatus({ workspaceId, externalInstanceId }): Promise<WhatsAppInstanceStatus> {
     const config = readUazapiConfig();
+    if (!config.instanceToken) {
+      throw new Error('uazapi: UAZAPI_INSTANCE_TOKEN é obrigatório para consultar status');
+    }
+
     const data = await uazapiFetch<UazapiStatusResponse>(
       config,
-      `/instance/${encodeURIComponent(externalInstanceId)}/status`,
+      '/instance/status',
       { method: 'GET' },
+      { kind: 'instance', token: config.instanceToken },
       'whatsapp.uazapi.getInstanceStatus',
       { workspaceId, externalInstanceId },
     );
+
+    const phoneNumber = normalizePhoneFromJid(data.status?.jid?.user);
+
     return {
-      status: data.status,
-      phoneNumber: data.phone_number,
-      lastSeenAt: data.last_seen_at ? new Date(data.last_seen_at) : undefined,
+      status: normalizeStatus(data),
+      phoneNumber,
+      lastSeenAt: new Date(),
     };
   },
 
   async disconnectInstance({ workspaceId, externalInstanceId }): Promise<void> {
     const config = readUazapiConfig();
-    await uazapiFetch<{ disconnected: true }>(
+    if (!config.instanceToken) {
+      throw new Error('uazapi: UAZAPI_INSTANCE_TOKEN é obrigatório para desconectar');
+    }
+
+    await uazapiFetch<unknown>(
       config,
-      `/instance/${encodeURIComponent(externalInstanceId)}/disconnect`,
+      '/instance/disconnect',
       { method: 'POST' },
+      { kind: 'instance', token: config.instanceToken },
       'whatsapp.uazapi.disconnectInstance',
       { workspaceId, externalInstanceId },
     );
@@ -196,19 +329,26 @@ export const uazapiAdapter: WhatsAppAdapter = {
 
   async sendText({ workspaceId, externalInstanceId, to, body }): Promise<SendTextResult> {
     const config = readUazapiConfig();
+    if (!config.instanceToken) {
+      throw new Error('uazapi: UAZAPI_INSTANCE_TOKEN é obrigatório para enviar mensagem');
+    }
+
+    const number = to.replace(/\D/g, '');
     const data = await uazapiFetch<UazapiSendTextResponse>(
       config,
-      `/instance/${encodeURIComponent(externalInstanceId)}/sendText`,
+      '/send/text',
       {
         method: 'POST',
-        body: JSON.stringify({ to, body }),
+        body: JSON.stringify({ number, text: body, readchat: true }),
       },
+      { kind: 'instance', token: config.instanceToken },
       'whatsapp.uazapi.sendText',
       { workspaceId, externalInstanceId, to },
     );
+
     return {
-      externalMessageId: data.message_id,
-      sentAt: new Date(data.sent_at),
+      externalMessageId: data.messageid ?? data.messageId ?? data.id ?? crypto.randomUUID(),
+      sentAt: new Date(),
     };
   },
 };

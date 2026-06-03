@@ -2,7 +2,7 @@
  * Adapter factory (M9#2).
  *
  * Escolhe o adapter em runtime baseado em env. Se `UAZAPI_BASE_URL` +
- * `UAZAPI_API_KEY` ambos definidos (não-vazios) → `uazapiAdapter`. Senão →
+ * `UAZAPI_INSTANCE_TOKEN` estiverem definidos → `uazapiAdapter`. Senão →
  * `mockAdapter` (dev local sem credenciais + smoke tests).
  *
  * **Resolução lazy.** A factory lê `process.env` em cada chamada — não cacheia
@@ -20,8 +20,8 @@ import { uazapiAdapter } from './uazapi';
 
 function hasUazapiEnv(): boolean {
   const baseUrl = process.env.UAZAPI_BASE_URL?.trim();
-  const apiKey = process.env.UAZAPI_API_KEY?.trim();
-  return Boolean(baseUrl && apiKey);
+  const instanceToken = process.env.UAZAPI_INSTANCE_TOKEN?.trim();
+  return Boolean(baseUrl && instanceToken);
 }
 
 /**

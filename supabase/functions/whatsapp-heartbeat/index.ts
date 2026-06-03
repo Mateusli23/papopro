@@ -74,32 +74,30 @@ interface CheckOutcome {
 
 async function fetchUazapiStatus(
   baseUrl: string,
-  apiKey: string,
-  externalInstanceId: string,
+  instanceToken: string,
 ): Promise<{ ok: true; status: string; phone_number?: string } | { ok: false; error: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), UAZAPI_TIMEOUT_MS);
   try {
-    const res = await fetch(
-      `${baseUrl.replace(/\/$/, '')}/instance/${encodeURIComponent(externalInstanceId)}/status`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/instance/status`, {
+      method: 'GET',
+      headers: {
+        token: instanceToken,
+        Accept: 'application/json',
       },
-    );
+      signal: controller.signal,
+    });
     clearTimeout(timer);
     if (!res.ok) {
       return { ok: false, error: `HTTP ${res.status}` };
     }
-    const payload = await res.json();
+    const text = await res.text();
+    const payload = text ? JSON.parse(text) : {};
     return {
       ok: true,
-      status: payload?.data?.status ?? payload?.status ?? 'unknown',
-      phone_number: payload?.data?.phone_number ?? payload?.phone_number,
+      status: payload?.instance?.status ?? payload?.data?.status ?? payload?.status ?? 'unknown',
+      phone_number:
+        payload?.status?.jid?.user ?? payload?.data?.phone_number ?? payload?.phone_number,
     };
   } catch (err: any) {
     clearTimeout(timer);
@@ -135,7 +133,11 @@ Deno.serve(async (req: Request) => {
   // @ts-ignore Deno.env
   const uazapiBaseUrl = Deno.env.get('UAZAPI_BASE_URL') ?? '';
   // @ts-ignore Deno.env
-  const uazapiApiKey = Deno.env.get('UAZAPI_API_KEY') ?? '';
+  const uazapiInstanceToken = Deno.env.get('UAZAPI_INSTANCE_TOKEN') ?? '';
+  // Opcional: identificador não secreto usado para garantir que o heartbeat
+  // global do MVP só avalie a instância persistida correta.
+  // @ts-ignore Deno.env
+  const uazapiInstanceId = Deno.env.get('UAZAPI_INSTANCE_ID') ?? '';
 
   if (!supabaseUrl || !serviceRoleKey) {
     return new Response(JSON.stringify({ ok: false, error: 'supabase env missing' }), {
@@ -168,7 +170,7 @@ Deno.serve(async (req: Request) => {
   // Se uazapi env faltando, ainda registra evento mas marca tudo como erro.
   // Permite ver no log que o heartbeat rodou mas o provedor está
   // desconfigurado — vendedor sabe que precisa setar secrets.
-  const canCallProvider = Boolean(uazapiBaseUrl && uazapiApiKey);
+  const canCallProvider = Boolean(uazapiBaseUrl && uazapiInstanceToken);
 
   for (const row of (instances as InstanceRow[] | null) ?? []) {
     const previous = row.health_score;
@@ -177,20 +179,25 @@ Deno.serve(async (req: Request) => {
     let errorMsg: string | undefined;
 
     if (canCallProvider) {
-      const result = await fetchUazapiStatus(uazapiBaseUrl, uazapiApiKey, row.external_instance_id);
-      if (result.ok && (result.status === 'connected' || result.status === 'online')) {
-        success = true;
-        phoneNumber = result.phone_number;
-      } else if (result.ok) {
+      if (uazapiInstanceId && row.external_instance_id !== uazapiInstanceId) {
         success = false;
-        errorMsg = `provider status=${result.status}`;
+        errorMsg = 'uazapi instance mismatch';
       } else {
-        success = false;
-        errorMsg = result.error;
+        const result = await fetchUazapiStatus(uazapiBaseUrl, uazapiInstanceToken);
+        if (result.ok && (result.status === 'connected' || result.status === 'online')) {
+          success = true;
+          phoneNumber = result.phone_number;
+        } else if (result.ok) {
+          success = false;
+          errorMsg = `provider status=${result.status}`;
+        } else {
+          success = false;
+          errorMsg = result.error;
+        }
       }
     } else {
       success = false;
-      errorMsg = 'uazapi env missing';
+      errorMsg = 'uazapi base url or instance token missing';
     }
 
     const next = computeNextHealth(previous, success);
