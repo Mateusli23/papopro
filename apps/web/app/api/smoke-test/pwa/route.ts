@@ -11,6 +11,7 @@
  */
 import { NextResponse } from 'next/server';
 
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { detectPlatform, getInstallInstructions } from '@/lib/pwa/platform';
 
 import manifest from '../../../../public/manifest.json';
@@ -53,6 +54,9 @@ const UA = {
 };
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── detectPlatform ──────────────────────────────────────────────────────

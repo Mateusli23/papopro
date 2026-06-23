@@ -72,6 +72,7 @@ import {
   type PrismaTaskRow,
 } from '@/features/tasks/transforms';
 import { webhookLeadPayloadSchema } from '@/features/webhooks/schemas';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import {
   escapeCsvValue,
   serializeCsvRow,
@@ -130,6 +131,9 @@ function run(group: string, results: CheckResult[]) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── Fixtures ────────────────────────────────────────────────────────────

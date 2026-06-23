@@ -53,6 +53,19 @@ function computeNextHealth(currentHealth: HealthScore, success: boolean): Health
 
 const UAZAPI_TIMEOUT_MS = 5_000;
 
+/**
+ * Constant-time string compare — defende o secret do header contra timing
+ * attacks. Cópia inline da Edge `cold-lead-detector` (Deno; mesmo runtime).
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
 interface InstanceRow {
   id: string;
   workspace_id: string;
@@ -121,7 +134,7 @@ Deno.serve(async (req: Request) => {
   // @ts-ignore Deno.env
   const expected = Deno.env.get('HEARTBEAT_SECRET') ?? '';
   const provided = req.headers.get('x-heartbeat-secret') ?? '';
-  if (!expected || !provided || provided !== expected) {
+  if (!expected || !provided || !timingSafeEqual(provided, expected)) {
     return new Response(JSON.stringify({ ok: false, error: 'unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },

@@ -38,6 +38,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@papopro/db';
 
 import { safeNextParam } from '@/lib/auth/safe-next-param';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { createSupabaseAdminClient } from '@/lib/supabase/admin';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { withWorkspace } from '@/lib/supabase/with-workspace';
@@ -55,6 +56,9 @@ interface CheckResult {
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const checks: Record<string, CheckResult> = {
     supabaseClientCreated: { ok: false },
     setLocalApplied: { ok: false },

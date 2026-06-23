@@ -31,9 +31,16 @@
  * **Dispatch auth:** Edge POSTa pra rota Next com header `Authorization:
  * Bearer ${CADENCE_DISPATCH_SECRET}` — rota valida via `timingSafeEqual`.
  *
- * **Concorrência cap 5** com `Promise.allSettled` em batches — Edge Function
- * cap default Supabase é 150s, e cada dispatch pode demorar até 60s
- * (jitter + adapter). Batches de 5 = ~75s pra batch (vs ~300s sequencial).
+ * **Claim + dispatch intercalados, lote a lote, com time budget.** Cada lote
+ * de `CONCURRENCY` candidatos é reivindicado (INSERT em `cadence_step_runs`)
+ * imediatamente antes de ser despachado — nunca se reivindica mais do que se
+ * vai despachar no mesmo tick. O loop respeita `TIME_BUDGET_MS` (80s); como o
+ * cap de runtime da Edge Function é ~150s e um lote leva até ~60s, o tick
+ * termina com folga. Candidatos não alcançados não viram `cadence_step_runs`
+ * → seguem candidatos no próximo tick (5 min). Isso evita o bug em que a
+ * versão anterior reivindicava 100 de uma vez, era morta no cap, e deixava
+ * dezenas de steps `pending` órfãos que o `pick_candidates` tratava como
+ * "executados" e pulava pra sempre.
  *
  * **Memória `dev-local-windows-antivirus-tls`:** deploy via MCP
  * `deploy_edge_function` — CLI `supabase functions deploy` quebra TLS na
@@ -46,6 +53,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 const BATCH_LIMIT = 100;
 const CONCURRENCY = 5;
 const DISPATCH_TIMEOUT_MS = 60_000;
+// Teto de tempo do tick. 80s + um lote final de até 60s ≈ 140s, abaixo do cap
+// ~150s da Edge Function. O que sobrar é processado no próximo tick (5 min).
+const TIME_BUDGET_MS = 80_000;
 
 interface Candidate {
   enrollment_id: string;
@@ -78,6 +88,19 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/**
+ * Constant-time string compare — defende o secret do header contra timing
+ * attacks. Cópia inline da Edge `cold-lead-detector` (Deno; mesmo runtime).
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 async function dispatchOne(
@@ -129,7 +152,7 @@ Deno.serve(async (req: Request) => {
   // @ts-ignore Deno.env
   const expected = Deno.env.get('CADENCE_RUNNER_SECRET') ?? '';
   const provided = req.headers.get('x-cadence-runner-secret') ?? '';
-  if (!expected || !provided || provided !== expected) {
+  if (!expected || !provided || !timingSafeEqual(provided, expected)) {
     return json({ ok: false, error: 'unauthorized' }, 401);
   }
 
@@ -167,46 +190,60 @@ Deno.serve(async (req: Request) => {
 
   const picked = (candidates as Candidate[] | null) ?? [];
 
-  // ─── 2. Reivindica slot pra cada candidato (INSERT ON CONFLICT DO NOTHING)
-  // O UNIQUE (enrollment_id, step_id) do M10#1 garante idempotência. Se duas
-  // invocações concorrentes do cron tentarem o mesmo step, a segunda perde.
+  // ─── 2+3. Reivindica e despacha LOTE A LOTE ──────────────────────────────
+  // Cada lote de CONCURRENCY candidatos é reivindicado imediatamente antes de
+  // ser despachado. Candidatos não alcançados (lote além do TIME_BUDGET_MS, ou
+  // a fila acabou) nunca viram `cadence_step_runs` → seguem candidatos no
+  // próximo tick. A janela de órfão `pending` fica restrita ao lote em voo.
   const claimed: ClaimedCandidate[] = [];
-  for (const c of picked) {
-    const { data: row, error: insErr } = await admin
-      .from('cadence_step_runs')
-      .insert({
-        workspace_id: c.workspace_id,
-        enrollment_id: c.enrollment_id,
-        step_id: c.step_id,
-        status: 'pending',
-        scheduled_for: c.scheduled_for,
-      })
-      .select('id')
-      .maybeSingle();
-
-    if (insErr) {
-      // Postgres unique violation = 23505 — outro runner já claimou. Skip silenciosamente.
-      const code = (insErr as any).code;
-      if (code === '23505') continue;
-      console.error(`claim ${c.enrollment_id}/${c.step_id}: ${insErr.message}`);
-      continue;
-    }
-    if (row?.id) {
-      claimed.push({ ...c, step_run_id: row.id });
-    }
-  }
-
-  // ─── 3. Dispara para a rota Next com concorrência cap=5 ──────────────────
   const dispatched: DispatchOutcome[] = [];
   const errors: DispatchError[] = [];
+  const startedAt = Date.now();
+  let timedOut = false;
 
-  for (let i = 0; i < claimed.length; i += CONCURRENCY) {
-    const batch = claimed.slice(i, i + CONCURRENCY);
+  for (let i = 0; i < picked.length; i += CONCURRENCY) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      timedOut = true;
+      break;
+    }
+
+    const slice = picked.slice(i, i + CONCURRENCY);
+
+    // Claim do lote — INSERT ON CONFLICT implícito via UNIQUE (enrollment_id,
+    // step_id) do M10#1: runner concorrente perde no 23505 (idempotente).
+    const claimedBatch: ClaimedCandidate[] = [];
+    for (const c of slice) {
+      const { data: row, error: insErr } = await admin
+        .from('cadence_step_runs')
+        .insert({
+          workspace_id: c.workspace_id,
+          enrollment_id: c.enrollment_id,
+          step_id: c.step_id,
+          status: 'pending',
+          scheduled_for: c.scheduled_for,
+        })
+        .select('id')
+        .maybeSingle();
+
+      if (insErr) {
+        // Postgres unique violation = 23505 — outro runner já claimou. Skip.
+        const code = (insErr as any).code;
+        if (code === '23505') continue;
+        console.error(`claim ${c.enrollment_id}/${c.step_id}: ${insErr.message}`);
+        continue;
+      }
+      if (row?.id) {
+        claimedBatch.push({ ...c, step_run_id: row.id });
+      }
+    }
+    claimed.push(...claimedBatch);
+
+    // Dispatch do lote — concorrência cap=CONCURRENCY pra rota Next.
     const results = await Promise.allSettled(
-      batch.map((c) => dispatchOne(appUrl, dispatchSecret, c)),
+      claimedBatch.map((c) => dispatchOne(appUrl, dispatchSecret, c)),
     );
     results.forEach((r, idx) => {
-      const c = batch[idx];
+      const c = claimedBatch[idx];
       if (!c) return;
       if (r.status === 'fulfilled') {
         dispatched.push(r.value);
@@ -225,6 +262,9 @@ Deno.serve(async (req: Request) => {
     claimed: claimed.length,
     dispatched: dispatched.length,
     errors: errors.length,
+    // timedOut=true: o tick parou no time budget; o restante de `picked` segue
+    // candidato pro próximo ciclo de 5 min (nada ficou preso em `pending`).
+    timedOut,
   };
 
   return json({ ok: true, summary, outcomes: dispatched, errors });

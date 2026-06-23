@@ -22,6 +22,7 @@ import {
   computeStageAvgTime,
   getCoolingLeads,
 } from '@/features/reports/transforms';
+import { blockSmokeInProd } from '@/lib/dev/smoke-guard';
 import { FAKE_DEALS } from '@/lib/fixtures/deals';
 import { FAKE_LEADS } from '@/lib/fixtures/leads';
 import { DEFAULT_STAGES } from '@/lib/fixtures/pipelines';
@@ -55,6 +56,9 @@ function run(group: string, results: CheckResult[]) {
 export const dynamic = 'force-dynamic';
 
 export function GET() {
+  const blocked = blockSmokeInProd();
+  if (blocked) return blocked;
+
   const results: CheckResult[] = [];
 
   // ── KPIs ────────────────────────────────────────────────────────────────

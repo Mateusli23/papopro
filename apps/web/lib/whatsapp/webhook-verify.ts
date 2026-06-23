@@ -47,6 +47,11 @@ export function verifyUazapiSignaturePure(
   signatureHeader: string | null,
 ): VerifyResult {
   if (!secret || secret.trim() === '') {
+    // Em produção falha fechada — webhook sem secret = aceitar payload forjado.
+    // Em dev seguimos permitindo `curl` manual sem env configurada.
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: false, reason: 'secret_not_configured' };
+    }
     return { ok: true, skipped: true };
   }
 

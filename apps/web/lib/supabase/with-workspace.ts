@@ -41,7 +41,11 @@ import 'server-only';
 
 import { prisma, type Prisma } from '@papopro/db';
 
-const WORKSPACE_ID_REGEX = /^[\w-]{1,64}$/;
+// UUID v4-ish (não exige bits de versão — Supabase usa gen_random_uuid()).
+// Defense-in-depth contra cookie corrompido ou Zod ausente no caller:
+// `SET LOCAL` recebe valor parametrizado, mas restringir o domínio bloqueia
+// strings id-like espúrias antes de tocar o pool.
+const WORKSPACE_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function withWorkspace<T>(
   workspaceId: string,
@@ -49,7 +53,7 @@ export async function withWorkspace<T>(
 ): Promise<T> {
   if (typeof workspaceId !== 'string' || !WORKSPACE_ID_REGEX.test(workspaceId)) {
     throw new Error(
-      `withWorkspace: workspaceId inválido (${JSON.stringify(workspaceId)}). Esperado string [A-Za-z0-9_-]{1,64}.`,
+      `withWorkspace: workspaceId inválido (${JSON.stringify(workspaceId)}). Esperado UUID.`,
     );
   }
 
